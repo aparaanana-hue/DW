@@ -6566,6 +6566,734 @@ buildTab:CreateParagraph({
     Content = "Hold X / Y / Z: lock movement to that axis\nCtrl+F: flip on the axis you face\nCtrl+R: rotate 90 degrees clockwise\nCtrl+Z / Ctrl+Y: undo / redo\nDelete or Backspace: erase the selection, or remove the symmetry node",
 })
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OPERATIONS TAB — Axiom-style Editor operations
+--
+-- Lives inside the Builder scope on purpose: every operation acts on the
+-- Builder's selection and routes through its placeCells/eraseCells/undo stack,
+-- so Ctrl+Z reverts an operation exactly like it reverts a Move.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local opsTab = main:CreateTab("Operations", "layers")
+
+local O = {
+    activeBlock = "stone",
+    replaceFrom = "stone",
+    filterBlock = "stone",
+    expandBy = 1,
+    keepExisting = true,
+    pasteAir = false,
+    shadeDark = "stone",
+    shadeMid = "whiteBlock",
+    shadeLight = "snow",
+    clip = nil,          -- clipboard: { cells = {{dx,dy,dz,type}}, sx, sy, sz }
+    blueprintName = "MyBlueprint",
+    presetName = "MyPreset",
+}
+
+local opsStatus, analyzePara
+
+local function opsSet(title, body)
+    pcall(function() opsStatus:Set({ Title = title, Content = body }) end)
+end
+
+-- Cells of the current cuboid selection, regardless of what is in them.
+local function selBounds()
+    if not (B.a and B.b) then return nil end
+    return math.min(B.a[1], B.b[1]), math.max(B.a[1], B.b[1]),
+           math.min(B.a[2], B.b[2]), math.max(B.a[2], B.b[2]),
+           math.min(B.a[3], B.b[3]), math.max(B.a[3], B.b[3])
+end
+
+local function needSelection()
+    if not (B.a and B.b) then
+        notifyWarn("No Selection", "Use the Builder tab to pick two corners first", 4)
+        return false
+    end
+    return true
+end
+
+local function selCells()
+    local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+    local out = {}
+    if not minX then return out end
+    for x = minX, maxX do
+        for y = minY, maxY do
+            for z = minZ, maxZ do out[#out + 1] = { x, y, z } end
+        end
+    end
+    return out
+end
+
+-- ── Fill family ────────────────────────────────────────────────────────────
+-- mode picks which shell of the cuboid gets written.
+local function fillMode(mode)
+    if not needSelection() then return end
+    runCommit("Fill", function(rec)
+        local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+        local want = {}
+        for x = minX, maxX do
+            for y = minY, maxY do
+                for z = minZ, maxZ do
+                    local onX = (x == minX or x == maxX)
+                    local onY = (y == minY or y == maxY)
+                    local onZ = (z == minZ or z == maxZ)
+                    local take = false
+                    if mode == "Fill" then
+                        take = true
+                    elseif mode == "Outline" then
+                        -- an edge of the cuboid lies on two faces at once
+                        local faces = (onX and 1 or 0) + (onY and 1 or 0) + (onZ and 1 or 0)
+                        take = faces >= 2
+                    elseif mode == "Walls" then
+                        take = onX or onZ
+                    elseif mode == "Top" then
+                        take = (y == maxY)
+                    elseif mode == "Bottom" then
+                        take = (y == minY)
+                    end
+                    if take then want[#want + 1] = { x, y, z, O.activeBlock } end
+                end
+            end
+        end
+        if not O.keepExisting then eraseCells(want, rec) end
+        opsSet("Fill", "Placing " .. #want .. " blocks...")
+        placeCells(want, rec)
+        notifyOK("Fill " .. mode, #want .. " blocks of " .. O.activeBlock, 4)
+    end)
+end
+
+-- Fill Nearest: every empty cell copies whatever solid block is closest.
+local function fillNearest()
+    if not needSelection() then return end
+    runCommit("Fill Nearest", function(rec)
+        local map = blockPartMap()
+        local solids = {}
+        for k, part in pairs(map) do
+            local x, y, z = k:match("(-?%d+),(-?%d+),(-?%d+)")
+            solids[#solids + 1] = { tonumber(x), tonumber(y), tonumber(z), part.Name }
+        end
+        if #solids == 0 then notifyWarn("Fill Nearest", "No blocks nearby to sample", 3) return end
+        local want = {}
+        for _, c in ipairs(selCells()) do
+            if not map[key3(c[1], c[2], c[3])] then
+                local best, bestD = nil, math.huge
+                for _, s in ipairs(solids) do
+                    local d = (s[1] - c[1]) ^ 2 + (s[2] - c[2]) ^ 2 + (s[3] - c[3]) ^ 2
+                    if d < bestD then bestD = d best = s end
+                end
+                if best then want[#want + 1] = { c[1], c[2], c[3], best[4] } end
+            end
+        end
+        opsSet("Fill Nearest", "Placing " .. #want .. " blocks...")
+        placeCells(want, rec)
+        notifyOK("Fill Nearest", #want .. " blocks filled", 4)
+    end)
+end
+
+-- ── Replace ────────────────────────────────────────────────────────────────
+local function replaceBlocks()
+    if not needSelection() then return end
+    runCommit("Replace", function(rec)
+        local map = blockPartMap()
+        local hits = {}
+        for _, c in ipairs(selCells()) do
+            local part = map[key3(c[1], c[2], c[3])]
+            if part and part.Name == O.replaceFrom then
+                hits[#hits + 1] = { c[1], c[2], c[3], O.activeBlock }
+            end
+        end
+        if #hits == 0 then notifyWarn("Replace", "No " .. O.replaceFrom .. " in selection", 3) return end
+        opsSet("Replace", "Swapping " .. #hits .. " blocks...")
+        eraseCells(hits, rec)
+        placeCells(hits, rec)
+        notifyOK("Replace", #hits .. " x " .. O.replaceFrom .. " -> " .. O.activeBlock, 4)
+    end)
+end
+
+-- ── Hollow / Fill Gaps ─────────────────────────────────────────────────────
+local function isEnclosed(map, x, y, z)
+    for _, d in ipairs({ {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }) do
+        if not map[key3(x + d[1], y + d[2], z + d[3])] then return false end
+    end
+    return true
+end
+
+local function hollowSelection()
+    if not needSelection() then return end
+    runCommit("Hollow", function(rec)
+        local map = blockPartMap()
+        local inner = {}
+        for _, c in ipairs(selCells()) do
+            if map[key3(c[1], c[2], c[3])] and isEnclosed(map, c[1], c[2], c[3]) then
+                inner[#inner + 1] = c
+            end
+        end
+        if #inner == 0 then notifyWarn("Hollow", "Nothing enclosed to remove", 3) return end
+        opsSet("Hollow", "Removing " .. #inner .. " interior blocks...")
+        eraseCells(inner, rec)
+        notifyOK("Hollow", #inner .. " interior blocks removed", 4)
+    end)
+end
+
+local function fillGaps()
+    if not needSelection() then return end
+    runCommit("Fill Gaps", function(rec)
+        local map = blockPartMap()
+        local gaps = {}
+        for _, c in ipairs(selCells()) do
+            if not map[key3(c[1], c[2], c[3])] and isEnclosed(map, c[1], c[2], c[3]) then
+                gaps[#gaps + 1] = { c[1], c[2], c[3], O.activeBlock }
+            end
+        end
+        if #gaps == 0 then notifyWarn("Fill Gaps", "No enclosed gaps found", 3) return end
+        opsSet("Fill Gaps", "Filling " .. #gaps .. " gaps...")
+        placeCells(gaps, rec)
+        notifyOK("Fill Gaps", #gaps .. " gaps filled", 4)
+    end)
+end
+
+-- ── Drain ──────────────────────────────────────────────────────────────────
+local function looksLikeWater(name)
+    local n = tostring(name):lower()
+    return n:find("water") ~= nil or n:find("liquid") ~= nil
+end
+
+local function drainSelection()
+    if not needSelection() then return end
+    runCommit("Drain", function(rec)
+        local map = blockPartMap()
+        local wet = {}
+        for _, c in ipairs(selCells()) do
+            local part = map[key3(c[1], c[2], c[3])]
+            if part and looksLikeWater(part.Name) then wet[#wet + 1] = c end
+        end
+        if #wet == 0 then notifyWarn("Drain", "No water in selection", 3) return end
+        eraseCells(wet, rec)
+        notifyOK("Drain", #wet .. " water blocks removed", 4)
+    end)
+end
+
+-- ── Simulate Gravity ───────────────────────────────────────────────────────
+local function simulateGravity()
+    if not needSelection() then return end
+    runCommit("Simulate Gravity", function(rec)
+        local map = blockPartMap()
+        local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+
+        -- Support must be judged against blocks OUTSIDE the selection, since
+        -- everything inside it is about to fall too.
+        local outside = {}
+        for k, part in pairs(map) do
+            local sx, sy, sz = k:match("(-?%d+),(-?%d+),(-?%d+)")
+            sx, sy, sz = tonumber(sx), tonumber(sy), tonumber(sz)
+            local inSel = sx >= minX and sx <= maxX and sy >= minY and sy <= maxY
+                and sz >= minZ and sz <= maxZ
+            if not inSel then outside[k] = part end
+        end
+
+        local moves = {}
+        -- Walk each column bottom-up so blocks stack instead of overlapping.
+        for x = minX, maxX do
+            for z = minZ, maxZ do
+                local stack = {}
+                for y = minY, maxY do
+                    local part = map[key3(x, y, z)]
+                    if part then stack[#stack + 1] = part.Name end
+                end
+                -- Fall while the cell below is empty, stopping on solid ground.
+                local restY = minY
+                while restY - 1 >= minY - 64 and not outside[key3(x, restY - 1, z)] do
+                    restY = restY - 1
+                end
+                for i, name in ipairs(stack) do
+                    moves[#moves + 1] = { x, restY + i - 1, z, name }
+                end
+            end
+        end
+        local old = {}
+        for _, c in ipairs(selCells()) do
+            if map[key3(c[1], c[2], c[3])] then old[#old + 1] = c end
+        end
+        opsSet("Simulate Gravity", "Settling " .. #moves .. " blocks...")
+        eraseCells(old, rec)
+        placeCells(moves, rec)
+        notifyOK("Simulate Gravity", #moves .. " blocks settled", 4)
+    end)
+end
+
+-- ── Smoothsnow ─────────────────────────────────────────────────────────────
+local function smoothSnow()
+    if not needSelection() then return end
+    runCommit("Smoothsnow", function(rec)
+        local map = blockPartMap()
+        local minX, maxX, _, maxY, minZ, maxZ = selBounds()
+        local caps = {}
+        for x = minX, maxX do
+            for z = minZ, maxZ do
+                -- top-most solid in this column, then cap it
+                for y = maxY, -64, -1 do
+                    if map[key3(x, y, z)] then
+                        if not map[key3(x, y + 1, z)] then
+                            caps[#caps + 1] = { x, y + 1, z, O.activeBlock }
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        if #caps == 0 then notifyWarn("Smoothsnow", "No surfaces found", 3) return end
+        placeCells(caps, rec)
+        notifyOK("Smoothsnow", #caps .. " surface blocks capped", 4)
+    end)
+end
+
+-- ── Analyze ────────────────────────────────────────────────────────────────
+local function analyzeSelection()
+    if not needSelection() then return end
+    task.spawn(function()
+        local map = blockPartMap()
+        local counts, total = {}, 0
+        for _, c in ipairs(selCells()) do
+            local part = map[key3(c[1], c[2], c[3])]
+            if part then
+                counts[part.Name] = (counts[part.Name] or 0) + 1
+                total = total + 1
+            end
+        end
+        if total == 0 then
+            pcall(function() analyzePara:Set({ Title = "Analyze", Content = "Selection is empty." }) end)
+            notifyWarn("Analyze", "No blocks in selection", 3)
+            return
+        end
+        local rows = {}
+        for name, n in pairs(counts) do rows[#rows + 1] = { name, n } end
+        table.sort(rows, function(p, q) return p[2] > q[2] end)
+        local lines = {}
+        for i = 1, math.min(#rows, 12) do
+            local name, n = rows[i][1], rows[i][2]
+            lines[#lines + 1] = string.format("%s  %d  (%.1f%%)", name, n, n / total * 100)
+        end
+        if #rows > 12 then lines[#lines + 1] = "... and " .. (#rows - 12) .. " more types" end
+        lines[#lines + 1] = "TOTAL  " .. total .. "  (100%)"
+        pcall(function()
+            analyzePara:Set({ Title = "Analyze", Content = table.concat(lines, "\n") })
+        end)
+        notifyOK("Analyze", #rows .. " block types, " .. total .. " blocks", 5)
+    end)
+end
+
+-- ── Autoshade ──────────────────────────────────────────────────────────────
+-- Ambient-occlusion style: the more neighbours a block has, the darker it gets.
+local function autoshade()
+    if not needSelection() then return end
+    runCommit("Autoshade", function(rec)
+        local map = blockPartMap()
+        local surface = {}
+        for _, c in ipairs(selCells()) do
+            local k = key3(c[1], c[2], c[3])
+            if map[k] and not map[key3(c[1], c[2] + 1, c[3])] then
+                -- count occupied neighbours in a 3x3x3 shell as the occlusion term
+                local occ = 0
+                for ox = -1, 1 do
+                    for oy = -1, 1 do
+                        for oz = -1, 1 do
+                            if not (ox == 0 and oy == 0 and oz == 0)
+                                and map[key3(c[1] + ox, c[2] + oy, c[3] + oz)] then
+                                occ = occ + 1
+                            end
+                        end
+                    end
+                end
+                surface[#surface + 1] = { c[1], c[2], c[3], occ }
+            end
+        end
+        if #surface == 0 then notifyWarn("Autoshade", "No exposed surface in selection", 3) return end
+        local want = {}
+        for _, s in ipairs(surface) do
+            local occ = s[4]
+            local block
+            if occ >= 16 then block = O.shadeDark
+            elseif occ >= 9 then block = O.shadeMid
+            else block = O.shadeLight end
+            want[#want + 1] = { s[1], s[2], s[3], block }
+        end
+        opsSet("Autoshade", "Shading " .. #want .. " surface blocks...")
+        eraseCells(want, rec)
+        placeCells(want, rec)
+        notifyOK("Autoshade", #want .. " surface blocks shaded", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SELECTION MODIFIERS (shape only, blocks untouched)
+-- ═══════════════════════════════════════════════════════════════════════════
+local function growSelection(by)
+    if not needSelection() then return end
+    -- Corners can be stored in any order, so normalise before growing,
+    -- otherwise "expand" would shrink whichever axis is stored backwards.
+    local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+    B.a = { minX - by, minY - by, minZ - by }
+    B.b = { maxX + by, maxY + by, maxZ + by }
+    -- Never let a shrink collapse the box inside out.
+    for i = 1, 3 do
+        if B.a[i] > B.b[i] then
+            local mid = math.floor((B.a[i] + B.b[i]) / 2)
+            B.a[i], B.b[i] = mid, mid
+        end
+    end
+    drawSelectionBox()
+    setStatus(B.tool or "Builder", describeSelection())
+    notifyOK(by > 0 and "Expand" or "Shrink", "Selection resized by " .. math.abs(by), 3)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CLIPBOARD
+-- ═══════════════════════════════════════════════════════════════════════════
+-- onDone runs after the clipboard is populated, so callers that want to paste
+-- straight away (Ctrl+J duplicate) don't race the spawned copy.
+local function copySelection(cut, onDone)
+    if not needSelection() then return end
+    task.spawn(function()
+        local map = blockPartMap()
+        local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+        local cells = {}
+        for x = minX, maxX do
+            for y = minY, maxY do
+                for z = minZ, maxZ do
+                    local part = map[key3(x, y, z)]
+                    if part then
+                        cells[#cells + 1] = { x - minX, y - minY, z - minZ, part.Name }
+                    end
+                end
+            end
+        end
+        if #cells == 0 then notifyWarn("Copy", "Selection is empty", 3) return end
+        O.clip = {
+            cells = cells,
+            sx = maxX - minX + 1, sy = maxY - minY + 1, sz = maxZ - minZ + 1,
+        }
+        notifyOK(cut and "Cut" or "Copy", #cells .. " blocks on the clipboard", 4)
+        if onDone then onDone() end
+        if cut then
+            runCommit("Cut", function(rec)
+                local abs = {}
+                for _, c in ipairs(cells) do
+                    abs[#abs + 1] = { minX + c[1], minY + c[2], minZ + c[3] }
+                end
+                eraseCells(abs, rec)
+            end)
+        end
+    end)
+end
+
+-- Paste lands at the selection's low corner, or at the player if none is set.
+local function pasteClipboard()
+    if not O.clip then notifyWarn("Paste", "Clipboard is empty", 3) return end
+    runCommit("Paste", function(rec)
+        local ox, oy, oz
+        local minX, _, minY, _, minZ = selBounds()
+        if minX then
+            ox, oy, oz = minX, minY, minZ
+        else
+            local _, _, hrp = getCharacterParts()
+            if not hrp then notifyWarn("Paste", "No selection and no character", 3) return end
+            ox, oy, oz = toCell(hrp.Position)
+        end
+        local want = {}
+        for _, c in ipairs(O.clip.cells) do
+            want[#want + 1] = { ox + c[1], oy + c[2], oz + c[3], c[4] }
+        end
+        if not O.keepExisting then eraseCells(want, rec) end
+        opsSet("Paste", "Placing " .. #want .. " blocks...")
+        placeCells(want, rec)
+        notifyOK("Paste", #want .. " blocks pasted", 4)
+    end)
+end
+
+-- Scale the clipboard by whole factors, nearest-neighbour style.
+local function scaleClipboard(factor)
+    if not O.clip then notifyWarn("Scale", "Clipboard is empty", 3) return end
+    local out = {}
+    for _, c in ipairs(O.clip.cells) do
+        for dx = 0, factor - 1 do
+            for dy = 0, factor - 1 do
+                for dz = 0, factor - 1 do
+                    out[#out + 1] = {
+                        c[1] * factor + dx, c[2] * factor + dy, c[3] * factor + dz, c[4]
+                    }
+                end
+            end
+        end
+    end
+    O.clip = {
+        cells = out,
+        sx = O.clip.sx * factor, sy = O.clip.sy * factor, sz = O.clip.sz * factor,
+    }
+    notifyOK("Scale" .. factor .. "x", #out .. " blocks on the clipboard", 4)
+end
+
+local function flipClipboard(axis)
+    if not O.clip then notifyWarn("Flip", "Clipboard is empty", 3) return end
+    local i = axis == "X" and 1 or (axis == "Y" and 2 or 3)
+    local size = axis == "X" and O.clip.sx or (axis == "Y" and O.clip.sy or O.clip.sz)
+    for _, c in ipairs(O.clip.cells) do c[i] = (size - 1) - c[i] end
+    notifyOK("Flip", "Clipboard flipped on " .. axis, 3)
+end
+
+local function rotateClipboard()
+    if not O.clip then notifyWarn("Rotate", "Clipboard is empty", 3) return end
+    local sx = O.clip.sx
+    for _, c in ipairs(O.clip.cells) do
+        c[1], c[3] = c[3], (sx - 1) - c[1]
+    end
+    O.clip.sx, O.clip.sz = O.clip.sz, O.clip.sx
+    notifyOK("Rotate", "Clipboard rotated 90 degrees", 3)
+end
+
+-- ── Blueprints ─────────────────────────────────────────────────────────────
+local BP_DIR = "autoBuilder/blueprints"
+
+local function ensureBpDir()
+    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+    if not isfolder(BP_DIR) then makefolder(BP_DIR) end
+end
+
+local function blueprintFiles()
+    local out = {}
+    pcall(function()
+        ensureBpDir()
+        for _, f in ipairs(listfiles(BP_DIR)) do
+            if f:lower():sub(-5) == ".json" then out[#out + 1] = f:match("[^/\\]+$") end
+        end
+    end)
+    if #out == 0 then out = { "(none saved)" } end
+    return out
+end
+
+local bpDropdown
+
+local function saveBlueprint()
+    if not O.clip then notifyWarn("Blueprint", "Copy something first", 3) return end
+    local name = O.blueprintName
+    if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+    ensureBpDir()
+    local ok, err = pcall(function()
+        writefile(BP_DIR .. "/" .. name, HttpService:JSONEncode(O.clip))
+    end)
+    if not ok then notifyErr("Blueprint", tostring(err), 5) return end
+    pcall(function() bpDropdown:Refresh(blueprintFiles()) end)
+    notifyOK("Blueprint Saved", name .. " (" .. #O.clip.cells .. " blocks)", 5)
+end
+
+local function loadBlueprint(name)
+    if not name or name == "(none saved)" then return end
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(readfile(BP_DIR .. "/" .. name))
+    end)
+    if not ok or type(data) ~= "table" or not data.cells then
+        notifyErr("Blueprint", "Could not read " .. tostring(name), 5)
+        return
+    end
+    O.clip = data
+    notifyOK("Blueprint Loaded", name .. " (" .. #data.cells .. " blocks)", 5)
+end
+
+-- ── Export CSV ─────────────────────────────────────────────────────────────
+local function exportCSV()
+    if not needSelection() then return end
+    task.spawn(function()
+        local map = blockPartMap()
+        local rows = { "x,y,z,block" }
+        for _, c in ipairs(selCells()) do
+            local part = map[key3(c[1], c[2], c[3])]
+            if part then
+                rows[#rows + 1] = c[1] .. "," .. c[2] .. "," .. c[3] .. "," .. part.Name
+            end
+        end
+        if #rows == 1 then notifyWarn("Export CSV", "Selection is empty", 3) return end
+        ensureBpDir()
+        local name = O.blueprintName:gsub("%.json$", "") .. ".csv"
+        local ok, err = pcall(function()
+            writefile(BP_DIR .. "/" .. name, table.concat(rows, "\n"))
+        end)
+        if not ok then notifyErr("Export CSV", tostring(err), 5) return end
+        notifyOK("Export CSV", (#rows - 1) .. " rows -> " .. name, 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OPERATIONS UI
+-- ═══════════════════════════════════════════════════════════════════════════
+opsTab:CreateSection("Status")
+
+opsStatus = opsTab:CreateParagraph({
+    Title = "Operations",
+    Content = "All operations act on the Builder tab's selection.",
+})
+
+-- Own copy: the Tools tab's helper lives in a different, closed scope.
+local function opsBlockOptions()
+    local seen, b = {}, {}
+    local f = ReplicatedStorage:FindFirstChild("blocks")
+    if f then
+        for _, v in ipairs(f:GetChildren()) do
+            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
+        end
+    end
+    table.sort(b)
+    if #b == 0 then b = { "stone", "grass" } end
+    return b
+end
+
+local opsBlocks = opsBlockOptions()
+
+opsTab:CreateDropdown({
+    Name = "Active Block",
+    Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "OpsActive",
+    Callback = function(v) O.activeBlock = (typeof(v) == "table") and v[1] or v end
+})
+
+opsTab:CreateDropdown({
+    Name = "Replace This Block",
+    Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "OpsFrom",
+    Callback = function(v) O.replaceFrom = (typeof(v) == "table") and v[1] or v end
+})
+
+opsTab:CreateToggle({
+    Name = "Keep Existing",
+    CurrentValue = true,
+    Tooltip = "Leave blocks that are already there instead of overwriting them.",
+    Callback = function(v) O.keepExisting = v end
+})
+
+opsTab:CreateSection("Fill", { Collapsible = true })
+for _, m in ipairs({ "Fill", "Outline", "Walls", "Top", "Bottom" }) do
+    opsTab:CreateButton({
+        Name = "Fill " .. m,
+        Tooltip = "Write the active block into the " .. m:lower() .. " of the selection.",
+        Callback = function() fillMode(m) end
+    })
+end
+opsTab:CreateButton({
+    Name = "Fill Nearest",
+    Tooltip = "Fill each empty cell with whichever solid block is closest to it.",
+    Callback = fillNearest
+})
+opsTab:CreateButton({
+    Name = "Fill Gaps",
+    Tooltip = "Fill fully enclosed pockets of air with the active block.",
+    Callback = fillGaps
+})
+
+opsTab:CreateSection("Modify", { Collapsible = true })
+opsTab:CreateButton({ Name = "Replace", Tooltip = "Swap one block type for the active block inside the selection.", Callback = replaceBlocks })
+opsTab:CreateButton({ Name = "Hollow", Tooltip = "Remove every fully enclosed interior block, leaving a shell.", Callback = hollowSelection })
+opsTab:CreateButton({ Name = "Drain", Tooltip = "Remove water blocks inside the selection.", Callback = drainSelection })
+opsTab:CreateButton({ Name = "Simulate Gravity", Tooltip = "Drop every block in the selection until it rests on something.", Callback = simulateGravity })
+opsTab:CreateButton({ Name = "Smoothsnow", Tooltip = "Lay one layer of the active block over the top surface of the selection.", Callback = smoothSnow })
+
+opsTab:CreateSection("Autoshade", { Collapsible = true, Column = "right" })
+opsTab:CreateParagraph({
+    Title = "How Autoshade Works",
+    Content = "Counts how enclosed each exposed surface block is, then swaps it for a dark, mid or light block. More neighbours means darker.",
+})
+opsTab:CreateDropdown({
+    Name = "Dark Block", Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "OpsShadeDark",
+    Callback = function(v) O.shadeDark = (typeof(v) == "table") and v[1] or v end
+})
+opsTab:CreateDropdown({
+    Name = "Mid Block", Options = opsBlocks, CurrentOption = { "whiteBlock" }, MultipleOptions = false,
+    Flag = "OpsShadeMid",
+    Callback = function(v) O.shadeMid = (typeof(v) == "table") and v[1] or v end
+})
+opsTab:CreateDropdown({
+    Name = "Light Block", Options = opsBlocks, CurrentOption = { "whiteBlock" }, MultipleOptions = false,
+    Flag = "OpsShadeLight",
+    Callback = function(v) O.shadeLight = (typeof(v) == "table") and v[1] or v end
+})
+opsTab:CreateButton({ Name = "Run Autoshade", Tooltip = "Shade the exposed surface of the selection.", Callback = autoshade })
+
+opsTab:CreateSection("Selection", { Collapsible = true, Column = "right" })
+opsTab:CreateSlider({
+    Name = "Expand / Shrink By",
+    Range = { 1, 16 }, Increment = 1, CurrentValue = 1, Suffix = "blk", Flag = "OpsExpand",
+    Callback = function(v) O.expandBy = v end
+})
+opsTab:CreateButton({ Name = "Expand Selection", Tooltip = "Grow the selection box outward on every axis.", Callback = function() growSelection(O.expandBy) end })
+opsTab:CreateButton({ Name = "Shrink Selection", Tooltip = "Pull the selection box inward on every axis.", Callback = function() growSelection(-O.expandBy) end })
+opsTab:CreateButton({ Name = "Analyze", Tooltip = "Count every block type inside the selection.", Callback = analyzeSelection })
+
+analyzePara = opsTab:CreateParagraph({
+    Title = "Analyze",
+    Content = "Run Analyze to see the block breakdown.",
+})
+
+opsTab:CreateSection("Clipboard", { Collapsible = true })
+opsTab:CreateButton({ Name = "Copy", Tooltip = "Copy the selection's blocks to the clipboard.", Callback = function() copySelection(false) end })
+opsTab:CreateButton({ Name = "Cut", Tooltip = "Copy the selection then remove the originals.", Callback = function() copySelection(true) end })
+opsTab:CreateButton({ Name = "Paste", Tooltip = "Paste the clipboard at the selection's low corner, or at you if there is no selection.", Callback = pasteClipboard })
+opsTab:CreateDivider()
+opsTab:CreateButton({ Name = "Rotate Clipboard 90", Tooltip = "Rotate the clipboard clockwise about Y.", Callback = rotateClipboard })
+for _, ax in ipairs({ "X", "Y", "Z" }) do
+    opsTab:CreateButton({ Name = "Flip Clipboard " .. ax, Tooltip = "Mirror the clipboard on the " .. ax .. " axis.", Callback = function() flipClipboard(ax) end })
+end
+opsTab:CreateButton({ Name = "Scale 2x", Tooltip = "Double the clipboard, nearest-neighbour.", Callback = function() scaleClipboard(2) end })
+opsTab:CreateButton({ Name = "Scale 3x", Tooltip = "Triple the clipboard, nearest-neighbour.", Callback = function() scaleClipboard(3) end })
+
+opsTab:CreateSection("Blueprints", { Collapsible = true, Column = "right" })
+opsTab:CreateInput({
+    Name = "Blueprint Name",
+    Default = "MyBlueprint",
+    Callback = function(t) if t and t ~= "" then O.blueprintName = t end end
+})
+opsTab:CreateButton({ Name = "Save Blueprint", Tooltip = "Write the clipboard to autoBuilder/blueprints for later.", Callback = saveBlueprint })
+bpDropdown = opsTab:CreateDropdown({
+    Name = "Load Blueprint",
+    Options = blueprintFiles(), CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v) loadBlueprint((typeof(v) == "table") and v[1] or v) end
+})
+opsTab:CreateButton({ Name = "Refresh Blueprints", Tooltip = "Rescan the blueprints folder.", Callback = function()
+    pcall(function() bpDropdown:Refresh(blueprintFiles()) end)
+    notify("Blueprints", "List refreshed", 2, "info")
+end })
+opsTab:CreateButton({ Name = "Export Selection as CSV", Tooltip = "Write x,y,z,block rows to the blueprints folder.", Callback = exportCSV })
+
+-- ── editor keybinds ────────────────────────────────────────────────────────
+-- Ctrl+C / X / V / J work whenever the Operations tab's shortcuts are enabled.
+local editorKeys
+opsTab:CreateSection("Shortcuts", { Collapsible = true })
+opsTab:CreateParagraph({
+    Title = "Editor Keybinds",
+    Content = "Ctrl+C copy · Ctrl+X cut · Ctrl+V paste · Ctrl+J duplicate\nCtrl+Z undo · Ctrl+Y redo (always on while a Builder tool is active)",
+})
+opsTab:CreateToggle({
+    Name = "Enable Clipboard Shortcuts",
+    CurrentValue = false,
+    Tooltip = "Listen for Ctrl+C/X/V/J globally. Turn off if they clash with anything.",
+    Callback = function(on)
+        if editorKeys then editorKeys:Disconnect() editorKeys = nil end
+        if not on then return end
+        editorKeys = UserInputService.InputBegan:Connect(function(input, gp)
+            if gp or not ctrlDown() then return end
+            local k = input.KeyCode
+            if k == Enum.KeyCode.C then copySelection(false)
+            elseif k == Enum.KeyCode.X then copySelection(true)
+            elseif k == Enum.KeyCode.V then pasteClipboard()
+            elseif k == Enum.KeyCode.J then copySelection(false, pasteClipboard)
+            elseif k == Enum.KeyCode.Z then doUndo()
+            elseif k == Enum.KeyCode.Y then doRedo() end
+        end)
+    end
+})
+
+Duvome:AddWatch("Clipboard", function()
+    return O.clip and (#O.clip.cells .. " blocks") or false
+end)
+
 Duvome:AddWatch("Builder", function() return B.tool or false end)
 Duvome:AddWatch("Symmetry", function()
     if not B.sym then return false end
