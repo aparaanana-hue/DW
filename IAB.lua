@@ -2911,7 +2911,7 @@ previewTab:CreateButton({
     end
 })
 
-addObjectsSection(previewTab, "Stamp File as Object", selectedFileBlocks)
+-- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
 previewTab:CreateSection("Appearance")
 
@@ -5521,47 +5521,74 @@ toolTab:CreateToggle({
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OPERATION BUTTONS
 -- ═══════════════════════════════════════════════════════════════════════════
-local function opButton(section, name, tip, fn, needsSelection)
-    section:CreateButton({
-        Name = name,
-        Tooltip = tip,
-        Callback = function()
-            task.spawn(function()
-                if needsSelection ~= false and not requireSelection() then return end
-                local ok, err = pcall(fn)
-                if not ok then notifyErr(name .. " Failed", tostring(err), 5) end
-            end)
+-- One dropdown plus one Run button, instead of a button per operation.
+-- The description updates as you change the selection so nothing is lost.
+local TOOL_OPS = {
+    { "Painter",       "Repaint the whole selection in the primary block.",                          ops.Painter,      true  },
+    { "Noise Painter", "Blend primary and secondary blocks using Mix % and Seed.",                   ops.NoisePainter, true  },
+    { "Clentaminator", "Convert only 'Replace This Block' into the primary block.",                  ops.Clentaminator,true  },
+    { "Rock",          "Replace the selection with a boulder. Strength controls lumpiness.",         ops.Rock,         true  },
+    { "Extrude",       "Repeat the selection along Axis by Amount.",                                 ops.Extrude,      true  },
+    { "Weld",          "Grow the selection outward one block, closing seams and pits.",              ops.Weld,         true  },
+    { "Melt",          "Erode exposed blocks so hard edges round off.",                              ops.Melt,         true  },
+    { "Shatter",       "Randomly delete Percent of the selection for a ruined look.",                ops.Shatter,      true  },
+    { "Elevation",     "Shift the selection by Amount along Axis.",                                  ops.Elevation,    true  },
+    { "Flatten",       "Level every column to the lowest point in the selection.",                   ops.Flatten,      true  },
+    { "Slope",         "Ramp the surface by Amount across Axis.",                                    ops.Slope,        true  },
+    { "Smooth",        "Average each column against its neighbours.",                                ops.Smooth,       true  },
+    { "Roughen",       "Jitter surface heights by up to Strength.",                                  ops.Roughen,      true  },
+    { "Distort",       "Randomly displace every block by up to Strength.",                           ops.Distort,      true  },
+    { "Build Text",    "Turn the Text box into blocks in front of you (A-Z, 0-9, - . !).",           ops.Text,         false },
+}
+
+local toolOpNames = {}
+for _, e in ipairs(TOOL_OPS) do toolOpNames[#toolOpNames + 1] = e[1] end
+
+local chosenOp = TOOL_OPS[1]
+local opDescPara
+
+toolTab:CreateSection("Edit Operations")
+
+toolTab:CreateDropdown({
+    Name = "Operation",
+    Options = toolOpNames, CurrentOption = { "Painter" }, MultipleOptions = false,
+    Flag = "ToolOp",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(TOOL_OPS) do
+            if e[1] == name then
+                chosenOp = e
+                pcall(function()
+                    opDescPara:Set({ Title = name, Content = e[2] })
+                end)
+                break
+            end
         end
-    })
-end
+    end
+})
 
-toolTab:CreateSection("Paint", { Collapsible = true })
-opButton(toolTab, "Painter", "Repaint the whole selection in the primary block.", ops.Painter)
-opButton(toolTab, "Noise Painter", "Blend primary and secondary blocks using the Mix percentage and Seed.", ops.NoisePainter)
-opButton(toolTab, "Clentaminator", "Convert only 'Replace This Block' into the primary block, leaving everything else.", ops.Clentaminator)
+opDescPara = toolTab:CreateParagraph({
+    Title = TOOL_OPS[1][1],
+    Content = TOOL_OPS[1][2],
+})
 
-toolTab:CreateSection("Shape", { Collapsible = true })
-opButton(toolTab, "Rock", "Replace the selection with a natural boulder filling its bounds. Strength controls lumpiness.", ops.Rock)
-opButton(toolTab, "Extrude", "Repeat the selection along the chosen Axis by Amount.", ops.Extrude)
-opButton(toolTab, "Weld", "Grow the selection outward by one block, closing seams and pits.", ops.Weld)
-opButton(toolTab, "Melt", "Erode exposed blocks so hard edges round off.", ops.Melt)
-opButton(toolTab, "Shatter", "Randomly delete Percent of the selection for a ruined look.", ops.Shatter)
-
-toolTab:CreateSection("Terrain", { Collapsible = true })
-opButton(toolTab, "Elevation", "Shift the whole selection by Amount along the chosen Axis.", ops.Elevation)
-opButton(toolTab, "Flatten", "Level every column down to the lowest point in the selection.", ops.Flatten)
-opButton(toolTab, "Slope", "Ramp the selection's surface by Amount across the chosen Axis.", ops.Slope)
-opButton(toolTab, "Smooth", "Average each column against its neighbours to soften terrain.", ops.Smooth)
-opButton(toolTab, "Roughen", "Jitter surface heights by up to Strength for natural variation.", ops.Roughen)
-opButton(toolTab, "Distort", "Randomly displace every block in all directions by up to Strength.", ops.Distort)
-
-toolTab:CreateSection("Text", { Collapsible = true })
 toolTab:CreateInput({
     Name = "Text",
     Default = "HELLO",
     Callback = function(t) if t and t ~= "" then T.text = t end end
 })
-opButton(toolTab, "Build Text", "Turn the text above into blocks in front of you. Supports A-Z, 0-9, dash, dot and exclamation.", ops.Text, false)
+
+toolTab:CreateButton({
+    Name = "Run Operation",
+    Tooltip = "Run the operation chosen above on the current selection.",
+    Callback = function()
+        task.spawn(function()
+            if chosenOp[4] ~= false and not requireSelection() then return end
+            local ok, err = pcall(chosenOp[3])
+            if not ok then notifyErr(chosenOp[1] .. " Failed", tostring(err), 5) end
+        end)
+    end
+})
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OUTPUT
@@ -6284,7 +6311,6 @@ local function stopSession()
     setStatus("Builder", "No tool active.")
 end
 
-local toolToggles = {}
 
 local function startSession(toolName)
     for _, c in ipairs(B.conns) do pcall(function() c:Disconnect() end) end
@@ -6455,37 +6481,51 @@ histPara = buildTab:CreateParagraph({
     Content = "0 undo · 0 redo",
 })
 
-local function toolToggle(name, tip)
-    local tg
-    tg = buildTab:CreateToggle({
-        Name = name,
-        CurrentValue = false,
-        Tooltip = tip,
-        Callback = function(on)
-            if on then
-                -- only one builder tool at a time
-                for other, ref in pairs(toolToggles) do
-                    if other ~= name then pcall(function() ref:Set(false) end) end
-                end
-                startSession(name)
-            elseif B.tool == name then
-                stopSession()
-            end
-        end
-    })
-    toolToggles[name] = tg
-    return tg
-end
+-- One dropdown picks the tool, one toggle arms it. Replaces seven toggles that
+-- all had to be manually kept mutually exclusive.
+B.toolList = {
+    { "Move",           "Left-click a corner, right-click the opposite, scroll to lift the hologram, right-click to confirm. Originals are removed." },
+    { "Clone",          "Same as Move but the originals stay. Right-click confirms a copy, left-click finishes." },
+    { "Stack",          "Repeats the selection in a row. Scroll to aim, set Stack Count, right-click to confirm." },
+    { "Smear",          "Stretches the selection between its origin and where you nudge it, filling every step." },
+    { "Extrude",        "No selection needed. Right-click a face to extrude it out, left-click to shrink it back." },
+    { "Erase",          "Select a cuboid then press Delete or Backspace. Right-click a block to erase connected blocks of that type." },
+    { "Setup Symmetry", "Right-click to place the symmetry node, then Ctrl+F or Ctrl+R to enable mirroring for every other tool." },
+}
+B.toolNames = {}
+for _, e in ipairs(B.toolList) do B.toolNames[#B.toolNames + 1] = e[1] end
+B.pick = B.toolList[1]
 
 buildTab:CreateSection("Tools")
 
-toolToggle("Move", "Left-click a corner, right-click the opposite, scroll to lift the hologram, right-click to confirm. Originals are removed.")
-toolToggle("Clone", "Same as Move but the originals stay. Right-click confirms a copy, left-click finishes.")
-toolToggle("Stack", "Repeats the selection in a row. Scroll to aim, set Stack Count, right-click to confirm.")
-toolToggle("Smear", "Stretches the selection between its origin and where you nudge it, filling every step.")
-toolToggle("Extrude", "No selection needed. Right-click a face to extrude it out, left-click to shrink it back.")
-toolToggle("Erase", "Select a cuboid then press Delete or Backspace. Right-click a block to erase connected blocks of that type.")
-toolToggle("Setup Symmetry", "Right-click to place the symmetry node, then Ctrl+F or Ctrl+R to enable mirroring for every other tool.")
+buildTab:CreateDropdown({
+    Name = "Active Tool",
+    Options = B.toolNames, CurrentOption = { "Move" }, MultipleOptions = false,
+    Flag = "BldTool",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(B.toolList) do
+            if e[1] == name then
+                B.pick = e
+                pcall(function() B.pickDesc:Set({ Title = name, Content = e[2] }) end)
+                break
+            end
+        end
+        -- switching tools while armed re-arms the new one
+        if B.tool then startSession(B.pick[1]) end
+    end
+})
+
+B.pickDesc = buildTab:CreateParagraph({ Title = B.toolList[1][1], Content = B.toolList[1][2] })
+
+B.armToggle = buildTab:CreateToggle({
+    Name = "Enable Tool",
+    CurrentValue = false,
+    Tooltip = "Arms the selected tool so it captures your mouse and keyboard.",
+    Callback = function(on)
+        if on then startSession(B.pick[1]) else stopSession() end
+    end
+})
 
 buildTab:CreateSection("Options", { Column = "right" })
 
@@ -6536,7 +6576,7 @@ buildTab:CreateButton({
     Tooltip = "Release the mouse and keyboard from the builder.",
     Callback = function()
         stopSession()
-        for _, ref in pairs(toolToggles) do pcall(function() ref:Set(false) end) end
+        pcall(function() B.armToggle:Set(false) end)
     end
 })
 
@@ -7215,63 +7255,76 @@ opsTab:CreateToggle({
     Callback = function(v) O.keepExisting = v end
 })
 
-opsTab:CreateSection("Fill", { Collapsible = true })
-for _, m in ipairs({ "Fill", "Outline", "Walls", "Top", "Bottom" }) do
-    opsTab:CreateButton({
-        Name = "Fill " .. m,
-        Tooltip = "Write the active block into the " .. m:lower() .. " of the selection.",
-        Callback = function() fillMode(m) end
-    })
-end
+-- Every operation behind one dropdown and one Run button. Selecting an
+-- operation shows what it does, so the tooltips are not lost.
+O.list = {
+    { "Fill",             "Fill the whole selection with the active block.",                    function() fillMode("Fill") end },
+    { "Fill Outline",     "Fill only the 12 edges of the selection.",                           function() fillMode("Outline") end },
+    { "Fill Walls",       "Fill the four vertical sides of the selection.",                     function() fillMode("Walls") end },
+    { "Fill Top",         "Fill the top face of the selection.",                                function() fillMode("Top") end },
+    { "Fill Bottom",      "Fill the bottom face of the selection.",                             function() fillMode("Bottom") end },
+    { "Fill Nearest",     "Fill each empty cell with whichever solid block is closest.",        fillNearest },
+    { "Fill Gaps",        "Fill fully enclosed pockets of air with the active block.",          fillGaps },
+    { "Replace",          "Swap 'Replace This Block' for the active block in the selection.",   replaceBlocks },
+    { "Hollow",           "Remove every fully enclosed interior block, leaving a shell.",       hollowSelection },
+    { "Drain",            "Remove water blocks inside the selection.",                          drainSelection },
+    { "Simulate Gravity", "Drop every block in the selection until it rests on something.",     simulateGravity },
+    { "Smoothsnow",       "Lay one layer of the active block over the top surface.",            smoothSnow },
+    { "Autoshade",        "Shade exposed surfaces into the dark/mid/light palette below.",      autoshade },
+    { "Analyze",          "Count every block type inside the selection.",                       analyzeSelection },
+    { "Expand Selection", "Grow the selection box outward on every axis.",                      function() growSelection(O.expandBy) end },
+    { "Shrink Selection", "Pull the selection box inward on every axis.",                       function() growSelection(-O.expandBy) end },
+}
+
+O.names = {}
+for _, e in ipairs(O.list) do O.names[#O.names + 1] = e[1] end
+
+O.chosen = O.list[1]
+
+opsTab:CreateSection("Run an Operation")
+
+opsTab:CreateDropdown({
+    Name = "Operation",
+    Options = O.names, CurrentOption = { "Fill" }, MultipleOptions = false,
+    Flag = "OpsPick",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(O.list) do
+            if e[1] == name then
+                O.chosen = e
+                pcall(function() O.desc:Set({ Title = name, Content = e[2] }) end)
+                break
+            end
+        end
+    end
+})
+
+O.desc = opsTab:CreateParagraph({ Title = O.list[1][1], Content = O.list[1][2] })
+
 opsTab:CreateButton({
-    Name = "Fill Nearest",
-    Tooltip = "Fill each empty cell with whichever solid block is closest to it.",
-    Callback = fillNearest
-})
-opsTab:CreateButton({
-    Name = "Fill Gaps",
-    Tooltip = "Fill fully enclosed pockets of air with the active block.",
-    Callback = fillGaps
+    Name = "Run Operation",
+    Tooltip = "Run the operation chosen above on the Builder selection.",
+    Callback = function() O.chosen[3]() end
 })
 
-opsTab:CreateSection("Modify", { Collapsible = true })
-opsTab:CreateButton({ Name = "Replace", Tooltip = "Swap one block type for the active block inside the selection.", Callback = replaceBlocks })
-opsTab:CreateButton({ Name = "Hollow", Tooltip = "Remove every fully enclosed interior block, leaving a shell.", Callback = hollowSelection })
-opsTab:CreateButton({ Name = "Drain", Tooltip = "Remove water blocks inside the selection.", Callback = drainSelection })
-opsTab:CreateButton({ Name = "Simulate Gravity", Tooltip = "Drop every block in the selection until it rests on something.", Callback = simulateGravity })
-opsTab:CreateButton({ Name = "Smoothsnow", Tooltip = "Lay one layer of the active block over the top surface of the selection.", Callback = smoothSnow })
-
-opsTab:CreateSection("Autoshade", { Collapsible = true, Column = "right" })
-opsTab:CreateParagraph({
-    Title = "How Autoshade Works",
-    Content = "Counts how enclosed each exposed surface block is, then swaps it for a dark, mid or light block. More neighbours means darker.",
-})
-opsTab:CreateDropdown({
-    Name = "Dark Block", Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
-    Flag = "OpsShadeDark",
-    Callback = function(v) O.shadeDark = (typeof(v) == "table") and v[1] or v end
-})
-opsTab:CreateDropdown({
-    Name = "Mid Block", Options = opsBlocks, CurrentOption = { "whiteBlock" }, MultipleOptions = false,
-    Flag = "OpsShadeMid",
-    Callback = function(v) O.shadeMid = (typeof(v) == "table") and v[1] or v end
-})
-opsTab:CreateDropdown({
-    Name = "Light Block", Options = opsBlocks, CurrentOption = { "whiteBlock" }, MultipleOptions = false,
-    Flag = "OpsShadeLight",
-    Callback = function(v) O.shadeLight = (typeof(v) == "table") and v[1] or v end
-})
-opsTab:CreateButton({ Name = "Run Autoshade", Tooltip = "Shade the exposed surface of the selection.", Callback = autoshade })
-
-opsTab:CreateSection("Selection", { Collapsible = true, Column = "right" })
 opsTab:CreateSlider({
     Name = "Expand / Shrink By",
     Range = { 1, 16 }, Increment = 1, CurrentValue = 1, Suffix = "blk", Flag = "OpsExpand",
     Callback = function(v) O.expandBy = v end
 })
-opsTab:CreateButton({ Name = "Expand Selection", Tooltip = "Grow the selection box outward on every axis.", Callback = function() growSelection(O.expandBy) end })
-opsTab:CreateButton({ Name = "Shrink Selection", Tooltip = "Pull the selection box inward on every axis.", Callback = function() growSelection(-O.expandBy) end })
-opsTab:CreateButton({ Name = "Analyze", Tooltip = "Count every block type inside the selection.", Callback = analyzeSelection })
+
+opsTab:CreateSection("Autoshade Palette", { Collapsible = true, Column = "right" })
+for _, sl in ipairs({
+    { "Dark Block",  "stone",      "OpsShadeDark",  function(v) O.shadeDark  = v end },
+    { "Mid Block",   "whiteBlock", "OpsShadeMid",   function(v) O.shadeMid   = v end },
+    { "Light Block", "whiteBlock", "OpsShadeLight", function(v) O.shadeLight = v end },
+}) do
+    opsTab:CreateDropdown({
+        Name = sl[1], Options = opsBlocks, CurrentOption = { sl[2] }, MultipleOptions = false,
+        Flag = sl[3],
+        Callback = function(v) sl[4]((typeof(v) == "table") and v[1] or v) end
+    })
+end
 
 analyzePara = opsTab:CreateParagraph({
     Title = "Analyze",
@@ -7279,16 +7332,48 @@ analyzePara = opsTab:CreateParagraph({
 })
 
 opsTab:CreateSection("Clipboard", { Collapsible = true })
-opsTab:CreateButton({ Name = "Copy", Tooltip = "Copy the selection's blocks to the clipboard.", Callback = function() copySelection(false) end })
-opsTab:CreateButton({ Name = "Cut", Tooltip = "Copy the selection then remove the originals.", Callback = function() copySelection(true) end })
-opsTab:CreateButton({ Name = "Paste", Tooltip = "Paste the clipboard at the selection's low corner, or at you if there is no selection.", Callback = pasteClipboard })
-opsTab:CreateDivider()
-opsTab:CreateButton({ Name = "Rotate Clipboard 90", Tooltip = "Rotate the clipboard clockwise about Y.", Callback = rotateClipboard })
-for _, ax in ipairs({ "X", "Y", "Z" }) do
-    opsTab:CreateButton({ Name = "Flip Clipboard " .. ax, Tooltip = "Mirror the clipboard on the " .. ax .. " axis.", Callback = function() flipClipboard(ax) end })
-end
-opsTab:CreateButton({ Name = "Scale 2x", Tooltip = "Double the clipboard, nearest-neighbour.", Callback = function() scaleClipboard(2) end })
-opsTab:CreateButton({ Name = "Scale 3x", Tooltip = "Triple the clipboard, nearest-neighbour.", Callback = function() scaleClipboard(3) end })
+
+O.clipList = {
+    { "Copy",      "Copy the selection's blocks to the clipboard.",            function() copySelection(false) end },
+    { "Cut",       "Copy the selection then remove the originals.",            function() copySelection(true) end },
+    { "Paste",     "Paste at the selection's low corner, or at you if none.",  pasteClipboard },
+    { "Duplicate", "Copy and immediately paste in one step.",                  function() copySelection(false, pasteClipboard) end },
+    { "Rotate 90", "Rotate the clipboard clockwise about Y.",                  rotateClipboard },
+    { "Flip X",    "Mirror the clipboard on the X axis.",                      function() flipClipboard("X") end },
+    { "Flip Y",    "Mirror the clipboard on the Y axis.",                      function() flipClipboard("Y") end },
+    { "Flip Z",    "Mirror the clipboard on the Z axis.",                      function() flipClipboard("Z") end },
+    { "Scale 2x",  "Double the clipboard, nearest-neighbour.",                 function() scaleClipboard(2) end },
+    { "Scale 3x",  "Triple the clipboard, nearest-neighbour.",                 function() scaleClipboard(3) end },
+}
+
+O.clipNames = {}
+for _, e in ipairs(O.clipList) do O.clipNames[#O.clipNames + 1] = e[1] end
+
+O.clipChosen = O.clipList[1]
+
+opsTab:CreateDropdown({
+    Name = "Clipboard Action",
+    Options = O.clipNames, CurrentOption = { "Copy" }, MultipleOptions = false,
+    Flag = "OpsClip",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(O.clipList) do
+            if e[1] == name then
+                O.clipChosen = e
+                pcall(function() O.clipDesc:Set({ Title = name, Content = e[2] }) end)
+                break
+            end
+        end
+    end
+})
+
+O.clipDesc = opsTab:CreateParagraph({ Title = O.clipList[1][1], Content = O.clipList[1][2] })
+
+opsTab:CreateButton({
+    Name = "Run Clipboard Action",
+    Tooltip = "Run the clipboard action chosen above.",
+    Callback = function() O.clipChosen[3]() end
+})
 
 opsTab:CreateSection("Blueprints", { Collapsible = true, Column = "right" })
 opsTab:CreateInput({
