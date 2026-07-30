@@ -212,12 +212,22 @@ function main:CreateTab(name, icon)
     return wrapTab(container)
 end
 
-local auto = main:CreateTab("Auto Build", "hammer")
-local previewTab = main:CreateTab("Preview", "eye")
-local saveTab = main:CreateTab("Save Build", "save")
-local structTab = main:CreateTab("Structures", "mountain")
-local cityTab = main:CreateTab("City Gen", "building-2")
-local platTab = main:CreateTab("Platforms", "layout-grid")
+-- Four tabs instead of eleven. The old per-feature tab variables now alias a
+-- shared tab, so each feature keeps its own sections without its own tab.
+local tabBuild    = main:CreateTab("Build", "hammer")
+local tabGenerate = main:CreateTab("Generate", "mountain")
+local tabEdit     = main:CreateTab("Edit", "wand-sparkles")
+local tabPaint    = main:CreateTab("Paint", "palette")
+
+-- Build: placing, previewing and saving a build file
+local auto        = tabBuild
+local previewTab  = tabBuild
+local saveTab     = tabBuild
+
+-- Generate: procedural content
+local structTab   = tabGenerate
+local cityTab     = tabGenerate
+local platTab     = tabGenerate
 
 local net = ReplicatedStorage
     :WaitForChild("rbxts_include")
@@ -2317,8 +2327,6 @@ end
 
 addObjectsSection(auto, "Stamp File as Object", selectedFileBlocks)
 
-auto:CreateSection("Style & Speed")
-
 do
 local saveFileName = "MyBuild"
 local saveSplitMode = "Full"
@@ -2583,6 +2591,8 @@ local function showSelBox()
     end)
 end
 
+saveTab:CreateSection("Save Build")
+
 saveTab:CreateInput({
     Name = "Save As",
     PlaceholderText = "MyBuild",
@@ -2752,6 +2762,8 @@ saveTab:CreateButton({
 
 end
 
+auto:CreateSection("Style & Speed")
+
 auto:CreateDropdown({
     Name = "Build Style",
     Options = {"Around Preview", "Expand from Middle", "Batch (verify)"},
@@ -2860,6 +2872,8 @@ local gapSlider = auto:CreateSlider({
         buildStandoff = v
     end
 })
+
+previewTab:CreateSection("Preview")
 
 previewTab:CreateParagraph({
     Title = "Schematic Preview",
@@ -3965,7 +3979,7 @@ structTab:CreateToggle({
     end
 })
 
-structTab:CreateSection("Generate")
+structTab:CreateSection("Structure Output")
 
 local structStatsParagraph = structTab:CreateParagraph({
     Title = "Shape Stats",
@@ -4259,12 +4273,14 @@ local function cityGenerate()
     return cellsToBlocks(all), lotFiles
 end
 
+cityTab:CreateSection("City Generator")
+
 cityTab:CreateParagraph({
     Title = "City Generator",
     Content = "Makes roads and drops a house on each lot. The same seed makes the same city. Then preview and build it."
 })
 
-cityTab:CreateSection("Layout", { Column = "left" })
+cityTab:CreateSection("City Layout", { Column = "left" })
 
 for _, s in ipairs({
     { "Lots Across",  1,  8, 1, 3,  "CityLotsX", function(v) cityLotsX = v end },
@@ -4282,7 +4298,7 @@ for _, s in ipairs({
     })
 end
 
-cityTab:CreateSection("Houses", { Column = "left" })
+cityTab:CreateSection("City Houses", { Column = "left" })
 
 -- Was two separate Min/Max sliders; a single two-handle range slider makes the
 -- relationship obvious and can't be set inside-out.
@@ -4303,7 +4319,7 @@ cityTab:CreateSlider({
     Callback = function(v) citySeed = v end
 })
 
-cityTab:CreateSection("Terrain", { Column = "left" })
+cityTab:CreateSection("City Terrain", { Column = "left" })
 
 cityTab:CreateToggle({
     Name = "Generate on Landscape",
@@ -4319,7 +4335,7 @@ cityTab:CreateSlider({
     Callback = function(v) cityTerrainH = v end
 })
 
-cityTab:CreateSection("Blocks", { Column = "right" })
+cityTab:CreateSection("City Blocks", { Column = "right" })
 
 -- One dropdown per material slot. Same shape for all of them, so they are
 -- described as data and built in a loop.
@@ -4348,7 +4364,7 @@ for _, slot in ipairs(cityBlockSlots) do
     })
 end
 
-cityTab:CreateSection("Generate", { Column = "right" })
+cityTab:CreateSection("City Output", { Column = "right" })
 
 local cityStats = cityTab:CreateParagraph({
     Title = "City Stats",
@@ -4539,6 +4555,8 @@ local function platGenerate()
     return out
 end
 
+platTab:CreateSection("Platform Designer")
+
 platTab:CreateParagraph({
     Title = "Platform Designer",
     Content = "Makes fancy floor patterns. Pick a style, change the seed and density, preview it, then generate a file."
@@ -4579,7 +4597,7 @@ platTab:CreateToggle({
     Callback = function(v) platMirrorDiag = v end
 })
 
-platTab:CreateSection("Blocks")
+platTab:CreateSection("Platform Blocks")
 
 local platOpts = platBlockOptions()
 
@@ -4612,7 +4630,7 @@ platBaseDropdown = platTab:CreateDropdown({
     Callback = function(v) platBaseBlock = (typeof(v) == "table") and v[1] or v end
 })
 
-platTab:CreateSection("Generate")
+platTab:CreateSection("Platform Output")
 
 local platStats = platTab:CreateParagraph({
     Title = "Pattern Stats",
@@ -4696,7 +4714,7 @@ do
 local BS = 3                    -- world studs per block, matches previewBlockSize
 local mouse = LocalPlayer:GetMouse()
 
-local toolTab = main:CreateTab("Tools", "wand-sparkles")
+local toolTab = tabEdit
 
 -- ── grid helpers ───────────────────────────────────────────────────────────
 local function cellKey(x, y, z)
@@ -4875,7 +4893,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SELECTION TOOLS
 -- ═══════════════════════════════════════════════════════════════════════════
-toolTab:CreateSection("Selection")
+toolTab:CreateSection("Selection Tools")
 
 statusPara = toolTab:CreateParagraph({
     Title = "Active Tool",
@@ -5593,7 +5611,7 @@ toolTab:CreateButton({
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OUTPUT
 -- ═══════════════════════════════════════════════════════════════════════════
-toolTab:CreateSection("Output", { Column = "right" })
+toolTab:CreateSection("Tool Output", { Column = "right" })
 
 toolTab:CreateParagraph({
     Title = "How This Works",
@@ -5700,7 +5718,7 @@ local BS = 3
 local mouse = LocalPlayer:GetMouse()
 local Camera = Workspace.CurrentCamera
 
-local buildTab = main:CreateTab("Builder", "hammer")
+local buildTab = tabEdit
 
 -- ── remote for breaking blocks ─────────────────────────────────────────────
 local hitRemote
@@ -6496,7 +6514,7 @@ B.toolNames = {}
 for _, e in ipairs(B.toolList) do B.toolNames[#B.toolNames + 1] = e[1] end
 B.pick = B.toolList[1]
 
-buildTab:CreateSection("Tools")
+buildTab:CreateSection("Builder Tools")
 
 buildTab:CreateDropdown({
     Name = "Active Tool",
@@ -6527,7 +6545,7 @@ B.armToggle = buildTab:CreateToggle({
     end
 })
 
-buildTab:CreateSection("Options", { Column = "right" })
+buildTab:CreateSection("Builder Options", { Column = "right" })
 
 buildTab:CreateSlider({
     Name = "Stack Count",
@@ -6660,7 +6678,7 @@ local startSession, stopSession, targetPart = BA.startSession, BA.stopSession, B
 -- so Ctrl+Z reverts an operation exactly like it reverts a Move.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local opsTab = main:CreateTab("Operations", "layers")
+local opsTab = tabPaint
 
 local O = {
     activeBlock = "stone",
@@ -7211,7 +7229,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OPERATIONS UI
 -- ═══════════════════════════════════════════════════════════════════════════
-opsTab:CreateSection("Status")
+opsTab:CreateSection("Operations")
 
 opsStatus = opsTab:CreateParagraph({
     Title = "Operations",
@@ -7457,7 +7475,7 @@ local opsSet, needSelection, selBounds, selCells, opsBlockOptions =
 -- Also inside the Builder scope so the painter can use the selection and undo.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local colTab = main:CreateTab("Colour", "palette")
+local colTab = tabPaint
 
 local C = {
     cache = nil,            -- { {name=, col=Color3, L=, a=, b=} }
