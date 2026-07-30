@@ -1,4 +1,4 @@
-local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/PrizLovesRice1/PrizsHub/refs/heads/main/DL.lua"))()
+local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
 
 local TAB_ICONS = {
 	Home                 = "house",
