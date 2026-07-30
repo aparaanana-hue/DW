@@ -16,7 +16,8 @@ local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
     IntroText    = "Priz's Islands Hub",
     ConfigFolder = "PrizIslandsHub",
-    SaveConfig   = false,
+    SaveConfig   = true,
+    AutoLoadConfig = false,
     IntroEnabled = true,
     ShowIcon     = true,
 })
@@ -26,6 +27,14 @@ local function _asTable(v)
     return { v }
 end
 
+-- Compatibility shim over the Duvome element API.
+-- Legacy config keys (CurrentValue / Range / Suffix / CurrentOption / MultipleOptions)
+-- still work. Native extras are passed through where the library supports them:
+--   Tooltip  -> buttons and toggles only
+--   Keybind  -> buttons and toggles (ShowKeybind)
+--   Gear     -> toggles (popover with colorpicker/slider/toggle/keybind rows)
+--   Color    -> toggles, sliders, range sliders
+--   Collapsible / Column -> sections
 local function wrapTab(container)
     local tab = {}
 
@@ -39,16 +48,34 @@ local function wrapTab(container)
         return currentSection or current
     end
 
-    function tab:CreateSection(name)
+    -- opts.Column = "left"/"right" pins a side, otherwise sections alternate.
+    -- opts.Collapsible starts the section folded.
+    function tab:CreateSection(name, opts)
+        opts = opts or {}
         sectionCount = sectionCount + 1
-        current = (sectionCount % 2 == 1) and left or right
-        currentSection = current:AddSection({ Name = name })
+        if opts.Column == "left" then
+            current = left
+        elseif opts.Column == "right" then
+            current = right
+        else
+            current = (sectionCount % 2 == 1) and left or right
+        end
+        currentSection = current:AddSection({
+            Name = name,
+            Collapsible = opts.Collapsible,
+        })
         return currentSection
+    end
+
+    function tab:CreateDivider()
+        return cur():AddDivider()
     end
 
     function tab:CreateButton(cfg)
         return cur():AddButton({
             Name = cfg.Name,
+            Tooltip = cfg.Tooltip,
+            ShowKeybind = cfg.Keybind,
             Callback = cfg.Callback or function() end,
         })
     end
@@ -60,6 +87,9 @@ local function wrapTab(container)
             Flag = cfg.Flag,
             Save = cfg.Flag ~= nil,
             Tooltip = cfg.Tooltip,
+            Color = cfg.Color,
+            ShowKeybind = cfg.Keybind,
+            Options = cfg.Gear,
             Callback = cfg.Callback or function() end,
         })
     end
@@ -75,6 +105,47 @@ local function wrapTab(container)
             ValueName = cfg.Suffix or "",
             Flag = cfg.Flag,
             Save = cfg.Flag ~= nil,
+            Color = cfg.Color,
+            Callback = cfg.Callback or function() end,
+        })
+    end
+
+    function tab:CreateRangeSlider(cfg)
+        local rng = cfg.Range or { 0, 100 }
+        return cur():AddRangeSlider({
+            Name = cfg.Name,
+            Min = rng[1],
+            Max = rng[2],
+            DefaultMin = cfg.DefaultMin or rng[1],
+            DefaultMax = cfg.DefaultMax or rng[2],
+            Increment = cfg.Increment or 1,
+            ValueName = cfg.Suffix or "",
+            Flag = cfg.Flag,
+            Save = cfg.Flag ~= nil,
+            Color = cfg.Color,
+            Callback = cfg.Callback or function() end,
+        })
+    end
+
+    function tab:CreateColorpicker(cfg)
+        return cur():AddColorpicker({
+            Name = cfg.Name,
+            Default = cfg.Default or Color3.fromRGB(255, 255, 255),
+            UseAlpha = cfg.UseAlpha,
+            Flag = cfg.Flag,
+            Save = cfg.Flag ~= nil,
+            Callback = cfg.Callback or function() end,
+        })
+    end
+
+    function tab:CreateBind(cfg)
+        return cur():AddBind({
+            Name = cfg.Name,
+            Default = cfg.Default,
+            Mode = cfg.Mode or "press",
+            Interval = cfg.Interval,
+            Flag = cfg.Flag,
+            Save = cfg.Flag ~= nil,
             Callback = cfg.Callback or function() end,
         })
     end
@@ -87,6 +158,7 @@ local function wrapTab(container)
             Options = cfg.Options or {},
             Default = default or "",
             MultiSelect = cfg.MultipleOptions or false,
+            SelectAll = cfg.MultipleOptions or false,
             Search = true,
             Flag = cfg.Flag,
             Save = cfg.Flag ~= nil,
@@ -224,11 +296,37 @@ pcall(function()
     VirtualInputManager = game:GetService("VirtualInputManager")
 end)
 
-local function notify(title, content, duration)
+-- notify(title, content, duration, type) -- type is "info"/"success"/"warning"/"error"
+local function notify(title, content, duration, ntype)
     Duvome:MakeNotification({
         Name = title,
         Content = content,
         Time = duration or 4,
+        Type = ntype,
+    })
+end
+
+local function notifyOK(title, content, duration)
+    notify(title, content, duration, "success")
+end
+
+local function notifyWarn(title, content, duration)
+    notify(title, content, duration, "warning")
+end
+
+local function notifyErr(title, content, duration)
+    notify(title, content, duration, "error")
+end
+
+-- Modal yes/no dialog, replaces the old "tap the button twice" confirmations.
+local function confirm(title, content, confirmText, onConfirm)
+    Duvome:Prompt({
+        Title = title,
+        Content = content,
+        Options = {
+            { Text = "Cancel", Callback = function() end },
+            { Text = confirmText or "Confirm", Callback = onConfirm },
+        },
     })
 end
 
@@ -2034,51 +2132,50 @@ fileDropdown = auto:CreateDropdown({
     end
 })
 
-local deleteArmed = false
 auto:CreateButton({
     Name = "Delete Selected File",
+    Tooltip = "Permanently delete the selected build file from the autoBuilder folder.",
     Callback = function()
         if not selectedFile or selectedFile == "" then
-            notify("No File", "Pick a build file first", 3)
+            notifyWarn("No File", "Pick a build file first", 3)
             return
         end
-        if not deleteArmed then
-            deleteArmed = true
-            notify("Confirm Delete", "Tap again within 4s to delete '" .. selectedFile .. "'", 4)
-            task.delay(4, function() deleteArmed = false end)
-            return
-        end
-        deleteArmed = false
-        local path = "autoBuilder/" .. selectedFile
-        local ok = pcall(function()
-            if isfile(path) then delfile(path) end
-        end)
-        pcall(function() clearAlignment(selectedFile) end)
-        if ok then
-            local deleted = selectedFile
-            selectedFile = nil
-            fileDropdown:Refresh(getFiles())
-            notify("Deleted", "'" .. deleted .. "' removed", 4)
-        else
-            notify("Delete Failed", "Couldn't delete the file", 4)
-        end
+        local target = selectedFile
+        confirm("Delete Build File",
+            "Permanently delete '" .. target .. "'? This cannot be undone.",
+            "Delete", function()
+                local ok = pcall(function()
+                    local path = "autoBuilder/" .. target
+                    if isfile(path) then delfile(path) end
+                end)
+                pcall(function() clearAlignment(target) end)
+                if ok then
+                    selectedFile = nil
+                    fileDropdown:Refresh(getFiles())
+                    notifyOK("Deleted", "'" .. target .. "' removed", 4)
+                else
+                    notifyErr("Delete Failed", "Couldn't delete the file", 4)
+                end
+            end)
     end
 })
 
 auto:CreateSection("Build")
 
 auto:CreateToggle({
-    Name = "Build",
+    Name = "Start Build",
     CurrentValue = false,
     Flag = "BuildToggle",
+    Keybind = true,
+    Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
     Callback = function(v)
         if v then
             if isBuilding then
-                notify("Busy", "A build is already running", 3)
+                notifyWarn("Busy", "A build is already running", 3)
                 return
             end
             if dragModeOn then
-                notify("Lock It First", "Turn off Move Handles to lock the spot", 3)
+                notifyWarn("Lock It First", "Turn off Move Handles to lock the spot", 3)
                 return
             end
             local data = loadSelectedBuild()
@@ -2089,7 +2186,7 @@ auto:CreateToggle({
             if previewTransform then
                 local src = data.blocks
                 task.spawn(function()
-                    notify("Building", "Building where the ghost sits", 3)
+                    notify("Building", "Building where the ghost sits", 3, "info")
                     local transformed = transformBlocks(src, previewTransform)
                     runBuild(transformed, missingOnly)
                 end)
@@ -2099,38 +2196,36 @@ auto:CreateToggle({
         else
             isBuilding = false
             releaseShift()
-            notify("Stopped", "Build stopped", 3)
+            notifyWarn("Stopped", "Build stopped", 3)
         end
     end
 })
 
 auto:CreateToggle({
-    Name = "Place Missing Blocks Only",
+    Name = "Skip Existing Blocks",
     CurrentValue = false,
     Flag = "PlaceMissingToggle",
+    Tooltip = "Only place blocks that are missing. Useful for finishing a partial build.",
     Callback = function(v)
         placeMissingOnly = v
     end
 })
 
 auto:CreateToggle({
-    Name = "Only Use Blocks I Have",
+    Name = "Only Use Blocks I Own",
     CurrentValue = false,
     Flag = "OnlyUseOwned",
+    Tooltip = "Skip any block type you don't have in your inventory instead of failing on it.",
     Callback = function(v)
         onlyUseOwned = v
     end
-})
-
-auto:CreateParagraph({
-    Title = "Recommended Settings",
-    Content = "Turn this on for smooth, safe settings. You can still change the sliders to go faster or slower."
 })
 
 auto:CreateToggle({
     Name = "Use Recommended Settings",
     CurrentValue = false,
     Flag = "UseRecommended",
+    Tooltip = "Applies safe, smooth values: interval 0.2, fly speed 25, gap 12. You can still adjust the sliders afterwards.",
     Callback = function(v)
         if v then
             pcall(function() intervalSlider:Set(0.2) end)
@@ -2139,7 +2234,7 @@ auto:CreateToggle({
             placeDelay = 0.2
             buildFlySpeed = 25
             buildStandoff = 12
-            notify("Recommended Applied", "Interval 0.2, Fly 25, Gap 12", 4)
+            notifyOK("Recommended Applied", "Interval 0.2, Fly 25, Gap 12", 4)
         end
     end
 })
@@ -2149,50 +2244,78 @@ progressParagraph = auto:CreateParagraph({
     Content = "Idle. Start a build to see live progress and ETA."
 })
 
-auto:CreateSection("Objects")
+-- The Objects controls are identical on every tab that can stamp geometry, so
+-- they are built from one place instead of being copy-pasted per tab. Each tab
+-- keeps its own scene name, matching the previous behaviour.
+local function addObjectsSection(tab, stampLabel, getBlocks)
+    local sceneName = "MyScene"
 
-auto:CreateButton({
-    Name = "Stamp File as Object",
-    Callback = function()
-        task.spawn(function()
-            local data = loadSelectedBuild()
-            if not data then
-                notify("No File", "Pick a build file first", 3)
-                return
-            end
-            objStamp(data.blocks, (selectedFile or "build"):gsub("%.json$", ""))
-        end)
+    tab:CreateSection("Objects", { Collapsible = true })
+
+    tab:CreateButton({
+        Name = stampLabel,
+        Tooltip = "Place the current blocks into the world as a movable object.",
+        Callback = function()
+            task.spawn(function()
+                local blocks, label = getBlocks()
+                if blocks and #blocks > 0 then
+                    objStamp(blocks, label)
+                end
+            end)
+        end
+    })
+
+    tab:CreateButton({
+        Name = "Duplicate",
+        Tooltip = "Make a copy of the selected object.",
+        Callback = function() objDuplicate() end
+    })
+
+    tab:CreateButton({
+        Name = "Delete",
+        Tooltip = "Remove the selected object.",
+        Callback = function() objDeleteSel() end
+    })
+
+    tab:CreateDivider()
+
+    tab:CreateInput({
+        Name = "Scene Name",
+        Default = sceneName,
+        Callback = function(t) if t and t ~= "" then sceneName = t end end
+    })
+
+    tab:CreateButton({
+        Name = "Combine All to Build File",
+        Tooltip = "Merge every stamped object into a single build file.",
+        Callback = function()
+            task.spawn(function() objCombineToFile(sceneName) end)
+        end
+    })
+
+    tab:CreateButton({
+        Name = "Clear All Objects",
+        Tooltip = "Remove every stamped object from the world.",
+        Callback = function()
+            confirm("Clear All Objects",
+                "This removes every stamped object from the world. This cannot be undone.",
+                "Clear All", function() objClearAll() end)
+        end
+    })
+end
+
+-- Blocks from the currently selected build file, used by Auto Build and Preview.
+local function selectedFileBlocks()
+    local data = loadSelectedBuild()
+    if not data then
+        notifyWarn("No File", "Pick a build file first", 3)
+        return nil
     end
-})
+    local label = (selectedFile or "build"):gsub("%.json$", "")
+    return data.blocks, label
+end
 
-auto:CreateButton({
-    Name = "Duplicate Selected",
-    Callback = function() objDuplicate() end
-})
-
-auto:CreateButton({
-    Name = "Delete Selected",
-    Callback = function() objDeleteSel() end
-})
-
-auto:CreateInput({
-    Name = "Combine Save As",
-    PlaceholderText = "MyScene",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then autoSceneName = t end end
-})
-
-auto:CreateButton({
-    Name = "Combine All to Build File",
-    Callback = function()
-        task.spawn(function() objCombineToFile(autoSceneName) end)
-    end
-})
-
-auto:CreateButton({
-    Name = "Clear All Objects",
-    Callback = function() objClearAll() end
-})
+addObjectsSection(auto, "Stamp File as Object", selectedFileBlocks)
 
 auto:CreateSection("Style & Speed")
 
@@ -2461,7 +2584,7 @@ local function showSelBox()
 end
 
 saveTab:CreateInput({
-    Name = "Save As (filename)",
+    Name = "Save As",
     PlaceholderText = "MyBuild",
     RemoveTextAfterFocusLost = false,
     Callback = function(text)
@@ -2508,7 +2631,8 @@ local blockSelCountLabel = saveTab:CreateParagraph({
 })
 
 saveTab:CreateToggle({
-    Name = "Block Brush (hold-click to select)",
+    Name = "Block Brush",
+    Tooltip = "Hold click and drag over blocks in the world to add them to the selection.",
     CurrentValue = false,
     Flag = "BlockBrush",
     Callback = function(v)
@@ -2640,18 +2764,21 @@ auto:CreateDropdown({
 })
 
 local intervalSlider = auto:CreateSlider({
-    Name = "Place Interval (seconds)",
+    Name = "Place Interval",
     Range = {0.005, 1},
     Increment = 0.005,
     CurrentValue = 0.02,
+    Suffix = "s",
     Flag = "PlaceInterval",
     Callback = function(v)
         placeDelay = v
     end
 })
 
+auto:CreateSection("Advanced Speed", { Collapsible = true })
+
 auto:CreateToggle({
-    Name = "Adaptive Rate (auto-tune speed)",
+    Name = "Adaptive Rate",
     CurrentValue = false,
     Flag = "AdaptiveRate",
     Tooltip = "Changes the build speed on its own. Slows down if blocks fail, speeds up when it's safe.",
@@ -2661,25 +2788,26 @@ auto:CreateToggle({
 })
 
 auto:CreateToggle({
-    Name = "Pipelined Placing (faster)",
+    Name = "Pipelined Placing",
     CurrentValue = false,
     Flag = "PipelineMode",
     Tooltip = "Places many blocks at once instead of one at a time. Much faster, but a little riskier.",
     Callback = function(v)
         pipelineMode = v
         if v then
-            notify("Pipelined", "Faster placing is on", 4)
+            notifyOK("Pipelined", "Faster placing is on", 4)
         else
-            notify("Sequential", "One block at a time", 3)
+            notify("Sequential", "One block at a time", 3, "info")
         end
     end
 })
 
 auto:CreateSlider({
-    Name = "Pipeline Depth (in flight)",
+    Name = "Pipeline Depth",
     Range = {2, 30},
     Increment = 1,
     CurrentValue = 8,
+    Suffix = "blk",
     Flag = "PipelineDepth",
     Callback = function(v)
         pipelineDepth = v
@@ -2689,9 +2817,10 @@ auto:CreateSlider({
 auto:CreateSection("Movement")
 
 auto:CreateToggle({
-    Name = "Move Near Block Before Placing",
+    Name = "Move Before Placing",
     CurrentValue = true,
     Flag = "MoveNearBlock",
+    Tooltip = "Walk or fly close to each block before placing it. Slower, but far more reliable.",
     Callback = function(v)
         moveToBuildPosition = v
     end
@@ -2709,8 +2838,9 @@ auto:CreateDropdown({
 })
 
 local flySpeedSlider = auto:CreateSlider({
-    Name = "Move Fly Speed (studs/sec)",
+    Name = "Fly Speed",
     Range = {8, 80},
+    Suffix = "st/s",
     Increment = 1,
     CurrentValue = 35,
     Flag = "BuildFlySpeed",
@@ -2720,8 +2850,9 @@ local flySpeedSlider = auto:CreateSlider({
 })
 
 local gapSlider = auto:CreateSlider({
-    Name = "Build Gap (hover above build)",
+    Name = "Build Gap",
     Range = {3, 40},
+    Suffix = "st",
     Increment = 1,
     CurrentValue = 12,
     Flag = "BuildStandoff",
@@ -2759,7 +2890,8 @@ previewTab:CreateToggle({
 previewTab:CreateSection("Move Preview")
 
 previewTab:CreateToggle({
-    Name = "Move Handles (arrows)",
+    Name = "Move Handles",
+    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
     CurrentValue = false,
     Flag = "PreviewDrag",
     Callback = function(v)
@@ -2779,55 +2911,13 @@ previewTab:CreateButton({
     end
 })
 
-previewTab:CreateSection("Objects")
-
-previewTab:CreateButton({
-    Name = "Stamp File as Object",
-    Callback = function()
-        task.spawn(function()
-            local data = loadSelectedBuild()
-            if not data then
-                notify("No File", "Pick a build file first", 3)
-                return
-            end
-            objStamp(data.blocks, (selectedFile or "build"):gsub("%.json$", ""))
-        end)
-    end
-})
-
-previewTab:CreateButton({
-    Name = "Duplicate Selected",
-    Callback = function() objDuplicate() end
-})
-
-previewTab:CreateButton({
-    Name = "Delete Selected",
-    Callback = function() objDeleteSel() end
-})
-
-previewTab:CreateInput({
-    Name = "Combine Save As",
-    PlaceholderText = "MyScene",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then previewSceneName = t end end
-})
-
-previewTab:CreateButton({
-    Name = "Combine All to Build File",
-    Callback = function()
-        task.spawn(function() objCombineToFile(previewSceneName) end)
-    end
-})
-
-previewTab:CreateButton({
-    Name = "Clear All Objects",
-    Callback = function() objClearAll() end
-})
+addObjectsSection(previewTab, "Stamp File as Object", selectedFileBlocks)
 
 previewTab:CreateSection("Appearance")
 
 previewTab:CreateToggle({
-    Name = "Use Real Models (machines/objects)",
+    Name = "Use Real Models",
+    Tooltip = "Show machines and objects as their real models instead of plain blocks. Looks better, costs more FPS.",
     CurrentValue = true,
     Flag = "PreviewRealModels",
     Callback = function(v)
@@ -2836,7 +2926,8 @@ previewTab:CreateToggle({
 })
 
 previewTab:CreateToggle({
-    Name = "Minimized Preview (low lag)",
+    Name = "Low-Lag Preview",
+    Tooltip = "Draw a simplified ghost. Use this for very large builds.",
     CurrentValue = false,
     Flag = "PreviewMinimized",
     Callback = function(v)
@@ -2920,7 +3011,7 @@ previewTab:CreateButton({
     end
 })
 
-previewTab:CreateSection("Replace Blocks")
+previewTab:CreateSection("Replace Blocks", { Collapsible = true })
 
 previewTab:CreateParagraph({
     Title = "Swap Block Types",
@@ -2990,7 +3081,7 @@ local function replacementsText()
 end
 
 buildTypeDropdown = previewTab:CreateDropdown({
-    Name = "Build Block to Replace",
+    Name = "Replace Block",
     Options = getBuildTypeOptions(),
     CurrentOption = {},
     MultipleOptions = false,
@@ -3001,7 +3092,7 @@ buildTypeDropdown = previewTab:CreateDropdown({
 })
 
 invBlockDropdown = previewTab:CreateDropdown({
-    Name = "Replace With (from inventory)",
+    Name = "With Block",
     Options = getInventoryOptions(),
     CurrentOption = {},
     MultipleOptions = false,
@@ -3079,7 +3170,6 @@ local structPointTypes = {}
 local structRX, structRY, structRZ = 0, 0, 0
 local structSelectedBlock = "grass"
 local structFileName = "MyStructure"
-local structSceneName = "MyScene"
 
 local function snap3local(v)
     return math.floor(v / 3 + 0.5) * 3
@@ -3476,7 +3566,8 @@ structTab:CreateToggle({
 })
 
 structTab:CreateToggle({
-    Name = "Move Handles (arrows)",
+    Name = "Move Handles",
+    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
     CurrentValue = false,
     Flag = "StructHandles",
     Callback = function(v)
@@ -3536,7 +3627,7 @@ local structBlockDropdown = structTab:CreateDropdown({
 })
 
 structTab:CreateButton({
-    Name = "Refresh Block List",
+    Name = "Refresh Blocks",
     Callback = function()
         local list = structFetchBlocks()
         structBlockDropdown:Refresh(list)
@@ -3545,7 +3636,7 @@ structTab:CreateButton({
 })
 
 structTab:CreateInput({
-    Name = "Or type a block name",
+    Name = "Custom Block Name",
     PlaceholderText = "e.g. stone",
     RemoveTextAfterFocusLost = false,
     Callback = function(text)
@@ -3592,15 +3683,17 @@ structTab:CreateToggle({
 })
 
 structTab:CreateToggle({
-    Name = "Fill Steps (Landscape walls)",
+    Name = "Fill Steps",
+    Tooltip = "Fill the vertical gaps between landscape height steps so walls are solid.",
     CurrentValue = false,
     Flag = "StructFillSteps",
     Callback = function(v) structFillSteps = v structRefreshPreview() end
 })
 
 structTab:CreateSlider({
-    Name = "Thickness (blocks)",
+    Name = "Thickness",
     Range = {1, 10},
+    Suffix = "blk",
     Increment = 1,
     CurrentValue = 1,
     Flag = "StructThickness",
@@ -3616,7 +3709,7 @@ structTab:CreateSlider({
     Callback = function(v) structTurns = v structRefreshPreview() end
 })
 
-structTab:CreateSection("Angles & Terrain")
+structTab:CreateSection("Noise")
 
 structTab:CreateSlider({
     Name = "Smoothness",
@@ -3636,32 +3729,28 @@ structTab:CreateSlider({
     Callback = function(v) structSeed = v structHeightmap = nil structRefreshPreview() end
 })
 
-structTab:CreateSlider({
-    Name = "Tilt (X)",
-    Range = {0, 360},
-    Increment = 90,
-    CurrentValue = 0,
-    Flag = "StructRX",
-    Callback = function(v) structRX = v structRefreshPreview() end
-})
+structTab:CreateSection("Rotation", { Collapsible = true })
 
-structTab:CreateSlider({
-    Name = "Spin (Y)",
-    Range = {0, 360},
-    Increment = 90,
-    CurrentValue = 0,
-    Flag = "StructRY",
-    Callback = function(v) structRY = v structRefreshPreview() end
-})
-
-structTab:CreateSlider({
-    Name = "Roll (Z)",
-    Range = {0, 360},
-    Increment = 90,
-    CurrentValue = 0,
-    Flag = "StructRZ",
-    Callback = function(v) structRZ = v structRefreshPreview() end
-})
+-- Three identical 0-360 axis sliders; only the target variable differs.
+for _, axis in ipairs({
+    { "Tilt (X)", "StructRX", function(v) structRX = v end },
+    { "Spin (Y)", "StructRY", function(v) structRY = v end },
+    { "Roll (Z)", "StructRZ", function(v) structRZ = v end },
+}) do
+    local name, flag, apply = axis[1], axis[2], axis[3]
+    structTab:CreateSlider({
+        Name = name,
+        Range = {0, 360},
+        Increment = 90,
+        CurrentValue = 0,
+        Suffix = "deg",
+        Flag = flag,
+        Callback = function(v)
+            apply(v)
+            structRefreshPreview()
+        end
+    })
+end
 
 local function structToBlocks()
     local pts = structGetPoints()
@@ -3677,7 +3766,7 @@ local function structToBlocks()
     return blocks
 end
 
-structTab:CreateSection("Terraform (Landscape)")
+structTab:CreateSection("Terraform", { Collapsible = true })
 
 structTab:CreateParagraph({
     Title = "Sculpt the Terrain",
@@ -3696,8 +3785,9 @@ structTab:CreateDropdown({
 })
 
 structTab:CreateSlider({
-    Name = "Brush Size (studs)",
+    Name = "Brush Size",
     Range = {3, 90},
+    Suffix = "st",
     Increment = 3,
     CurrentValue = 12,
     Flag = "TerraBrush",
@@ -3705,8 +3795,9 @@ structTab:CreateSlider({
 })
 
 structTab:CreateSlider({
-    Name = "Brush Strength (studs)",
+    Name = "Brush Strength",
     Range = {3, 30},
+    Suffix = "st",
     Increment = 3,
     CurrentValue = 3,
     Flag = "TerraStrength",
@@ -3822,7 +3913,8 @@ local function sculptRaycastPoint()
 end
 
 structTab:CreateToggle({
-    Name = "Cursor Sculpt (click to paint)",
+    Name = "Cursor Sculpt",
+    Tooltip = "Click and drag in the world to raise or lower terrain with the brush settings above.",
     CurrentValue = false,
     Flag = "StructSculpt",
     Callback = function(v)
@@ -3881,7 +3973,7 @@ local structStatsParagraph = structTab:CreateParagraph({
 })
 
 structTab:CreateButton({
-    Name = "Check Size (block count)",
+    Name = "Check Size",
     Callback = function()
         task.spawn(function()
             local pts = structGetPoints()
@@ -3908,7 +4000,7 @@ structTab:CreateButton({
 })
 
 structTab:CreateInput({
-    Name = "Save As (filename)",
+    Name = "Save As",
     PlaceholderText = "MyStructure",
     RemoveTextAfterFocusLost = false,
     Callback = function(text)
@@ -3968,50 +4060,14 @@ structTab:CreateButton({
     end
 })
 
-structTab:CreateSection("Objects")
-
-structTab:CreateButton({
-    Name = "Stamp Shape as Object",
-    Callback = function()
-        task.spawn(function()
-            local blocks = structToBlocks()
-            if #blocks == 0 then
-                notify("Nothing To Stamp", "Set up a shape first", 3)
-                return
-            end
-            objStamp(blocks, structMode)
-        end)
+addObjectsSection(structTab, "Stamp Shape as Object", function()
+    local blocks = structToBlocks()
+    if #blocks == 0 then
+        notifyWarn("Nothing To Stamp", "Set up a shape first", 3)
+        return nil
     end
-})
-
-structTab:CreateButton({
-    Name = "Duplicate Selected",
-    Callback = function() objDuplicate() end
-})
-
-structTab:CreateButton({
-    Name = "Delete Selected",
-    Callback = function() objDeleteSel() end
-})
-
-structTab:CreateInput({
-    Name = "Combine Save As",
-    PlaceholderText = "MyScene",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then structSceneName = t end end
-})
-
-structTab:CreateButton({
-    Name = "Combine All to Build File",
-    Callback = function()
-        task.spawn(function() objCombineToFile(structSceneName) end)
-    end
-})
-
-structTab:CreateButton({
-    Name = "Clear All Objects",
-    Callback = function() objClearAll() end
-})
+    return blocks, structMode
+end)
 
 end
 
@@ -4208,100 +4264,91 @@ cityTab:CreateParagraph({
     Content = "Makes roads and drops a house on each lot. The same seed makes the same city. Then preview and build it."
 })
 
-cityTab:CreateSlider({
-    Name = "Lots X",
-    Range = {1, 8}, Increment = 1, CurrentValue = 3, Flag = "CityLotsX",
-    Callback = function(v) cityLotsX = v end
+cityTab:CreateSection("Layout", { Column = "left" })
+
+for _, s in ipairs({
+    { "Lots Across",  1,  8, 1, 3,  "CityLotsX", function(v) cityLotsX = v end },
+    { "Lots Deep",    1,  8, 1, 3,  "CityLotsZ", function(v) cityLotsZ = v end },
+    { "Lot Width",    7, 25, 1, 13, "CityLotW",  function(v) cityLotW  = v end },
+    { "Lot Depth",    7, 25, 1, 13, "CityLotD",  function(v) cityLotD  = v end },
+    { "Road Width",   1,  8, 1, 3,  "CityRoadW", function(v) cityRoadW = v end },
+}) do
+    local name, lo, hi, step, default, flag, apply = s[1], s[2], s[3], s[4], s[5], s[6], s[7]
+    cityTab:CreateSlider({
+        Name = name,
+        Range = { lo, hi }, Increment = step, CurrentValue = default,
+        Suffix = "blk", Flag = flag,
+        Callback = apply
+    })
+end
+
+cityTab:CreateSection("Houses", { Column = "left" })
+
+-- Was two separate Min/Max sliders; a single two-handle range slider makes the
+-- relationship obvious and can't be set inside-out.
+cityTab:CreateRangeSlider({
+    Name = "House Height",
+    Range = { 3, 30 }, Increment = 1,
+    DefaultMin = 5, DefaultMax = 11,
+    Suffix = "blk", Flag = "CityHeight",
+    Callback = function(mn, mx)
+        cityMinH = mn
+        cityMaxH = mx
+    end
 })
-cityTab:CreateSlider({
-    Name = "Lots Z",
-    Range = {1, 8}, Increment = 1, CurrentValue = 3, Flag = "CityLotsZ",
-    Callback = function(v) cityLotsZ = v end
-})
-cityTab:CreateSlider({
-    Name = "Lot Width (blocks)",
-    Range = {7, 25}, Increment = 1, CurrentValue = 13, Flag = "CityLotW",
-    Callback = function(v) cityLotW = v end
-})
-cityTab:CreateSlider({
-    Name = "Lot Depth (blocks)",
-    Range = {7, 25}, Increment = 1, CurrentValue = 13, Flag = "CityLotD",
-    Callback = function(v) cityLotD = v end
-})
-cityTab:CreateSlider({
-    Name = "Road Width (blocks)",
-    Range = {1, 8}, Increment = 1, CurrentValue = 3, Flag = "CityRoadW",
-    Callback = function(v) cityRoadW = v end
-})
-cityTab:CreateSlider({
-    Name = "Min House Height",
-    Range = {3, 20}, Increment = 1, CurrentValue = 5, Flag = "CityMinH",
-    Callback = function(v) cityMinH = v end
-})
-cityTab:CreateSlider({
-    Name = "Max House Height",
-    Range = {3, 30}, Increment = 1, CurrentValue = 11, Flag = "CityMaxH",
-    Callback = function(v) cityMaxH = v end
-})
+
 cityTab:CreateSlider({
     Name = "City Seed",
     Range = {1, 10000}, Increment = 1, CurrentValue = 1, Flag = "CitySeed",
     Callback = function(v) citySeed = v end
 })
 
+cityTab:CreateSection("Terrain", { Column = "left" })
+
 cityTab:CreateToggle({
     Name = "Generate on Landscape",
     CurrentValue = false,
     Flag = "CityLandscape",
+    Tooltip = "Lay the city over generated terrain instead of a flat plane.",
     Callback = function(v) cityLandscape = v end
 })
 
 cityTab:CreateSlider({
     Name = "Terrain Height",
-    Range = {3, 60}, Increment = 3, CurrentValue = 12, Flag = "CityTerrainH",
+    Range = {3, 60}, Increment = 3, CurrentValue = 12, Suffix = "blk", Flag = "CityTerrainH",
     Callback = function(v) cityTerrainH = v end
 })
 
-cityTab:CreateSection("Blocks")
+cityTab:CreateSection("Blocks", { Column = "right" })
 
+-- One dropdown per material slot. Same shape for all of them, so they are
+-- described as data and built in a loop.
 local cityOpts = cityBlockOptions()
-cityTab:CreateDropdown({
-    Name = "Road / Street Block", Options = cityOpts, CurrentOption = {"stone"},
-    MultipleOptions = false, Flag = "CityRoad",
-    Callback = function(v) cityRoadBlock = (typeof(v) == "table") and v[1] or v end
-})
-cityTab:CreateDropdown({
-    Name = "Wall Block", Options = cityOpts, CurrentOption = {"whiteBlock"},
-    MultipleOptions = false, Flag = "CityWall",
-    Callback = function(v) cityWallBlock = (typeof(v) == "table") and v[1] or v end
-})
-cityTab:CreateDropdown({
-    Name = "Roof Block", Options = cityOpts, CurrentOption = {"stone"},
-    MultipleOptions = false, Flag = "CityRoof",
-    Callback = function(v) cityRoofBlock = (typeof(v) == "table") and v[1] or v end
-})
-cityTab:CreateDropdown({
-    Name = "Window Block", Options = cityOpts, CurrentOption = {"glassBlockRed"},
-    MultipleOptions = false, Flag = "CityWindow",
-    Callback = function(v) cityWindowBlock = (typeof(v) == "table") and v[1] or v end
-})
-cityTab:CreateDropdown({
-    Name = "Trim / Foundation Block", Options = cityOpts, CurrentOption = {"stone"},
-    MultipleOptions = false, Flag = "CityTrim",
-    Callback = function(v) cityTrimBlock = (typeof(v) == "table") and v[1] or v end
-})
-cityTab:CreateDropdown({
-    Name = "Yard Block", Options = cityOpts, CurrentOption = {"grass"},
-    MultipleOptions = false, Flag = "CityYard",
-    Callback = function(v) cityYardBlock = (typeof(v) == "table") and v[1] or v end
-})
-cityTab:CreateDropdown({
-    Name = "Terrain Block", Options = cityOpts, CurrentOption = {"grass"},
-    MultipleOptions = false, Flag = "CityGrass",
-    Callback = function(v) cityGrassBlock = (typeof(v) == "table") and v[1] or v end
-})
+local cityBlockSlots = {
+    { "Roads",      "stone",          "CityRoad",   function(v) cityRoadBlock   = v end },
+    { "Walls",      "whiteBlock",     "CityWall",   function(v) cityWallBlock   = v end },
+    { "Roofs",      "stone",          "CityRoof",   function(v) cityRoofBlock   = v end },
+    { "Windows",    "glassBlockRed",  "CityWindow", function(v) cityWindowBlock = v end },
+    { "Foundation", "stone",          "CityTrim",   function(v) cityTrimBlock   = v end },
+    { "Yards",      "grass",          "CityYard",   function(v) cityYardBlock   = v end },
+    { "Terrain",    "grass",          "CityGrass",  function(v) cityGrassBlock  = v end },
+}
 
-cityTab:CreateSection("Generate")
+for _, slot in ipairs(cityBlockSlots) do
+    local label, default, flag, apply = slot[1], slot[2], slot[3], slot[4]
+    cityTab:CreateDropdown({
+        Name = label,
+        Options = cityOpts,
+        CurrentOption = { default },
+        MultipleOptions = false,
+        Flag = flag,
+        Callback = function(v)
+            apply((typeof(v) == "table") and v[1] or v)
+        end
+    })
+end
+
+cityTab:CreateSection("Generate", { Column = "right" })
 
 local cityStats = cityTab:CreateParagraph({
     Title = "City Stats",
@@ -4309,21 +4356,22 @@ local cityStats = cityTab:CreateParagraph({
 })
 
 cityTab:CreateInput({
-    Name = "Save As (filename)",
+    Name = "Save As",
     PlaceholderText = "MyCity",
     RemoveTextAfterFocusLost = false,
     Callback = function(t) if t and t ~= "" then cityFileName = t end end
 })
 
 cityTab:CreateToggle({
-    Name = "One File Per Lot (build piece by piece)",
+    Name = "One File Per Lot",
+    Tooltip = "Write each lot to its own build file so you can build the city piece by piece.",
     CurrentValue = false,
     Flag = "CityMultiFile",
     Callback = function(v) cityMultiFile = v end
 })
 
 cityTab:CreateButton({
-    Name = "Preview City (3D)",
+    Name = "Preview City",
     Callback = function()
         task.spawn(function()
             notify("Generating", "Laying out the city...", 3)
@@ -4339,7 +4387,7 @@ cityTab:CreateButton({
 })
 
 cityTab:CreateButton({
-    Name = "Generate City File(s)",
+    Name = "Generate City",
     Callback = function()
         task.spawn(function()
             notify("Generating", "Laying out the city...", 3)
@@ -4506,8 +4554,8 @@ platTab:CreateDropdown({
 })
 
 platTab:CreateSlider({
-    Name = "Tile Size (blocks)",
-    Range = { 11, 121 }, Increment = 2, CurrentValue = 41, Flag = "PlatSize",
+    Name = "Tile Size",
+    Range = { 11, 121 }, Increment = 2, CurrentValue = 41, Suffix = "blk", Flag = "PlatSize",
     Callback = function(v) platSize = v end
 })
 
@@ -4518,33 +4566,47 @@ platTab:CreateSlider({
 })
 
 platTab:CreateSlider({
-    Name = "Density %",
-    Range = { 10, 90 }, Increment = 5, CurrentValue = 50, Flag = "PlatDensity",
+    Name = "Density",
+    Range = { 10, 90 }, Increment = 5, CurrentValue = 50, Suffix = "%", Flag = "PlatDensity",
     Callback = function(v) platDensity = v / 100 end
 })
 
 platTab:CreateToggle({
-    Name = "Diagonal Symmetry (mandala)",
+    Name = "Diagonal Symmetry",
     CurrentValue = true,
     Flag = "PlatDiag",
+    Tooltip = "Mirrors the pattern across the diagonals. Mostly affects the Mandala style.",
     Callback = function(v) platMirrorDiag = v end
 })
 
 platTab:CreateSection("Blocks")
 
 local platOpts = platBlockOptions()
+
 platTab:CreateDropdown({
     Name = "Pattern Block", Options = platOpts, CurrentOption = { "whiteBlock" },
     MultipleOptions = false, Flag = "PlatFill",
     Callback = function(v) platFillBlock = (typeof(v) == "table") and v[1] or v end
 })
+
+-- Declared up front so the toggle below can show/hide it.
+local platBaseDropdown
+
 platTab:CreateToggle({
     Name = "Fill Background",
     CurrentValue = true,
     Flag = "PlatUseBase",
-    Callback = function(v) platUseBase = v end
+    Tooltip = "Fill the empty tiles behind the pattern with a second block.",
+    Callback = function(v)
+        platUseBase = v
+        -- Hide the background picker when there is no background to pick.
+        if platBaseDropdown then
+            pcall(function() platBaseDropdown:SetVisible(v) end)
+        end
+    end
 })
-platTab:CreateDropdown({
+
+platBaseDropdown = platTab:CreateDropdown({
     Name = "Background Block", Options = platOpts, CurrentOption = { "stone" },
     MultipleOptions = false, Flag = "PlatBase",
     Callback = function(v) platBaseBlock = (typeof(v) == "table") and v[1] or v end
@@ -4566,7 +4628,7 @@ platTab:CreateButton({
 })
 
 platTab:CreateButton({
-    Name = "Preview Pattern (3D)",
+    Name = "Preview Pattern",
     Callback = function()
         task.spawn(function()
             notify("Generating", "Building " .. platStyle .. " pattern...", 3)
@@ -4579,7 +4641,7 @@ platTab:CreateButton({
 })
 
 platTab:CreateInput({
-    Name = "Save As (filename)",
+    Name = "Save As",
     PlaceholderText = "MyPlatform",
     RemoveTextAfterFocusLost = false,
     Callback = function(t) if t and t ~= "" then platFileName = t end end
@@ -4617,3 +4679,21 @@ platTab:CreateParagraph({
 })
 
 end
+
+-- ── On-screen status overlay ─────────────────────────────────────────────────
+-- Floating list in the corner so build state is visible with the panel closed.
+Duvome:AddWatch("Building", function()
+    if not isBuilding then return false end
+    if progressTotal > 0 then
+        return progressPlaced .. "/" .. progressTotal
+    end
+    return true
+end)
+Duvome:AddWatch("Preview", function() return isPreviewing end)
+Duvome:AddWatch("Move Handles", function() return dragModeOn end)
+Duvome:AddWatch("Block Brush", function() return blockSelMode end)
+Duvome:AddWatch("File", function()
+    return selectedFile and selectedFile:gsub("%.json$", "") or false
+end)
+
+pcall(function() Duvome:SetWatchVisible(true) end)
