@@ -4680,6 +4680,980 @@ platTab:CreateParagraph({
 
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TOOLS TAB — Axiom-style editing tools
+--
+-- Everything here works on one shared model: a "cell map", which maps a grid
+-- coordinate key to a block type. Selection tools fill the cell map, edit tools
+-- transform it, and the output section turns it back into blocks.
+--
+-- Nothing here places blocks directly. Tools produce a build file and select it,
+-- so the existing Auto Build tab does the actual placing. That keeps one code
+-- path for placement, retries and progress.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BS = 3                    -- world studs per block, matches previewBlockSize
+local mouse = LocalPlayer:GetMouse()
+
+local toolTab = main:CreateTab("Tools", "wand-sparkles")
+
+-- ── grid helpers ───────────────────────────────────────────────────────────
+local function cellKey(x, y, z)
+    return x .. "," .. y .. "," .. z
+end
+
+local function worldToCell(p)
+    return math.floor(p.X / BS + 0.5), math.floor(p.Y / BS + 0.5), math.floor(p.Z / BS + 0.5)
+end
+
+local function cellToWorld(x, y, z)
+    return Vector3.new(x * BS, y * BS, z * BS)
+end
+
+-- Deterministic value noise so the same seed always gives the same result.
+local function hashNoise(x, y, z, seed)
+    local n = x * 374761393 + y * 668265263 + z * 2147483647 + (seed or 0) * 971
+    n = (n % 2147483647)
+    n = (n * (n * n * 15731 + 789221) + 1376312589) % 2147483647
+    return (n % 10000) / 10000
+end
+
+-- ── shared state ───────────────────────────────────────────────────────────
+local T = {
+    cells = {},            -- key -> blockType
+    count = 0,
+    mode = nil,            -- active cursor tool name, nil when idle
+    conns = {},
+    hl = nil,              -- folder of selection highlights
+    boxCorner = nil,       -- first corner while box-selecting
+    rulerA = nil,
+    -- tool settings
+    paintBlock = "grass",
+    paintBlockB = "stone",
+    noiseMix = 50,
+    fromBlock = "stone",
+    brushRadius = 4,
+    strength = 3,
+    seed = 1,
+    amount = 1,
+    axis = "Y",
+    text = "HELLO",
+    percent = 30,
+    outName = "MyEdit",
+}
+
+local statusPara, selPara
+
+local function refreshStatus()
+    pcall(function()
+        selPara:Set({
+            Title = "Selection",
+            Content = T.count == 0 and "Nothing selected."
+                or (T.count .. " blocks selected"),
+        })
+    end)
+end
+
+local function setStatus(msg)
+    pcall(function()
+        statusPara:Set({ Title = "Active Tool", Content = msg })
+    end)
+end
+
+-- ── selection visuals ──────────────────────────────────────────────────────
+local function hlFolder()
+    if T.hl and T.hl.Parent then return T.hl end
+    local f = Instance.new("Folder")
+    f.Name = "IABToolSelection"
+    f.Parent = Workspace
+    T.hl = f
+    return f
+end
+
+local function clearHighlights()
+    if T.hl then T.hl:Destroy() T.hl = nil end
+end
+
+-- Redraw is capped so huge selections don't freeze the client.
+local MAX_HL = 1500
+local function redrawSelection()
+    clearHighlights()
+    if T.count == 0 then return end
+    local f = hlFolder()
+    local drawn = 0
+    for key in pairs(T.cells) do
+        if drawn >= MAX_HL then break end
+        local x, y, z = key:match("(-?%d+),(-?%d+),(-?%d+)")
+        if x then
+            local p = Instance.new("Part")
+            p.Anchored = true
+            p.CanCollide = false
+            p.CanQuery = false
+            p.Size = Vector3.new(BS, BS, BS)
+            p.Position = cellToWorld(tonumber(x), tonumber(y), tonumber(z))
+            p.Transparency = 0.6
+            p.Color = Color3.fromRGB(0, 200, 255)
+            p.Material = Enum.Material.Neon
+            p.Parent = f
+            drawn = drawn + 1
+        end
+    end
+end
+
+local function selAdd(x, y, z, btype)
+    local k = cellKey(x, y, z)
+    if T.cells[k] == nil then T.count = T.count + 1 end
+    T.cells[k] = btype or "grass"
+end
+
+local function selClear()
+    T.cells = {}
+    T.count = 0
+    clearHighlights()
+    refreshStatus()
+end
+
+-- ── world queries ──────────────────────────────────────────────────────────
+local function worldBlockMap()
+    local folder = getBlocksFolder()
+    local map = {}
+    if not folder then return map end
+    for _, part in ipairs(folder:GetChildren()) do
+        if part:IsA("BasePart") and part.Name ~= "bedrock" and part.Name ~= "portalToSpawn" then
+            local x, y, z = worldToCell(part.Position)
+            map[cellKey(x, y, z)] = part.Name
+        end
+    end
+    return map
+end
+
+local function raycastBlock()
+    local target = mouse.Target
+    if target and target:IsA("BasePart") then
+        local folder = getBlocksFolder()
+        if folder and target:IsDescendantOf(folder) then
+            return target
+        end
+    end
+    return nil
+end
+
+-- ── cursor tool plumbing ───────────────────────────────────────────────────
+local function stopTool()
+    for _, c in ipairs(T.conns) do pcall(function() c:Disconnect() end) end
+    T.conns = {}
+    T.mode = nil
+    T.boxCorner = nil
+    T.rulerA = nil
+    setStatus("None. Pick a cursor tool below.")
+end
+
+local function startTool(name, onClick, onDrag)
+    stopTool()
+    T.mode = name
+    setStatus(name .. " — click in the world. Toggle off when done.")
+
+    local down = false
+    table.insert(T.conns, UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            down = true
+            if onClick then onClick() end
+        end
+    end))
+    table.insert(T.conns, UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then down = false end
+    end))
+    if onDrag then
+        table.insert(T.conns, RunService.RenderStepped:Connect(function()
+            if down then onDrag() end
+        end))
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SELECTION TOOLS
+-- ═══════════════════════════════════════════════════════════════════════════
+toolTab:CreateSection("Selection")
+
+statusPara = toolTab:CreateParagraph({
+    Title = "Active Tool",
+    Content = "None. Pick a cursor tool below.",
+})
+selPara = toolTab:CreateParagraph({
+    Title = "Selection",
+    Content = "Nothing selected.",
+})
+
+local magicToggle, boxToggle, freeToggle
+
+-- Magic Select: flood fill across touching blocks of the same type.
+magicToggle = toolTab:CreateToggle({
+    Name = "Magic Select",
+    CurrentValue = false,
+    Tooltip = "Click a block to select every connected block of that same type.",
+    Callback = function(on)
+        if not on then if T.mode == "Magic Select" then stopTool() end return end
+        startTool("Magic Select", function()
+            local part = raycastBlock()
+            if not part then return end
+            local map = worldBlockMap()
+            local sx, sy, sz = worldToCell(part.Position)
+            local wanted = part.Name
+            local queue = { { sx, sy, sz } }
+            local seen = { [cellKey(sx, sy, sz)] = true }
+            local added = 0
+            local LIMIT = 20000
+            while #queue > 0 and added < LIMIT do
+                local c = table.remove(queue)
+                local x, y, z = c[1], c[2], c[3]
+                if map[cellKey(x, y, z)] == wanted then
+                    selAdd(x, y, z, wanted)
+                    added = added + 1
+                    for _, d in ipairs({ {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }) do
+                        local nx, ny, nz = x + d[1], y + d[2], z + d[3]
+                        local nk = cellKey(nx, ny, nz)
+                        if not seen[nk] then
+                            seen[nk] = true
+                            queue[#queue + 1] = { nx, ny, nz }
+                        end
+                    end
+                end
+                if added % 2000 == 0 then task.wait() end
+            end
+            redrawSelection()
+            refreshStatus()
+            notifyOK("Magic Select", added .. " blocks of '" .. wanted .. "'", 3)
+        end)
+    end
+})
+
+-- Box Select: two clicks define opposite corners of a cuboid.
+boxToggle = toolTab:CreateToggle({
+    Name = "Box Select",
+    CurrentValue = false,
+    Tooltip = "Click one corner, then the opposite corner, to select a rectangular volume.",
+    Callback = function(on)
+        if not on then if T.mode == "Box Select" then stopTool() end return end
+        startTool("Box Select", function()
+            local part = raycastBlock()
+            if not part then return end
+            local x, y, z = worldToCell(part.Position)
+            if not T.boxCorner then
+                T.boxCorner = { x, y, z }
+                setStatus("Box Select — first corner set. Click the opposite corner.")
+                notify("Box Select", "First corner set", 2, "info")
+                return
+            end
+            local ax, ay, az = T.boxCorner[1], T.boxCorner[2], T.boxCorner[3]
+            T.boxCorner = nil
+            local map = worldBlockMap()
+            local added = 0
+            for cx = math.min(ax, x), math.max(ax, x) do
+                for cy = math.min(ay, y), math.max(ay, y) do
+                    for cz = math.min(az, z), math.max(az, z) do
+                        local t = map[cellKey(cx, cy, cz)]
+                        if t then selAdd(cx, cy, cz, t) added = added + 1 end
+                    end
+                end
+            end
+            redrawSelection()
+            refreshStatus()
+            setStatus("Box Select — click a corner to start another box.")
+            notifyOK("Box Select", added .. " blocks added", 3)
+        end)
+    end
+})
+
+-- Freehand Select: hold and sweep the cursor to paint a selection.
+freeToggle = toolTab:CreateToggle({
+    Name = "Freehand Select",
+    CurrentValue = false,
+    Tooltip = "Hold left click and sweep the cursor over blocks to add them to the selection.",
+    Callback = function(on)
+        if not on then if T.mode == "Freehand Select" then stopTool() end return end
+        startTool("Freehand Select", nil, function()
+            local part = raycastBlock()
+            if not part then return end
+            local x, y, z = worldToCell(part.Position)
+            -- Only draw a highlight the first time a cell is painted, otherwise
+            -- holding the button would spawn a part every frame on one block.
+            if T.cells[cellKey(x, y, z)] ~= nil then return end
+            selAdd(x, y, z, part.Name)
+            local p = Instance.new("Part")
+            p.Anchored = true p.CanCollide = false p.CanQuery = false
+            p.Size = Vector3.new(BS, BS, BS)
+            p.Position = cellToWorld(x, y, z)
+            p.Transparency = 0.6 p.Material = Enum.Material.Neon
+            p.Color = Color3.fromRGB(0, 200, 255)
+            p.Parent = hlFolder()
+            refreshStatus()
+        end)
+    end
+})
+
+toolTab:CreateButton({
+    Name = "Clear Selection",
+    Tooltip = "Empty the current selection.",
+    Callback = function()
+        selClear()
+        notify("Cleared", "Selection emptied", 2, "info")
+    end
+})
+
+toolTab:CreateButton({
+    Name = "Stop Cursor Tool",
+    Tooltip = "Release the mouse from whichever cursor tool is active.",
+    Callback = function()
+        stopTool()
+        pcall(function() magicToggle:Set(false) end)
+        pcall(function() boxToggle:Set(false) end)
+        pcall(function() freeToggle:Set(false) end)
+        notify("Stopped", "Cursor tool released", 2, "info")
+    end
+})
+
+-- ── Ruler ──────────────────────────────────────────────────────────────────
+toolTab:CreateSection("Ruler", { Collapsible = true })
+
+local rulerPara = toolTab:CreateParagraph({
+    Title = "Measurement",
+    Content = "Turn on the ruler and click two blocks.",
+})
+
+toolTab:CreateToggle({
+    Name = "Ruler",
+    CurrentValue = false,
+    Tooltip = "Click two blocks to measure the distance and span between them.",
+    Callback = function(on)
+        if not on then if T.mode == "Ruler" then stopTool() end return end
+        startTool("Ruler", function()
+            local part = raycastBlock()
+            if not part then return end
+            local x, y, z = worldToCell(part.Position)
+            if not T.rulerA then
+                T.rulerA = { x, y, z }
+                pcall(function() rulerPara:Set({ Title = "Measurement", Content = "Point A set. Click point B." }) end)
+                return
+            end
+            local a = T.rulerA
+            T.rulerA = nil
+            local dx, dy, dz = math.abs(x - a[1]), math.abs(y - a[2]), math.abs(z - a[3])
+            local diag = math.sqrt(dx * dx + dy * dy + dz * dz)
+            local txt = string.format(
+                "Span: %d x %d x %d blocks\nDiagonal: %.1f blocks (%.1f studs)\nVolume: %d blocks",
+                dx + 1, dy + 1, dz + 1, diag, diag * BS, (dx + 1) * (dy + 1) * (dz + 1))
+            pcall(function() rulerPara:Set({ Title = "Measurement", Content = txt }) end)
+            notifyOK("Ruler", string.format("%.1f blocks apart", diag), 4)
+        end)
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TOOL SETTINGS
+-- ═══════════════════════════════════════════════════════════════════════════
+toolTab:CreateSection("Tool Settings", { Column = "right" })
+
+-- cityBlockOptions lives inside a closed do-block, so the tools tab builds its
+-- own list of placeable block names from ReplicatedStorage.
+local function toolBlockOptions()
+    local seen, b = {}, {}
+    local f = ReplicatedStorage:FindFirstChild("blocks")
+    if f then
+        for _, v in ipairs(f:GetChildren()) do
+            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
+        end
+    end
+    table.sort(b)
+    if #b == 0 then b = { "stone", "grass" } end
+    return b
+end
+
+local blockOpts = toolBlockOptions()
+
+toolTab:CreateDropdown({
+    Name = "Primary Block",
+    Options = blockOpts, CurrentOption = { "grass" }, MultipleOptions = false,
+    Flag = "ToolBlockA",
+    Callback = function(v) T.paintBlock = (typeof(v) == "table") and v[1] or v end
+})
+
+toolTab:CreateDropdown({
+    Name = "Secondary Block",
+    Options = blockOpts, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "ToolBlockB",
+    Callback = function(v) T.paintBlockB = (typeof(v) == "table") and v[1] or v end
+})
+
+toolTab:CreateDropdown({
+    Name = "Replace This Block",
+    Options = blockOpts, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "ToolBlockFrom",
+    Callback = function(v) T.fromBlock = (typeof(v) == "table") and v[1] or v end
+})
+
+toolTab:CreateSlider({
+    Name = "Brush Radius",
+    Range = { 1, 20 }, Increment = 1, CurrentValue = 4, Suffix = "blk", Flag = "ToolRadius",
+    Callback = function(v) T.brushRadius = v end
+})
+
+toolTab:CreateSlider({
+    Name = "Strength",
+    Range = { 1, 20 }, Increment = 1, CurrentValue = 3, Suffix = "blk", Flag = "ToolStrength",
+    Callback = function(v) T.strength = v end
+})
+
+toolTab:CreateSlider({
+    Name = "Amount",
+    Range = { 1, 40 }, Increment = 1, CurrentValue = 1, Suffix = "blk", Flag = "ToolAmount",
+    Callback = function(v) T.amount = v end
+})
+
+toolTab:CreateSlider({
+    Name = "Mix / Percent",
+    Range = { 5, 95 }, Increment = 5, CurrentValue = 50, Suffix = "%", Flag = "ToolPercent",
+    Callback = function(v) T.percent = v T.noiseMix = v end
+})
+
+toolTab:CreateSlider({
+    Name = "Seed",
+    Range = { 1, 10000 }, Increment = 1, CurrentValue = 1, Flag = "ToolSeed",
+    Callback = function(v) T.seed = v end
+})
+
+toolTab:CreateDropdown({
+    Name = "Axis",
+    Options = { "X", "Y", "Z" }, CurrentOption = { "Y" }, MultipleOptions = false,
+    Flag = "ToolAxis",
+    Callback = function(v) T.axis = (typeof(v) == "table") and v[1] or v end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- EDIT OPERATIONS
+--
+-- Each op reads T.cells and writes a new cell map. They are pure grid maths, so
+-- they can be chained: run Elevation, then Roughen, then Smooth, then output.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function eachCell(fn)
+    for key, btype in pairs(T.cells) do
+        local x, y, z = key:match("(-?%d+),(-?%d+),(-?%d+)")
+        fn(tonumber(x), tonumber(y), tonumber(z), btype, key)
+    end
+end
+
+local function applyCells(newCells)
+    T.cells = newCells
+    local n = 0
+    for _ in pairs(newCells) do n = n + 1 end
+    T.count = n
+    redrawSelection()
+    refreshStatus()
+end
+
+local function requireSelection()
+    if T.count == 0 then
+        notifyWarn("No Selection", "Select some blocks first", 3)
+        return false
+    end
+    return true
+end
+
+-- Column height map of the selection: (x,z) -> highest y
+local function heightMap()
+    local hm, types = {}, {}
+    eachCell(function(x, y, z, btype)
+        local k = x .. "," .. z
+        if hm[k] == nil or y > hm[k] then hm[k] = y types[k] = btype end
+    end)
+    return hm, types
+end
+
+local ops = {}
+
+-- Painter: repaint everything selected in the primary block.
+function ops.Painter()
+    local out = {}
+    eachCell(function(x, y, z) out[cellKey(x, y, z)] = T.paintBlock end)
+    applyCells(out)
+    notifyOK("Painter", T.count .. " blocks -> " .. T.paintBlock, 3)
+end
+
+-- Noise Painter: blend primary and secondary by deterministic noise.
+function ops.NoisePainter()
+    local out = {}
+    local thresh = T.noiseMix / 100
+    eachCell(function(x, y, z)
+        out[cellKey(x, y, z)] = (hashNoise(x, y, z, T.seed) < thresh) and T.paintBlock or T.paintBlockB
+    end)
+    applyCells(out)
+    notifyOK("Noise Painter", T.noiseMix .. "% " .. T.paintBlock, 3)
+end
+
+-- Clentaminator: convert only one block type into another, leave the rest.
+function ops.Clentaminator()
+    local out, hit = {}, 0
+    eachCell(function(x, y, z, btype)
+        if btype == T.fromBlock then
+            out[cellKey(x, y, z)] = T.paintBlock
+            hit = hit + 1
+        else
+            out[cellKey(x, y, z)] = btype
+        end
+    end)
+    applyCells(out)
+    notifyOK("Clentaminator", hit .. " x " .. T.fromBlock .. " -> " .. T.paintBlock, 4)
+end
+
+-- Elevation: shift the whole selection along an axis.
+function ops.Elevation()
+    local out = {}
+    local dx = T.axis == "X" and T.amount or 0
+    local dy = T.axis == "Y" and T.amount or 0
+    local dz = T.axis == "Z" and T.amount or 0
+    eachCell(function(x, y, z, btype)
+        out[cellKey(x + dx, y + dy, z + dz)] = btype
+    end)
+    applyCells(out)
+    notifyOK("Elevation", "Moved " .. T.amount .. " on " .. T.axis, 3)
+end
+
+-- Flatten: drop every column to the selection's lowest surface height.
+function ops.Flatten()
+    local hm, types = heightMap()
+    local lowest = math.huge
+    for _, y in pairs(hm) do if y < lowest then lowest = y end end
+    if lowest == math.huge then return end
+    local out = {}
+    for k, _ in pairs(hm) do
+        local x, z = k:match("(-?%d+),(-?%d+)")
+        out[cellKey(tonumber(x), lowest, tonumber(z))] = types[k]
+    end
+    applyCells(out)
+    notifyOK("Flatten", "Levelled to y=" .. lowest, 3)
+end
+
+-- Slope: linear ramp across the selection along the chosen axis.
+function ops.Slope()
+    local hm, types = heightMap()
+    local minA, maxA = math.huge, -math.huge
+    for k in pairs(hm) do
+        local x, z = k:match("(-?%d+),(-?%d+)")
+        local a = (T.axis == "Z") and tonumber(z) or tonumber(x)
+        if a < minA then minA = a end
+        if a > maxA then maxA = a end
+    end
+    if minA == math.huge or maxA == minA then
+        notifyWarn("Slope", "Selection is too narrow to slope", 3)
+        return
+    end
+    local baseY = math.huge
+    for _, y in pairs(hm) do if y < baseY then baseY = y end end
+    local out = {}
+    for k in pairs(hm) do
+        local x, z = k:match("(-?%d+),(-?%d+)")
+        x, z = tonumber(x), tonumber(z)
+        local a = (T.axis == "Z") and z or x
+        local t = (a - minA) / (maxA - minA)
+        local y = baseY + math.floor(t * T.amount + 0.5)
+        out[cellKey(x, y, z)] = types[k]
+    end
+    applyCells(out)
+    notifyOK("Slope", "Ramped " .. T.amount .. " blocks along " .. T.axis, 3)
+end
+
+-- Smooth: average each column against its neighbours.
+function ops.Smooth()
+    local hm, types = heightMap()
+    local out = {}
+    for k, y in pairs(hm) do
+        local x, z = k:match("(-?%d+),(-?%d+)")
+        x, z = tonumber(x), tonumber(z)
+        local sum, n = 0, 0
+        for ox = -1, 1 do
+            for oz = -1, 1 do
+                local nb = hm[(x + ox) .. "," .. (z + oz)]
+                if nb then sum = sum + nb n = n + 1 end
+            end
+        end
+        local avg = n > 0 and (sum / n) or y
+        out[cellKey(x, math.floor(avg + 0.5), z)] = types[k]
+    end
+    applyCells(out)
+    notifyOK("Smooth", "Averaged " .. T.count .. " columns", 3)
+end
+
+-- Roughen: jitter surface heights by noise, keeping the silhouette.
+function ops.Roughen()
+    local hm, types = heightMap()
+    local out = {}
+    for k, y in pairs(hm) do
+        local x, z = k:match("(-?%d+),(-?%d+)")
+        x, z = tonumber(x), tonumber(z)
+        local n = hashNoise(x, 0, z, T.seed)
+        local off = math.floor((n - 0.5) * 2 * T.strength + 0.5)
+        out[cellKey(x, y + off, z)] = types[k]
+    end
+    applyCells(out)
+    notifyOK("Roughen", "Jittered by up to " .. T.strength, 3)
+end
+
+-- Distort: push every block a random amount in all three axes.
+function ops.Distort()
+    local out = {}
+    eachCell(function(x, y, z, btype)
+        local ox = math.floor((hashNoise(x, y, z, T.seed) - 0.5) * 2 * T.strength + 0.5)
+        local oy = math.floor((hashNoise(x, y, z, T.seed + 77) - 0.5) * 2 * T.strength + 0.5)
+        local oz = math.floor((hashNoise(x, y, z, T.seed + 991) - 0.5) * 2 * T.strength + 0.5)
+        out[cellKey(x + ox, y + oy, z + oz)] = btype
+    end)
+    applyCells(out)
+    notifyOK("Distort", "Displaced by up to " .. T.strength, 3)
+end
+
+-- Shatter: randomly delete a percentage, for ruined or eroded looks.
+function ops.Shatter()
+    local out, kept = {}, 0
+    eachCell(function(x, y, z, btype)
+        if hashNoise(x, y, z, T.seed) > (T.percent / 100) then
+            out[cellKey(x, y, z)] = btype
+            kept = kept + 1
+        end
+    end)
+    applyCells(out)
+    notifyOK("Shatter", "Removed " .. T.percent .. "%, " .. kept .. " left", 3)
+end
+
+-- Weld: dilate the selection, closing pits and seams between shapes.
+function ops.Weld()
+    local out = {}
+    eachCell(function(x, y, z, btype) out[cellKey(x, y, z)] = btype end)
+    eachCell(function(x, y, z, btype)
+        for _, d in ipairs({ {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }) do
+            local k = cellKey(x + d[1], y + d[2], z + d[3])
+            if out[k] == nil then out[k] = btype end
+        end
+    end)
+    applyCells(out)
+    notifyOK("Weld", "Grew to " .. T.count .. " blocks", 3)
+end
+
+-- Melt: erode exposed blocks, rounding hard edges off.
+function ops.Melt()
+    local out, removed = {}, 0
+    eachCell(function(x, y, z, btype)
+        local exposed = 0
+        for _, d in ipairs({ {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }) do
+            if T.cells[cellKey(x + d[1], y + d[2], z + d[3])] == nil then
+                exposed = exposed + 1
+            end
+        end
+        -- More exposed faces means more likely to melt away.
+        if exposed >= 3 and hashNoise(x, y, z, T.seed) < (exposed / 6) then
+            removed = removed + 1
+        else
+            out[cellKey(x, y, z)] = btype
+        end
+    end)
+    applyCells(out)
+    notifyOK("Melt", "Eroded " .. removed .. " blocks", 3)
+end
+
+-- Extrude: repeat the selection along an axis to make it solid or longer.
+function ops.Extrude()
+    local out = {}
+    eachCell(function(x, y, z, btype) out[cellKey(x, y, z)] = btype end)
+    local dx = T.axis == "X" and 1 or 0
+    local dy = T.axis == "Y" and 1 or 0
+    local dz = T.axis == "Z" and 1 or 0
+    eachCell(function(x, y, z, btype)
+        for i = 1, T.amount do
+            out[cellKey(x + dx * i, y + dy * i, z + dz * i)] = btype
+        end
+    end)
+    applyCells(out)
+    notifyOK("Extrude", "Extended " .. T.amount .. " along " .. T.axis, 3)
+end
+
+-- Rock: replace the selection with a noisy blob filling its bounds.
+function ops.Rock()
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    eachCell(function(x, y, z)
+        if x < minX then minX = x end if x > maxX then maxX = x end
+        if y < minY then minY = y end if y > maxY then maxY = y end
+        if z < minZ then minZ = z end if z > maxZ then maxZ = z end
+    end)
+    if minX == math.huge then return end
+    local cx, cy, cz = (minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2
+    local rx = math.max((maxX - minX) / 2, 1)
+    local ry = math.max((maxY - minY) / 2, 1)
+    local rz = math.max((maxZ - minZ) / 2, 1)
+    local out, n = {}, 0
+    for x = minX, maxX do
+        for y = minY, maxY do
+            for z = minZ, maxZ do
+                local d = ((x - cx) / rx) ^ 2 + ((y - cy) / ry) ^ 2 + ((z - cz) / rz) ^ 2
+                local wobble = (hashNoise(x, y, z, T.seed) - 0.5) * (T.strength / 10)
+                if d + wobble <= 1 then
+                    out[cellKey(x, y, z)] = T.paintBlock
+                    n = n + 1
+                end
+            end
+        end
+    end
+    applyCells(out)
+    notifyOK("Rock", "Carved a " .. n .. " block boulder", 3)
+end
+
+-- ── Text ───────────────────────────────────────────────────────────────────
+-- Compact 5x7 uppercase font. Each entry is 7 rows of 5 bits, top row first.
+local FONT = {
+    A = {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}, B = {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
+    C = {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}, D = {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
+    E = {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}, F = {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
+    G = {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F}, H = {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
+    I = {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E}, J = {0x07,0x02,0x02,0x02,0x02,0x12,0x0C},
+    K = {0x11,0x12,0x14,0x18,0x14,0x12,0x11}, L = {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
+    M = {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}, N = {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
+    O = {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}, P = {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
+    Q = {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D}, R = {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
+    S = {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E}, T = {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
+    U = {0x11,0x11,0x11,0x11,0x11,0x11,0x0E}, V = {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
+    W = {0x11,0x11,0x11,0x15,0x15,0x1B,0x11}, X = {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
+    Y = {0x11,0x11,0x0A,0x04,0x04,0x04,0x04}, Z = {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},
+    ["0"] = {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}, ["1"] = {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},
+    ["2"] = {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}, ["3"] = {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E},
+    ["4"] = {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}, ["5"] = {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},
+    ["6"] = {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}, ["7"] = {0x1F,0x01,0x02,0x04,0x08,0x08,0x08},
+    ["8"] = {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}, ["9"] = {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},
+    ["!"] = {0x04,0x04,0x04,0x04,0x04,0x00,0x04}, ["-"] = {0x00,0x00,0x00,0x1F,0x00,0x00,0x00},
+    ["."] = {0x00,0x00,0x00,0x00,0x00,0x00,0x04},
+}
+
+function ops.Text()
+    local str = tostring(T.text or ""):upper()
+    if str == "" then
+        notifyWarn("Text", "Type something in the Text box first", 3)
+        return
+    end
+    -- Anchor the text where the player stands so it appears in front of them.
+    local _, _, hrp = getCharacterParts()
+    local ox, oy, oz = 0, 0, 0
+    if hrp then ox, oy, oz = worldToCell(hrp.Position) end
+
+    local out, n, col = {}, 0, 0
+    for i = 1, #str do
+        local ch = str:sub(i, i)
+        if ch == " " then
+            col = col + 3
+        else
+            local glyph = FONT[ch]
+            if glyph then
+                for row = 1, 7 do
+                    local bits = glyph[row]
+                    for bit = 0, 4 do
+                        -- bit 4 is the leftmost pixel of the 5-wide glyph
+                        if math.floor(bits / (2 ^ (4 - bit))) % 2 == 1 then
+                            local x = ox + col + bit
+                            local y = oy + (7 - row)
+                            out[cellKey(x, y, oz)] = T.paintBlock
+                            n = n + 1
+                        end
+                    end
+                end
+                col = col + 6
+            end
+        end
+    end
+    if n == 0 then
+        notifyWarn("Text", "No drawable characters (A-Z, 0-9, -, ., !)", 4)
+        return
+    end
+    applyCells(out)
+    notifyOK("Text", "'" .. str .. "' -> " .. n .. " blocks", 4)
+end
+
+-- ── cursor draw tools ──────────────────────────────────────────────────────
+-- These add to the cell map directly under the cursor rather than from a
+-- selection, so you can sketch shapes freehand.
+toolTab:CreateToggle({
+    Name = "Freehand Draw",
+    CurrentValue = false,
+    Tooltip = "Hold left click and sweep to draw a single-block-thick trail of the primary block.",
+    Callback = function(on)
+        if not on then if T.mode == "Freehand Draw" then stopTool() end return end
+        startTool("Freehand Draw", nil, function()
+            local part = raycastBlock()
+            if not part then return end
+            local x, y, z = worldToCell(part.Position)
+            selAdd(x, y + 1, z, T.paintBlock)   -- draw on top of the surface
+            refreshStatus()
+        end)
+    end
+})
+
+toolTab:CreateToggle({
+    Name = "Sculpt Draw",
+    CurrentValue = false,
+    Tooltip = "Hold left click to add a ball of blocks at the cursor, sized by Brush Radius.",
+    Callback = function(on)
+        if not on then if T.mode == "Sculpt Draw" then stopTool() end return end
+        startTool("Sculpt Draw", nil, function()
+            local part = raycastBlock()
+            if not part then return end
+            local cx, cy, cz = worldToCell(part.Position)
+            local r = T.brushRadius
+            for x = cx - r, cx + r do
+                for y = cy - r, cy + r do
+                    for z = cz - r, cz + r do
+                        local d = (x - cx) ^ 2 + (y - cy) ^ 2 + (z - cz) ^ 2
+                        if d <= r * r then selAdd(x, y, z, T.paintBlock) end
+                    end
+                end
+            end
+            refreshStatus()
+        end)
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OPERATION BUTTONS
+-- ═══════════════════════════════════════════════════════════════════════════
+local function opButton(section, name, tip, fn, needsSelection)
+    section:CreateButton({
+        Name = name,
+        Tooltip = tip,
+        Callback = function()
+            task.spawn(function()
+                if needsSelection ~= false and not requireSelection() then return end
+                local ok, err = pcall(fn)
+                if not ok then notifyErr(name .. " Failed", tostring(err), 5) end
+            end)
+        end
+    })
+end
+
+toolTab:CreateSection("Paint", { Collapsible = true })
+opButton(toolTab, "Painter", "Repaint the whole selection in the primary block.", ops.Painter)
+opButton(toolTab, "Noise Painter", "Blend primary and secondary blocks using the Mix percentage and Seed.", ops.NoisePainter)
+opButton(toolTab, "Clentaminator", "Convert only 'Replace This Block' into the primary block, leaving everything else.", ops.Clentaminator)
+
+toolTab:CreateSection("Shape", { Collapsible = true })
+opButton(toolTab, "Rock", "Replace the selection with a natural boulder filling its bounds. Strength controls lumpiness.", ops.Rock)
+opButton(toolTab, "Extrude", "Repeat the selection along the chosen Axis by Amount.", ops.Extrude)
+opButton(toolTab, "Weld", "Grow the selection outward by one block, closing seams and pits.", ops.Weld)
+opButton(toolTab, "Melt", "Erode exposed blocks so hard edges round off.", ops.Melt)
+opButton(toolTab, "Shatter", "Randomly delete Percent of the selection for a ruined look.", ops.Shatter)
+
+toolTab:CreateSection("Terrain", { Collapsible = true })
+opButton(toolTab, "Elevation", "Shift the whole selection by Amount along the chosen Axis.", ops.Elevation)
+opButton(toolTab, "Flatten", "Level every column down to the lowest point in the selection.", ops.Flatten)
+opButton(toolTab, "Slope", "Ramp the selection's surface by Amount across the chosen Axis.", ops.Slope)
+opButton(toolTab, "Smooth", "Average each column against its neighbours to soften terrain.", ops.Smooth)
+opButton(toolTab, "Roughen", "Jitter surface heights by up to Strength for natural variation.", ops.Roughen)
+opButton(toolTab, "Distort", "Randomly displace every block in all directions by up to Strength.", ops.Distort)
+
+toolTab:CreateSection("Text", { Collapsible = true })
+toolTab:CreateInput({
+    Name = "Text",
+    Default = "HELLO",
+    Callback = function(t) if t and t ~= "" then T.text = t end end
+})
+opButton(toolTab, "Build Text", "Turn the text above into blocks in front of you. Supports A-Z, 0-9, dash, dot and exclamation.", ops.Text, false)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OUTPUT
+-- ═══════════════════════════════════════════════════════════════════════════
+toolTab:CreateSection("Output", { Column = "right" })
+
+toolTab:CreateParagraph({
+    Title = "How This Works",
+    Content = "Tools never place blocks directly. When the result looks right, save it to a build file here, then use the Auto Build tab to place it.",
+})
+
+toolTab:CreateInput({
+    Name = "Save As",
+    Default = "MyEdit",
+    Callback = function(t) if t and t ~= "" then T.outName = t end end
+})
+
+toolTab:CreateButton({
+    Name = "Save Selection to Build File",
+    Tooltip = "Write the current cell map to autoBuilder and select it in the Auto Build tab.",
+    Callback = function()
+        task.spawn(function()
+            if not requireSelection() then return end
+            local blocks = {}
+            eachCell(function(x, y, z, btype)
+                local p = cellToWorld(x, y, z)
+                blocks[#blocks + 1] = {
+                    blockType = btype,
+                    upperBlock = false,
+                    cframe = { p.X, p.Y, p.Z, 1, 0, 0, 0, 1, 0 },
+                    parts = {},
+                }
+            end)
+            local name = T.outName
+            if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+            if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+            local ok, err = pcall(function()
+                writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
+            end)
+            if not ok then
+                notifyErr("Save Failed", tostring(err), 5)
+                return
+            end
+            selectedFile = name
+            savedPreviewTransform = nil
+            pcall(function()
+                fileDropdown:Refresh(getFiles())
+                fileDropdown:Set({ name })
+            end)
+            notifyOK("Saved", #blocks .. " blocks -> " .. name .. " (selected)", 6)
+        end)
+    end
+})
+
+toolTab:CreateButton({
+    Name = "Load World Blocks into Selection",
+    Tooltip = "Select every block on the nearest island, so you can run tools over an existing build.",
+    Callback = function()
+        task.spawn(function()
+            confirm("Load Whole Island",
+                "This selects every block on the nearest island. Large islands may take a moment.",
+                "Load", function()
+                    task.spawn(function()
+                        local map = worldBlockMap()
+                        local n = 0
+                        T.cells = {} T.count = 0
+                        for k, v in pairs(map) do T.cells[k] = v n = n + 1 end
+                        T.count = n
+                        redrawSelection()
+                        refreshStatus()
+                        notifyOK("Loaded", n .. " blocks selected", 5)
+                    end)
+                end)
+        end)
+    end
+})
+
+toolTab:CreateButton({
+    Name = "Hide Selection Overlay",
+    Tooltip = "Remove the blue highlight parts without clearing the selection.",
+    Callback = function()
+        clearHighlights()
+        notify("Hidden", "Overlay cleared, selection kept", 2, "info")
+    end
+})
+
+-- Expose the active tool on the on-screen watch list.
+Duvome:AddWatch("Tool", function() return T.mode or false end)
+Duvome:AddWatch("Selected Blocks", function() return T.count > 0 and T.count or false end)
+
+end
+
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
 Duvome:AddWatch("Building", function()
