@@ -5654,6 +5654,9 @@ Duvome:AddWatch("Selected Blocks", function() return T.count > 0 and T.count or 
 
 end
 
+-- Shared bridge between the Builder scope and the Operations/Colour scope.
+local BuilderAPI = {}
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- BUILDER TAB — Axiom-style cuboid tools
 --
@@ -6566,6 +6569,49 @@ buildTab:CreateParagraph({
     Content = "Hold X / Y / Z: lock movement to that axis\nCtrl+F: flip on the axis you face\nCtrl+R: rotate 90 degrees clockwise\nCtrl+Z / Ctrl+Y: undo / redo\nDelete or Backspace: erase the selection, or remove the symmetry node",
 })
 
+Duvome:AddWatch("Builder", function() return B.tool or false end)
+Duvome:AddWatch("Symmetry", function()
+    if not B.sym then return false end
+    return symmetryActive() and "on" or "node set"
+end)
+
+-- Hand the Builder's state and helpers to the Operations/Colour scope. They
+-- must live in their own block: Luau allows only 200 locals per scope and the
+-- Builder already sits near that ceiling.
+BuilderAPI.B                = B
+BuilderAPI.key3             = key3
+BuilderAPI.toCell           = toCell
+BuilderAPI.blockPartMap     = blockPartMap
+BuilderAPI.placeCells       = placeCells
+BuilderAPI.eraseCells       = eraseCells
+BuilderAPI.runCommit        = runCommit
+BuilderAPI.drawSelectionBox = drawSelectionBox
+BuilderAPI.describeSelection= describeSelection
+BuilderAPI.setStatus        = setStatus
+BuilderAPI.doUndo           = doUndo
+BuilderAPI.doRedo           = doRedo
+BuilderAPI.ctrlDown         = ctrlDown
+BuilderAPI.startSession     = startSession
+BuilderAPI.stopSession      = stopSession
+BuilderAPI.targetPart       = targetPart
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Operations and Colour run in their own scope, importing the Builder API.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local B = BA.B
+local key3, toCell = BA.key3, BA.toCell
+local blockPartMap, placeCells, eraseCells, runCommit =
+    BA.blockPartMap, BA.placeCells, BA.eraseCells, BA.runCommit
+local drawSelectionBox, describeSelection, setStatus =
+    BA.drawSelectionBox, BA.describeSelection, BA.setStatus
+local doUndo, doRedo, ctrlDown = BA.doUndo, BA.doRedo, BA.ctrlDown
+local startSession, stopSession, targetPart = BA.startSession, BA.stopSession, BA.targetPart
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OPERATIONS TAB — Axiom-style Editor operations
 --
@@ -7294,11 +7340,512 @@ Duvome:AddWatch("Clipboard", function()
     return O.clip and (#O.clip.cells .. " blocks") or false
 end)
 
-Duvome:AddWatch("Builder", function() return B.tool or false end)
-Duvome:AddWatch("Symmetry", function()
-    if not B.sym then return false end
-    return symmetryActive() and "on" or "node set"
-end)
+-- Close the Operations scope and hand its state to Colour, which needs its own
+-- 200-local budget.
+BuilderAPI.O               = O
+BuilderAPI.opsSet          = opsSet
+BuilderAPI.needSelection   = needSelection
+BuilderAPI.selBounds       = selBounds
+BuilderAPI.selCells        = selCells
+BuilderAPI.opsBlockOptions = opsBlockOptions
+
+end
+
+do
+
+local BA = BuilderAPI
+local B, O = BA.B, BA.O
+local key3, toCell = BA.key3, BA.toCell
+local blockPartMap, placeCells, eraseCells, runCommit =
+    BA.blockPartMap, BA.placeCells, BA.eraseCells, BA.runCommit
+local startSession, stopSession, targetPart = BA.startSession, BA.stopSession, BA.targetPart
+local opsSet, needSelection, selBounds, selCells, opsBlockOptions =
+    BA.opsSet, BA.needSelection, BA.selBounds, BA.selCells, BA.opsBlockOptions
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- COLOUR TAB — Colour Picker, Gradient Helper, Gradient Painter
+--
+-- Block colours are sampled from the models in ReplicatedStorage.blocks and
+-- compared in OKLab, which is perceptually uniform, so "nearest colour" matches
+-- what the eye actually sees instead of what raw RGB distance suggests.
+--
+-- Also inside the Builder scope so the painter can use the selection and undo.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local colTab = main:CreateTab("Colour", "palette")
+
+local C = {
+    cache = nil,            -- { {name=, col=Color3, L=, a=, b=} }
+    target = Color3.fromRGB(150, 150, 150),
+    gradFrom = "stone",
+    gradTo = "whiteBlock",
+    steps = 8,
+    gradient = nil,         -- ordered list of block names
+    axis = "Y",
+    matchCount = 8,
+    presetName = "MyPreset",
+}
+
+local scanPara, matchPara, gradPara
+
+-- ── OKLab ──────────────────────────────────────────────────────────────────
+local function srgbToLinear(c)
+    if c <= 0.04045 then return c / 12.92 end
+    return ((c + 0.055) / 1.055) ^ 2.4
+end
+
+local function cbrt(x)
+    if x >= 0 then return x ^ (1 / 3) end
+    return -((-x) ^ (1 / 3))
+end
+
+-- Björn Ottosson's sRGB -> OKLab transform.
+local function toOklab(col)
+    local r = srgbToLinear(col.R)
+    local g = srgbToLinear(col.G)
+    local b = srgbToLinear(col.B)
+
+    local l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    local m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    local s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+
+    local l_, m_, s_ = cbrt(l), cbrt(m), cbrt(s)
+
+    return 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+           1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+           0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+end
+
+local function oklabDist(L1, a1, b1, L2, a2, b2)
+    local dL, da, db = L1 - L2, a1 - a2, b1 - b2
+    return dL * dL + da * da + db * db
+end
+
+-- ── sampling block colours ─────────────────────────────────────────────────
+-- Averages every BasePart in a block model, weighted by surface area so big
+-- faces count for more than trim details.
+local function averageColour(inst)
+    if inst:IsA("BasePart") then return inst.Color end
+    local rt, gt, bt, wt = 0, 0, 0, 0
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("BasePart") then
+            local s = d.Size
+            local w = math.max(s.X * s.Y + s.Y * s.Z + s.X * s.Z, 0.001)
+            rt = rt + d.Color.R * w
+            gt = gt + d.Color.G * w
+            bt = bt + d.Color.B * w
+            wt = wt + w
+        end
+    end
+    if wt == 0 then return nil end
+    return Color3.new(rt / wt, gt / wt, bt / wt)
+end
+
+local function scanColours()
+    local folder = ReplicatedStorage:FindFirstChild("blocks")
+    if not folder then
+        notifyErr("Colour Scan", "ReplicatedStorage.blocks not found", 5)
+        return
+    end
+    local out = {}
+    for _, child in ipairs(folder:GetChildren()) do
+        local col = averageColour(child)
+        if col then
+            local L, a, b = toOklab(col)
+            out[#out + 1] = { name = child.Name, col = col, L = L, a = a, b = b }
+        end
+    end
+    table.sort(out, function(p, q) return p.L < q.L end)
+    C.cache = out
+    pcall(function()
+        scanPara:Set({
+            Title = "Colour Index",
+            Content = #out .. " block colours sampled, sorted dark to light.",
+        })
+    end)
+    notifyOK("Colour Scan", #out .. " blocks indexed", 5)
+end
+
+local function ensureCache()
+    if C.cache and #C.cache > 0 then return true end
+    scanColours()
+    return C.cache ~= nil and #C.cache > 0
+end
+
+-- ── nearest matches ────────────────────────────────────────────────────────
+local function nearestBlocks(col, n)
+    if not ensureCache() then return {} end
+    local L, a, b = toOklab(col)
+    local scored = {}
+    for _, e in ipairs(C.cache) do
+        scored[#scored + 1] = { e, oklabDist(L, a, b, e.L, e.a, e.b) }
+    end
+    table.sort(scored, function(p, q) return p[2] < q[2] end)
+    local out = {}
+    for i = 1, math.min(n or 8, #scored) do out[#out + 1] = scored[i][1] end
+    return out
+end
+
+local function showMatches()
+    local list = nearestBlocks(C.target, C.matchCount)
+    if #list == 0 then
+        notifyWarn("Colour", "No colours indexed yet", 3)
+        return
+    end
+    local lines = {}
+    for i, e in ipairs(list) do
+        lines[#lines + 1] = string.format("%d. %s  (%d, %d, %d)", i, e.name,
+            math.floor(e.col.R * 255 + 0.5),
+            math.floor(e.col.G * 255 + 0.5),
+            math.floor(e.col.B * 255 + 0.5))
+    end
+    pcall(function()
+        matchPara:Set({ Title = "Similar Blocks", Content = table.concat(lines, "\n") })
+    end)
+    notifyOK("Colour", "Closest match: " .. list[1].name, 4)
+end
+
+local function findByName(name)
+    if not ensureCache() then return nil end
+    for _, e in ipairs(C.cache) do
+        if e.name == name then return e end
+    end
+    return nil
+end
+
+-- ── gradient ───────────────────────────────────────────────────────────────
+-- Interpolates in OKLab between the two endpoint blocks, then snaps each step
+-- to the closest real block.
+local function buildGradient()
+    local from, to = findByName(C.gradFrom), findByName(C.gradTo)
+    if not (from and to) then
+        notifyWarn("Gradient", "Scan colours first, then pick both endpoints", 4)
+        return
+    end
+    local seq, names = {}, {}
+    for i = 0, C.steps - 1 do
+        local t = (C.steps == 1) and 0 or (i / (C.steps - 1))
+        local L = from.L + (to.L - from.L) * t
+        local a = from.a + (to.a - from.a) * t
+        local b = from.b + (to.b - from.b) * t
+        -- snap the interpolated colour onto a real block
+        local best, bestD = nil, math.huge
+        for _, e in ipairs(C.cache) do
+            local d = oklabDist(L, a, b, e.L, e.a, e.b)
+            if d < bestD then bestD = d best = e end
+        end
+        seq[#seq + 1] = best.name
+        names[#names + 1] = (i + 1) .. ". " .. best.name
+    end
+    C.gradient = seq
+    pcall(function()
+        gradPara:Set({ Title = "Gradient", Content = table.concat(names, "\n") })
+    end)
+    notifyOK("Gradient", C.steps .. " steps built", 4)
+end
+
+-- ── gradient painter ───────────────────────────────────────────────────────
+local function paintGradient()
+    if not C.gradient or #C.gradient == 0 then
+        notifyWarn("Gradient Painter", "Build a gradient first", 3)
+        return
+    end
+    if not needSelection() then return end
+    runCommit("Gradient Painter", function(rec)
+        local map = blockPartMap()
+        local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+        local lo, hi
+        if C.axis == "X" then lo, hi = minX, maxX
+        elseif C.axis == "Z" then lo, hi = minZ, maxZ
+        else lo, hi = minY, maxY end
+
+        local want = {}
+        for _, c in ipairs(selCells()) do
+            if map[key3(c[1], c[2], c[3])] then
+                local v = (C.axis == "X") and c[1] or ((C.axis == "Z") and c[3] or c[2])
+                local t = (hi == lo) and 0 or ((v - lo) / (hi - lo))
+                local idx = math.clamp(math.floor(t * (#C.gradient - 1) + 0.5) + 1, 1, #C.gradient)
+                want[#want + 1] = { c[1], c[2], c[3], C.gradient[idx] }
+            end
+        end
+        if #want == 0 then notifyWarn("Gradient Painter", "No blocks in selection", 3) return end
+        opsSet("Gradient Painter", "Painting " .. #want .. " blocks...")
+        eraseCells(want, rec)
+        placeCells(want, rec)
+        notifyOK("Gradient Painter", #want .. " blocks painted along " .. C.axis, 5)
+    end)
+end
+
+-- ── hex parsing ────────────────────────────────────────────────────────────
+local function parseHex(str)
+    local s = tostring(str):gsub("#", ""):gsub("%s", "")
+    if #s == 3 then
+        s = s:sub(1,1):rep(2) .. s:sub(2,2):rep(2) .. s:sub(3,3):rep(2)
+    end
+    if #s ~= 6 or s:match("%X") then return nil end
+    local r = tonumber(s:sub(1, 2), 16)
+    local g = tonumber(s:sub(3, 4), 16)
+    local b = tonumber(s:sub(5, 6), 16)
+    if not (r and g and b) then return nil end
+    return Color3.fromRGB(r, g, b)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════════════════
+colTab:CreateSection("Colour Index")
+
+scanPara = colTab:CreateParagraph({
+    Title = "Colour Index",
+    Content = "Scan to sample the average colour of every block type.",
+})
+
+colTab:CreateButton({
+    Name = "Scan Block Colours",
+    Tooltip = "Sample every block in ReplicatedStorage.blocks and index it in OKLab. Run this once per session.",
+    Callback = function() task.spawn(scanColours) end
+})
+
+colTab:CreateSection("Colour Picker")
+
+local targetPicker
+targetPicker = colTab:CreateColorpicker({
+    Name = "Target Colour",
+    Default = Color3.fromRGB(150, 150, 150),
+    Callback = function(col) C.target = col end
+})
+
+colTab:CreateInput({
+    Name = "Hex Code",
+    Default = "969696",
+    Callback = function(t)
+        local col = parseHex(t)
+        if not col then
+            notifyWarn("Hex", "Use RRGGBB or RGB, e.g. 8A5C2B", 4)
+            return
+        end
+        C.target = col
+        pcall(function() targetPicker:Set(col) end)
+        notify("Hex", "Target set", 2, "info")
+    end
+})
+
+colTab:CreateSlider({
+    Name = "Matches to Show",
+    Range = { 3, 20 }, Increment = 1, CurrentValue = 8, Flag = "ColMatches",
+    Callback = function(v) C.matchCount = v end
+})
+
+colTab:CreateButton({
+    Name = "Find Similar Blocks",
+    Tooltip = "List the blocks closest to the target colour, nearest first.",
+    Callback = function() task.spawn(showMatches) end
+})
+
+-- Eyedropper: click a world block to adopt its colour.
+colTab:CreateToggle({
+    Name = "Eyedropper",
+    CurrentValue = false,
+    Tooltip = "Click any block in the world to copy its colour into the target.",
+    Callback = function(on)
+        if not on then
+            if B.tool == "Eyedropper" then stopSession() end
+            return
+        end
+        startSession("Eyedropper")
+        table.insert(B.conns, UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            local part = targetPart()
+            if not part then return end
+            C.target = part.Color
+            pcall(function() targetPicker:Set(part.Color) end)
+            showMatches()
+        end))
+    end
+})
+
+matchPara = colTab:CreateParagraph({
+    Title = "Similar Blocks",
+    Content = "Pick a colour, then Find Similar Blocks.",
+})
+
+colTab:CreateSection("Gradient Helper", { Column = "right" })
+
+local colBlocks = opsBlockOptions()
+
+colTab:CreateDropdown({
+    Name = "From Block",
+    Options = colBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "ColGradFrom",
+    Callback = function(v) C.gradFrom = (typeof(v) == "table") and v[1] or v end
+})
+
+colTab:CreateDropdown({
+    Name = "To Block",
+    Options = colBlocks, CurrentOption = { "whiteBlock" }, MultipleOptions = false,
+    Flag = "ColGradTo",
+    Callback = function(v) C.gradTo = (typeof(v) == "table") and v[1] or v end
+})
+
+colTab:CreateSlider({
+    Name = "Gradient Steps",
+    Range = { 2, 24 }, Increment = 1, CurrentValue = 8, Flag = "ColSteps",
+    Callback = function(v) C.steps = v end
+})
+
+colTab:CreateButton({
+    Name = "Build Gradient",
+    Tooltip = "Interpolate between the two blocks in OKLab and snap each step to the nearest real block.",
+    Callback = function() task.spawn(buildGradient) end
+})
+
+gradPara = colTab:CreateParagraph({
+    Title = "Gradient",
+    Content = "Build a gradient to see the block sequence.",
+})
+
+colTab:CreateSection("Gradient Painter", { Column = "right" })
+
+colTab:CreateDropdown({
+    Name = "Gradient Axis",
+    Options = { "X", "Y", "Z" }, CurrentOption = { "Y" }, MultipleOptions = false,
+    Flag = "ColAxis",
+    Callback = function(v) C.axis = (typeof(v) == "table") and v[1] or v end
+})
+
+colTab:CreateButton({
+    Name = "Paint Selection with Gradient",
+    Tooltip = "Recolour every block in the Builder selection, stepping through the gradient along the chosen axis.",
+    Callback = paintGradient
+})
+
+colTab:CreateButton({
+    Name = "Send Gradient to Autoshade",
+    Tooltip = "Use the gradient's darkest, middle and lightest blocks as the Autoshade palette.",
+    Callback = function()
+        if not C.gradient or #C.gradient < 3 then
+            notifyWarn("Gradient", "Build a gradient with at least 3 steps first", 4)
+            return
+        end
+        O.shadeDark = C.gradient[1]
+        O.shadeMid = C.gradient[math.ceil(#C.gradient / 2)]
+        O.shadeLight = C.gradient[#C.gradient]
+        notifyOK("Autoshade Palette",
+            O.shadeDark .. " / " .. O.shadeMid .. " / " .. O.shadeLight, 5)
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TOOL PRESETS — saves the Operations + Colour settings that share this scope
+-- ═══════════════════════════════════════════════════════════════════════════
+local PRESET_DIR = "autoBuilder/presets"
+
+local function ensurePresetDir()
+    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+    if not isfolder(PRESET_DIR) then makefolder(PRESET_DIR) end
+end
+
+local function presetFiles()
+    local out = {}
+    pcall(function()
+        ensurePresetDir()
+        for _, f in ipairs(listfiles(PRESET_DIR)) do
+            if f:lower():sub(-5) == ".json" then out[#out + 1] = f:match("[^/\\]+$") end
+        end
+    end)
+    if #out == 0 then out = { "(none saved)" } end
+    return out
+end
+
+local presetDropdown
+
+local function currentPreset()
+    return {
+        activeBlock = O.activeBlock,
+        replaceFrom = O.replaceFrom,
+        keepExisting = O.keepExisting,
+        shadeDark = O.shadeDark,
+        shadeMid = O.shadeMid,
+        shadeLight = O.shadeLight,
+        expandBy = O.expandBy,
+        gradFrom = C.gradFrom,
+        gradTo = C.gradTo,
+        steps = C.steps,
+        axis = C.axis,
+        gradient = C.gradient,
+        stackCount = B.stackCount,
+        smearLen = B.smearLen,
+        eraseLimit = B.eraseLimit,
+    }
+end
+
+local function savePreset()
+    local name = C.presetName
+    if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+    ensurePresetDir()
+    local ok, err = pcall(function()
+        writefile(PRESET_DIR .. "/" .. name, HttpService:JSONEncode(currentPreset()))
+    end)
+    if not ok then notifyErr("Preset", tostring(err), 5) return end
+    pcall(function() presetDropdown:Refresh(presetFiles()) end)
+    notifyOK("Preset Saved", name, 4)
+end
+
+local function loadPreset(name)
+    if not name or name == "(none saved)" then return end
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(readfile(PRESET_DIR .. "/" .. name))
+    end)
+    if not ok or type(data) ~= "table" then
+        notifyErr("Preset", "Could not read " .. tostring(name), 5)
+        return
+    end
+    O.activeBlock  = data.activeBlock  or O.activeBlock
+    O.replaceFrom  = data.replaceFrom  or O.replaceFrom
+    if data.keepExisting ~= nil then O.keepExisting = data.keepExisting end
+    O.shadeDark    = data.shadeDark    or O.shadeDark
+    O.shadeMid     = data.shadeMid     or O.shadeMid
+    O.shadeLight   = data.shadeLight   or O.shadeLight
+    O.expandBy     = data.expandBy     or O.expandBy
+    C.gradFrom     = data.gradFrom     or C.gradFrom
+    C.gradTo       = data.gradTo       or C.gradTo
+    C.steps        = data.steps        or C.steps
+    C.axis         = data.axis         or C.axis
+    C.gradient     = data.gradient     or C.gradient
+    B.stackCount   = data.stackCount   or B.stackCount
+    B.smearLen     = data.smearLen     or B.smearLen
+    B.eraseLimit   = data.eraseLimit   or B.eraseLimit
+    notifyOK("Preset Loaded", name .. " (sliders keep their old positions)", 6)
+end
+
+colTab:CreateSection("Tool Presets", { Collapsible = true })
+
+colTab:CreateParagraph({
+    Title = "About Presets",
+    Content = "Saves the Operations and Colour settings, plus the Builder's stack, smear and erase limits. The on-screen sliders won't visually move on load, but the saved values are what the tools use.",
+})
+
+colTab:CreateInput({
+    Name = "Preset Name",
+    Default = "MyPreset",
+    Callback = function(t) if t and t ~= "" then C.presetName = t end end
+})
+
+colTab:CreateButton({ Name = "Save Preset", Tooltip = "Write the current settings to autoBuilder/presets.", Callback = savePreset })
+
+presetDropdown = colTab:CreateDropdown({
+    Name = "Load Preset",
+    Options = presetFiles(), CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v) loadPreset((typeof(v) == "table") and v[1] or v) end
+})
+
+colTab:CreateButton({ Name = "Refresh Presets", Tooltip = "Rescan the presets folder.", Callback = function()
+    pcall(function() presetDropdown:Refresh(presetFiles()) end)
+    notify("Presets", "List refreshed", 2, "info")
+end })
+
+
 
 end
 
