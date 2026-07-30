@@ -4,7 +4,7 @@
 -- Upload DuvomeLib.lua (the library file) to that raw URL for this to work.
 -- ═════════════════════════════════════════════════════════════════════════════
 
-local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/PrizLovesRice1/PrizsHub/refs/heads/main/DuvomeLib.lua"))()
+local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/PrizLovesRice1/PrizsHub/refs/heads/main/DL.lua"))()
 
 -- small helper so every interaction gives visible feedback
 local function notify(name, content, ntype)
