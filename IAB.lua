@@ -5654,6 +5654,926 @@ Duvome:AddWatch("Selected Blocks", function() return T.count > 0 and T.count or 
 
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BUILDER TAB — Axiom-style cuboid tools
+--
+-- One shared session drives every tool: pick two corners, a hologram appears,
+-- nudge/flip/rotate it, then confirm. Undo and redo wrap every world change.
+--
+-- Placement reuses placeRawBlock. Destruction uses CLIENT_BLOCK_HIT_REQUEST,
+-- the same remote PIHD uses to demolish blocks (read as reference only, PIHD
+-- itself is untouched).
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BS = 3
+local mouse = LocalPlayer:GetMouse()
+local Camera = Workspace.CurrentCamera
+
+local buildTab = main:CreateTab("Builder", "hammer")
+
+-- ── remote for breaking blocks ─────────────────────────────────────────────
+local hitRemote
+pcall(function()
+    hitRemote = ReplicatedStorage
+        :WaitForChild("rbxts_include"):WaitForChild("node_modules")
+        :WaitForChild("@rbxts"):WaitForChild("net"):WaitForChild("out")
+        :WaitForChild("_NetManaged"):WaitForChild("CLIENT_BLOCK_HIT_REQUEST")
+end)
+
+local function vcreate(x, y, z)
+    if vector and vector.create then return vector.create(x, y, z) end
+    return Vector3.new(x, y, z)
+end
+
+-- Payload shape mirrors PIHD's working demolish call.
+local function breakPart(part)
+    if not hitRemote or not part then return false end
+    local ok = pcall(function()
+        hitRemote:InvokeServer({
+            Xoeoxuqilfgenamojfjmj = "\a\240\159\164\163\240\159\164\161\a\n\a\n\a\nohIstskUiftvgjy",
+            part = part,
+            block = part,
+            norm = vcreate(-3502.331787109375, 39.44426345825195, -3521.013671875),
+            pos = vcreate(0.9916929006576538, 0.07807211577892303, -0.10222448408603668),
+        })
+    end)
+    return ok
+end
+
+-- ── grid helpers ───────────────────────────────────────────────────────────
+local function key3(x, y, z) return x .. "," .. y .. "," .. z end
+local function toCell(p)
+    return math.floor(p.X / BS + 0.5), math.floor(p.Y / BS + 0.5), math.floor(p.Z / BS + 0.5)
+end
+local function toWorld(x, y, z) return Vector3.new(x * BS, y * BS, z * BS) end
+
+-- ── session state ──────────────────────────────────────────────────────────
+local B = {
+    tool = nil,
+    a = nil, b = nil,            -- selection corners (cells)
+    clip = nil,                  -- captured blocks, relative coords
+    off = { 0, 0, 0 },           -- current nudge offset
+    rotY = 0,                    -- 0/1/2/3 quarter turns
+    flip = { false, false, false },
+    holo = nil,
+    undo = {}, redo = {},
+    stackCount = 3,
+    smearLen = 8,
+    eraseLimit = 128,
+    sym = nil,                   -- symmetry node cell
+    symFlip = { false, false, false },
+    symRot = false,
+    conns = {},
+}
+
+local statusPara, histPara
+
+local function setStatus(title, body)
+    pcall(function() statusPara:Set({ Title = title, Content = body }) end)
+end
+
+local function refreshHistory()
+    pcall(function()
+        histPara:Set({
+            Title = "History",
+            Content = #B.undo .. " undo · " .. #B.redo .. " redo",
+        })
+    end)
+end
+
+-- ── world lookup ───────────────────────────────────────────────────────────
+local function blockPartMap()
+    local folder = getBlocksFolder()
+    local map = {}
+    if not folder then return map end
+    for _, part in ipairs(folder:GetChildren()) do
+        if part:IsA("BasePart") and part.Name ~= "bedrock" and part.Name ~= "portalToSpawn" then
+            local x, y, z = toCell(part.Position)
+            map[key3(x, y, z)] = part
+        end
+    end
+    return map
+end
+
+local function targetPart()
+    local t = mouse.Target
+    if t and t:IsA("BasePart") then
+        local f = getBlocksFolder()
+        if f and t:IsDescendantOf(f) then return t end
+    end
+    return nil
+end
+
+-- Dominant axis of where the camera is looking, as a unit cell step.
+local function facingStep()
+    local look = Camera and Camera.CFrame.LookVector or Vector3.new(0, 0, -1)
+    local ax, ay, az = math.abs(look.X), math.abs(look.Y), math.abs(look.Z)
+    if ax >= ay and ax >= az then return (look.X > 0 and 1 or -1), 0, 0, "X" end
+    if ay >= ax and ay >= az then return 0, (look.Y > 0 and 1 or -1), 0, "Y" end
+    return 0, 0, (look.Z > 0 and 1 or -1), "Z"
+end
+
+-- Held X/Y/Z forces movement onto a single axis.
+local function axisLock()
+    if UserInputService:IsKeyDown(Enum.KeyCode.X) then return "X" end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Y) then return "Y" end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Z) then return "Z" end
+    return nil
+end
+
+local function ctrlDown()
+    return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+        or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+end
+
+-- ── hologram ───────────────────────────────────────────────────────────────
+local function clearHolo()
+    if B.holo then B.holo:Destroy() B.holo = nil end
+end
+
+local function holoFolder()
+    if B.holo and B.holo.Parent then return B.holo end
+    local f = Instance.new("Folder")
+    f.Name = "IABBuilderHolo"
+    f.Parent = Workspace
+    B.holo = f
+    return f
+end
+
+-- Apply rotation and flips to a relative coordinate.
+local function xform(dx, dy, dz, sx, sy, sz)
+    if B.flip[1] then dx = (sx - 1) - dx end
+    if B.flip[2] then dy = (sy - 1) - dy end
+    if B.flip[3] then dz = (sz - 1) - dz end
+    for _ = 1, B.rotY do
+        dx, dz = dz, (sx - 1) - dx      -- clockwise quarter turn about Y
+        sx, sz = sz, sx
+    end
+    return dx, dy, dz
+end
+
+-- Resolve the clip into absolute cells at the current offset.
+local function resolvedCells()
+    local out = {}
+    if not B.clip then return out end
+    local sx, sy, sz = B.clip.sx, B.clip.sy, B.clip.sz
+    for _, c in ipairs(B.clip.cells) do
+        local dx, dy, dz = xform(c[1], c[2], c[3], sx, sy, sz)
+        out[#out + 1] = {
+            B.clip.ox + dx + B.off[1],
+            B.clip.oy + dy + B.off[2],
+            B.clip.oz + dz + B.off[3],
+            c[4],
+        }
+    end
+    return out
+end
+
+local MAX_HOLO = 2500
+local function drawHolo()
+    clearHolo()
+    if not B.clip then return end
+    local f = holoFolder()
+    local cells = resolvedCells()
+    local n = 0
+    for _, c in ipairs(cells) do
+        if n >= MAX_HOLO then break end
+        local p = Instance.new("Part")
+        p.Anchored = true p.CanCollide = false p.CanQuery = false
+        p.Size = Vector3.new(BS, BS, BS)
+        p.Position = toWorld(c[1], c[2], c[3])
+        p.Transparency = 0.55
+        p.Material = Enum.Material.Neon
+        p.Color = Color3.fromRGB(90, 200, 255)
+        p.Parent = f
+        n = n + 1
+    end
+    -- Arrow showing which way a scroll-up will push the selection.
+    local fx, fy, fz = facingStep()
+    local lock = axisLock()
+    if lock == "X" then fx, fy, fz = (fx >= 0 and 1 or -1), 0, 0
+    elseif lock == "Y" then fx, fy, fz = 0, (fy >= 0 and 1 or -1), 0
+    elseif lock == "Z" then fx, fy, fz = 0, 0, (fz >= 0 and 1 or -1) end
+    if #cells > 0 then
+        local sum = Vector3.new()
+        for _, c in ipairs(cells) do sum = sum + toWorld(c[1], c[2], c[3]) end
+        local mid = sum / #cells
+        local arrow = Instance.new("Part")
+        arrow.Anchored = true arrow.CanCollide = false arrow.CanQuery = false
+        arrow.Size = Vector3.new(1, 1, BS * 3)
+        arrow.CFrame = CFrame.lookAt(mid + Vector3.new(fx, fy, fz) * BS * 3,
+            mid + Vector3.new(fx, fy, fz) * BS * 6)
+        arrow.Color = Color3.fromRGB(255, 220, 60)
+        arrow.Material = Enum.Material.Neon
+        arrow.Parent = f
+    end
+end
+
+-- ── selection ──────────────────────────────────────────────────────────────
+local function selectionSize()
+    if not (B.a and B.b) then return 0, 0, 0 end
+    return math.abs(B.a[1] - B.b[1]) + 1,
+           math.abs(B.a[2] - B.b[2]) + 1,
+           math.abs(B.a[3] - B.b[3]) + 1
+end
+
+local function describeSelection()
+    if not (B.a and B.b) then
+        return "No selection. Left-click one corner, right-click the opposite."
+    end
+    local sx, sy, sz = selectionSize()
+    return sx .. " x " .. sy .. " x " .. sz .. " (" .. (sx * sy * sz) .. " cells)"
+end
+
+local function drawSelectionBox()
+    clearHolo()
+    if not (B.a and B.b) then return end
+    local f = holoFolder()
+    local minX, maxX = math.min(B.a[1], B.b[1]), math.max(B.a[1], B.b[1])
+    local minY, maxY = math.min(B.a[2], B.b[2]), math.max(B.a[2], B.b[2])
+    local minZ, maxZ = math.min(B.a[3], B.b[3]), math.max(B.a[3], B.b[3])
+    local p = Instance.new("Part")
+    p.Anchored = true p.CanCollide = false p.CanQuery = false
+    p.Size = Vector3.new((maxX - minX + 1) * BS, (maxY - minY + 1) * BS, (maxZ - minZ + 1) * BS)
+    p.Position = Vector3.new((minX + maxX) / 2 * BS, (minY + maxY) / 2 * BS, (minZ + maxZ) / 2 * BS)
+    p.Transparency = 0.75
+    p.Color = Color3.fromRGB(255, 210, 70)
+    p.Material = Enum.Material.Neon
+    p.Parent = f
+    local sb = Instance.new("SelectionBox")
+    sb.Adornee = p
+    sb.Color3 = Color3.fromRGB(255, 210, 70)
+    sb.LineThickness = 0.06
+    sb.Parent = p
+end
+
+-- Middle-click grows the box one step along the face you're looking at.
+local function expandFace()
+    if not (B.a and B.b) then return end
+    local fx, fy, fz = facingStep()
+    local lock = axisLock()
+    if lock == "X" then fy, fz = 0, 0 elseif lock == "Y" then fx, fz = 0, 0
+    elseif lock == "Z" then fx, fy = 0, 0 end
+    -- Grow whichever corner sits on the face we're pushing.
+    local function grow(i, d)
+        if d == 0 then return end
+        if (B.a[i] >= B.b[i]) == (d > 0) then B.a[i] = B.a[i] + d else B.b[i] = B.b[i] + d end
+    end
+    grow(1, fx) grow(2, fy) grow(3, fz)
+    drawSelectionBox()
+    setStatus(B.tool or "Builder", describeSelection())
+end
+
+-- Capture the world blocks inside the selection into a clip.
+local function captureClip()
+    if not (B.a and B.b) then return false end
+    local map = blockPartMap()
+    local minX, maxX = math.min(B.a[1], B.b[1]), math.max(B.a[1], B.b[1])
+    local minY, maxY = math.min(B.a[2], B.b[2]), math.max(B.a[2], B.b[2])
+    local minZ, maxZ = math.min(B.a[3], B.b[3]), math.max(B.a[3], B.b[3])
+    local cells = {}
+    for x = minX, maxX do
+        for y = minY, maxY do
+            for z = minZ, maxZ do
+                local part = map[key3(x, y, z)]
+                if part then
+                    cells[#cells + 1] = { x - minX, y - minY, z - minZ, part.Name }
+                end
+            end
+        end
+    end
+    if #cells == 0 then
+        notifyWarn("Empty", "No blocks inside that selection", 3)
+        return false
+    end
+    B.clip = {
+        cells = cells,
+        ox = minX, oy = minY, oz = minZ,
+        sx = maxX - minX + 1, sy = maxY - minY + 1, sz = maxZ - minZ + 1,
+    }
+    B.off = { 0, 0, 0 }
+    B.rotY = 0
+    B.flip = { false, false, false }
+    return true
+end
+
+-- ── world mutation with undo records ───────────────────────────────────────
+local function pushUndo(record)
+    table.insert(B.undo, record)
+    if #B.undo > 25 then table.remove(B.undo, 1) end
+    B.redo = {}
+    refreshHistory()
+end
+
+-- Place a list of {x,y,z,type}; returns the cells actually written.
+local function placeCells(cells, record)
+    local placed = {}
+    local existing = blockPartMap()
+    for i, c in ipairs(cells) do
+        local k = key3(c[1], c[2], c[3])
+        if not existing[k] then
+            local p = toWorld(c[1], c[2], c[3])
+            placeRawBlock(c[4], CFrame.new(p), false)
+            placed[#placed + 1] = { c[1], c[2], c[3], c[4] }
+        end
+        if i % 20 == 0 then task.wait(placeDelay) else task.wait(0.01) end
+    end
+    if record then record.placed = placed end
+    return placed
+end
+
+-- Break a list of cells; returns what was removed so undo can restore it.
+local function eraseCells(cells, record)
+    local map = blockPartMap()
+    local removed = {}
+    for i, c in ipairs(cells) do
+        local part = map[key3(c[1], c[2], c[3])]
+        if part then
+            removed[#removed + 1] = { c[1], c[2], c[3], part.Name }
+            breakPart(part)
+        end
+        if i % 20 == 0 then task.wait(0.05) else task.wait(0.01) end
+    end
+    if record then record.removed = removed end
+    return removed
+end
+
+local function doUndo()
+    local rec = table.remove(B.undo)
+    if not rec then notifyWarn("Undo", "Nothing to undo", 2) return end
+    task.spawn(function()
+        setStatus("Undo", "Reverting...")
+        if rec.placed and #rec.placed > 0 then eraseCells(rec.placed, nil) end
+        if rec.removed and #rec.removed > 0 then placeCells(rec.removed, nil) end
+        table.insert(B.redo, rec)
+        refreshHistory()
+        notifyOK("Undo", "Reverted " .. rec.label, 3)
+        setStatus(B.tool or "Builder", describeSelection())
+    end)
+end
+
+local function doRedo()
+    local rec = table.remove(B.redo)
+    if not rec then notifyWarn("Redo", "Nothing to redo", 2) return end
+    task.spawn(function()
+        setStatus("Redo", "Reapplying...")
+        if rec.removed and #rec.removed > 0 then eraseCells(rec.removed, nil) end
+        if rec.placed and #rec.placed > 0 then placeCells(rec.placed, nil) end
+        table.insert(B.undo, rec)
+        refreshHistory()
+        notifyOK("Redo", "Reapplied " .. rec.label, 3)
+    end)
+end
+
+-- ── symmetry ───────────────────────────────────────────────────────────────
+-- Mirrors a cell about the symmetry node for each enabled modifier.
+local function symmetryImages(x, y, z)
+    if not B.sym then return {} end
+    local out = {}
+    local nx, ny, nz = B.sym[1], B.sym[2], B.sym[3]
+    local function add(px, py, pz)
+        if px == x and py == y and pz == z then return end
+        out[#out + 1] = { px, py, pz }
+    end
+    if B.symFlip[1] then add(2 * nx - x, y, z) end
+    if B.symFlip[2] then add(x, 2 * ny - y, z) end
+    if B.symFlip[3] then add(x, y, 2 * nz - z) end
+    if B.symFlip[1] and B.symFlip[3] then add(2 * nx - x, y, 2 * nz - z) end
+    if B.symRot then
+        local rx, rz = x - nx, z - nz
+        for _ = 1, 3 do
+            rx, rz = rz, -rx
+            add(nx + rx, y, nz + rz)
+        end
+    end
+    return out
+end
+
+local function symmetryActive()
+    return B.sym ~= nil and (B.symFlip[1] or B.symFlip[2] or B.symFlip[3] or B.symRot)
+end
+
+local symNodePart
+local function drawSymNode()
+    if symNodePart then symNodePart:Destroy() symNodePart = nil end
+    if not B.sym then return end
+    local p = Instance.new("Part")
+    p.Anchored = true p.CanCollide = false p.CanQuery = false
+    p.Size = Vector3.new(1.2, 1.2, 1.2)
+    p.Position = toWorld(B.sym[1], B.sym[2], B.sym[3])
+    p.Material = Enum.Material.Neon
+    p.Color = symmetryActive() and Color3.fromRGB(255, 220, 60) or Color3.fromRGB(150, 150, 150)
+    p.Parent = Workspace
+    symNodePart = p
+end
+
+-- ── tool commits ───────────────────────────────────────────────────────────
+local function withSymmetry(cells)
+    if not symmetryActive() then return cells end
+    local seen, out = {}, {}
+    for _, c in ipairs(cells) do
+        local k = key3(c[1], c[2], c[3])
+        if not seen[k] then seen[k] = true out[#out + 1] = c end
+        for _, img in ipairs(symmetryImages(c[1], c[2], c[3])) do
+            local ik = key3(img[1], img[2], img[3])
+            if not seen[ik] then
+                seen[ik] = true
+                out[#out + 1] = { img[1], img[2], img[3], c[4] }
+            end
+        end
+    end
+    return out
+end
+
+local busy = false
+local function runCommit(label, fn)
+    if busy then notifyWarn("Busy", "Another operation is running", 2) return end
+    busy = true
+    task.spawn(function()
+        local rec = { label = label }
+        local ok, err = pcall(fn, rec)
+        if not ok then
+            notifyErr(label .. " Failed", tostring(err), 5)
+        else
+            pushUndo(rec)
+        end
+        busy = false
+        setStatus(B.tool or "Builder", describeSelection())
+    end)
+end
+
+local function commitMove()
+    runCommit("Move", function(rec)
+        local src = {}
+        for _, c in ipairs(B.clip.cells) do
+            src[#src + 1] = { B.clip.ox + c[1], B.clip.oy + c[2], B.clip.oz + c[3], c[4] }
+        end
+        local dst = withSymmetry(resolvedCells())
+        setStatus("Move", "Removing originals...")
+        eraseCells(src, rec)
+        setStatus("Move", "Placing " .. #dst .. " blocks...")
+        placeCells(dst, rec)
+        notifyOK("Move", #dst .. " blocks moved", 4)
+        clearHolo()
+        B.clip = nil
+    end)
+end
+
+local function commitClone()
+    runCommit("Clone", function(rec)
+        local dst = withSymmetry(resolvedCells())
+        setStatus("Clone", "Placing " .. #dst .. " blocks...")
+        placeCells(dst, rec)
+        notifyOK("Clone", #dst .. " blocks copied", 4)
+    end)
+end
+
+local function commitStack()
+    runCommit("Stack", function(rec)
+        local fx, fy, fz = facingStep()
+        local lock = axisLock()
+        if lock == "X" then fy, fz = 0, 0 elseif lock == "Y" then fx, fz = 0, 0
+        elseif lock == "Z" then fx, fy = 0, 0 end
+        local sx, sy, sz = B.clip.sx, B.clip.sy, B.clip.sz
+        local stepX, stepY, stepZ = fx * sx, fy * sy, fz * sz
+        local all = {}
+        for i = 1, B.stackCount do
+            for _, c in ipairs(resolvedCells()) do
+                all[#all + 1] = { c[1] + stepX * i, c[2] + stepY * i, c[3] + stepZ * i, c[4] }
+            end
+        end
+        all = withSymmetry(all)
+        setStatus("Stack", "Placing " .. #all .. " blocks...")
+        placeCells(all, rec)
+        notifyOK("Stack", B.stackCount .. " copies, " .. #all .. " blocks", 4)
+    end)
+end
+
+local function commitSmear()
+    runCommit("Smear", function(rec)
+        local fx, fy, fz = facingStep()
+        local lock = axisLock()
+        if lock == "X" then fy, fz = 0, 0 elseif lock == "Y" then fx, fz = 0, 0
+        elseif lock == "Z" then fx, fy = 0, 0 end
+        local base = resolvedCells()
+        local seen, all = {}, {}
+        -- Stretch one block at a time so the result is continuous, not spaced.
+        for step = 0, B.smearLen do
+            for _, c in ipairs(base) do
+                local x, y, z = c[1] + fx * step, c[2] + fy * step, c[3] + fz * step
+                local k = key3(x, y, z)
+                if not seen[k] then
+                    seen[k] = true
+                    all[#all + 1] = { x, y, z, c[4] }
+                end
+            end
+        end
+        all = withSymmetry(all)
+        setStatus("Smear", "Placing " .. #all .. " blocks...")
+        placeCells(all, rec)
+        notifyOK("Smear", "Stretched " .. B.smearLen .. " blocks", 4)
+    end)
+end
+
+local function commitErase()
+    if not (B.a and B.b) then notifyWarn("Erase", "Make a selection first", 3) return end
+    runCommit("Erase", function(rec)
+        local minX, maxX = math.min(B.a[1], B.b[1]), math.max(B.a[1], B.b[1])
+        local minY, maxY = math.min(B.a[2], B.b[2]), math.max(B.a[2], B.b[2])
+        local minZ, maxZ = math.min(B.a[3], B.b[3]), math.max(B.a[3], B.b[3])
+        local cells = {}
+        for x = minX, maxX do
+            for y = minY, maxY do
+                for z = minZ, maxZ do cells[#cells + 1] = { x, y, z } end
+            end
+        end
+        setStatus("Erase", "Removing " .. #cells .. " cells...")
+        local removed = eraseCells(cells, rec)
+        notifyOK("Erase", #removed .. " blocks removed", 4)
+    end)
+end
+
+-- Erase Connected: flood fill the same block type, capped like Axiom's 128.
+local function eraseConnected(part)
+    if not part then return end
+    runCommit("Erase Connected", function(rec)
+        local map = blockPartMap()
+        local sx, sy, sz = toCell(part.Position)
+        local wanted = part.Name
+        local queue = { { sx, sy, sz } }
+        local seen = { [key3(sx, sy, sz)] = true }
+        local cells = {}
+        while #queue > 0 and #cells < B.eraseLimit do
+            local c = table.remove(queue)
+            local k = key3(c[1], c[2], c[3])
+            local p = map[k]
+            if p and p.Name == wanted then
+                cells[#cells + 1] = { c[1], c[2], c[3] }
+                for _, d in ipairs({ {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }) do
+                    local nk = key3(c[1] + d[1], c[2] + d[2], c[3] + d[3])
+                    if not seen[nk] then
+                        seen[nk] = true
+                        queue[#queue + 1] = { c[1] + d[1], c[2] + d[2], c[3] + d[3] }
+                    end
+                end
+            end
+        end
+        setStatus("Erase Connected", "Removing " .. #cells .. " blocks...")
+        eraseCells(cells, rec)
+        notifyOK("Erase Connected", #cells .. " x " .. wanted .. " removed", 4)
+    end)
+end
+
+-- Extrude works on a face, with no selection at all.
+local function extrudeFace(part, grow)
+    if not part then return end
+    runCommit(grow and "Extrude" or "Shrink", function(rec)
+        local fx, fy, fz = facingStep()
+        -- Push out against the way we're looking, so the near face moves toward us.
+        fx, fy, fz = -fx, -fy, -fz
+        local map = blockPartMap()
+        local sx, sy, sz = toCell(part.Position)
+        local wanted = part.Name
+        -- Collect the connected same-type face slab.
+        local queue = { { sx, sy, sz } }
+        local seen = { [key3(sx, sy, sz)] = true }
+        local face = {}
+        while #queue > 0 and #face < 512 do
+            local c = table.remove(queue)
+            local p = map[key3(c[1], c[2], c[3])]
+            if p and p.Name == wanted then
+                face[#face + 1] = c
+                for _, d in ipairs({ {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }) do
+                    -- stay in the plane perpendicular to the extrude direction
+                    if not (d[1] == fx and fx ~= 0) and not (d[2] == fy and fy ~= 0)
+                        and not (d[3] == fz and fz ~= 0) then
+                        local nk = key3(c[1] + d[1], c[2] + d[2], c[3] + d[3])
+                        if not seen[nk] then
+                            seen[nk] = true
+                            queue[#queue + 1] = { c[1] + d[1], c[2] + d[2], c[3] + d[3] }
+                        end
+                    end
+                end
+            end
+        end
+        if grow then
+            local out = {}
+            for _, c in ipairs(face) do
+                out[#out + 1] = { c[1] + fx, c[2] + fy, c[3] + fz, wanted }
+            end
+            out = withSymmetry(out)
+            placeCells(out, rec)
+            notifyOK("Extrude", #out .. " blocks added", 3)
+        else
+            eraseCells(face, rec)
+            notifyOK("Shrink", #face .. " blocks removed", 3)
+        end
+    end)
+end
+
+-- ── input handling ─────────────────────────────────────────────────────────
+local function stopSession()
+    for _, c in ipairs(B.conns) do pcall(function() c:Disconnect() end) end
+    B.conns = {}
+    B.tool = nil
+    clearHolo()
+    setStatus("Builder", "No tool active.")
+end
+
+local toolToggles = {}
+
+local function startSession(toolName)
+    for _, c in ipairs(B.conns) do pcall(function() c:Disconnect() end) end
+    B.conns = {}
+    B.tool = toolName
+    setStatus(toolName, describeSelection())
+
+    table.insert(B.conns, UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        local t = input.UserInputType
+        local k = input.KeyCode
+
+        -- history
+        if ctrlDown() and k == Enum.KeyCode.Z then doUndo() return end
+        if ctrlDown() and k == Enum.KeyCode.Y then doRedo() return end
+        -- modifiers on the live clip
+        -- While the symmetry tool is active these keys configure the node
+        -- instead of the clip, so the clip branches are skipped there.
+        if ctrlDown() and k == Enum.KeyCode.F and B.clip and B.tool ~= "Setup Symmetry" then
+            local _, _, _, axis = facingStep()
+            local i = axis == "X" and 1 or (axis == "Y" and 2 or 3)
+            B.flip[i] = not B.flip[i]
+            drawHolo()
+            notify("Flip", "Flipped on " .. axis, 2, "info")
+            return
+        end
+        if ctrlDown() and k == Enum.KeyCode.R and B.clip and B.tool ~= "Setup Symmetry" then
+            B.rotY = (B.rotY + 1) % 4
+            drawHolo()
+            notify("Rotate", (B.rotY * 90) .. " degrees", 2, "info")
+            return
+        end
+        -- symmetry modifiers work whenever a node exists
+        if ctrlDown() and k == Enum.KeyCode.F and B.sym then
+            local _, _, _, axis = facingStep()
+            local i = axis == "X" and 1 or (axis == "Y" and 2 or 3)
+            B.symFlip[i] = not B.symFlip[i]
+            drawSymNode()
+            notify("Symmetry", "Flip " .. axis .. (B.symFlip[i] and " on" or " off"), 2, "info")
+            return
+        end
+        if ctrlDown() and k == Enum.KeyCode.R and B.sym then
+            B.symRot = not B.symRot
+            drawSymNode()
+            notify("Symmetry", "Rotation " .. (B.symRot and "on" or "off"), 2, "info")
+            return
+        end
+        -- delete clears erase selection or the symmetry node
+        if k == Enum.KeyCode.Delete or k == Enum.KeyCode.Backspace then
+            if B.tool == "Setup Symmetry" and B.sym then
+                B.sym = nil
+                B.symFlip = { false, false, false }
+                B.symRot = false
+                drawSymNode()
+                notify("Symmetry", "Node removed", 2, "info")
+            elseif B.tool == "Erase" then
+                commitErase()
+            end
+            return
+        end
+
+        if t == Enum.UserInputType.MouseButton1 then
+            if B.tool == "Extrude" then
+                extrudeFace(targetPart(), false)   -- left-click shrinks
+                return
+            end
+            if B.tool == "Clone" and B.clip then
+                -- left-click finishes a clone run
+                clearHolo() B.clip = nil
+                notify("Clone", "Finished", 2, "info")
+                return
+            end
+            local p = targetPart()
+            if p then
+                local x, y, z = toCell(p.Position)
+                B.a = { x, y, z }
+                if not B.b then B.b = { x, y, z } end
+                B.clip = nil
+                drawSelectionBox()
+                setStatus(B.tool, describeSelection())
+            end
+
+        elseif t == Enum.UserInputType.MouseButton2 then
+            if B.tool == "Extrude" then
+                extrudeFace(targetPart(), true)    -- right-click extrudes
+                return
+            end
+            if B.tool == "Erase" then
+                eraseConnected(targetPart())
+                return
+            end
+            if B.tool == "Setup Symmetry" then
+                local p = targetPart()
+                if p then
+                    local x, y, z = toCell(p.Position)
+                    B.sym = { x, y, z }
+                    drawSymNode()
+                    notifyOK("Symmetry", "Node set. Ctrl+F / Ctrl+R to enable.", 4)
+                end
+                return
+            end
+            if B.clip then
+                -- confirm the pending operation
+                if B.tool == "Move" then commitMove()
+                elseif B.tool == "Clone" then commitClone()
+                elseif B.tool == "Stack" then commitStack()
+                elseif B.tool == "Smear" then commitSmear() end
+                return
+            end
+            local p = targetPart()
+            if p then
+                local x, y, z = toCell(p.Position)
+                B.b = { x, y, z }
+                if not B.a then B.a = { x, y, z } end
+                drawSelectionBox()
+                setStatus(B.tool, describeSelection())
+            end
+
+        elseif t == Enum.UserInputType.MouseButton3 then
+            if B.clip then
+                -- jump the clip to whatever we middle-clicked
+                local p = targetPart()
+                if p then
+                    local x, y, z = toCell(p.Position)
+                    B.off = { x - B.clip.ox, y - B.clip.oy, z - B.clip.oz }
+                    drawHolo()
+                end
+            else
+                expandFace()
+            end
+        end
+    end))
+
+    -- scroll nudges the clip, creating it on first scroll
+    table.insert(B.conns, UserInputService.InputChanged:Connect(function(input, gp)
+        if gp then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+        if not (B.a and B.b) then return end
+        if not B.clip then
+            if not captureClip() then return end
+            notify(B.tool or "Builder", "Hologram created. Scroll to nudge, right-click to confirm.", 3, "info")
+        end
+        local dir = input.Position.Z > 0 and 1 or -1
+        local fx, fy, fz = facingStep()
+        local lock = axisLock()
+        if lock == "X" then fy, fz = 0, 0 elseif lock == "Y" then fx, fz = 0, 0
+        elseif lock == "Z" then fx, fy = 0, 0 end
+        B.off[1] = B.off[1] + fx * dir
+        B.off[2] = B.off[2] + fy * dir
+        B.off[3] = B.off[3] + fz * dir
+        drawHolo()
+        setStatus(B.tool, "Offset " .. B.off[1] .. ", " .. B.off[2] .. ", " .. B.off[3]
+            .. (lock and ("  [" .. lock .. " locked]") or ""))
+    end))
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════════════════
+buildTab:CreateSection("Session")
+
+statusPara = buildTab:CreateParagraph({
+    Title = "Builder",
+    Content = "No tool active.",
+})
+histPara = buildTab:CreateParagraph({
+    Title = "History",
+    Content = "0 undo · 0 redo",
+})
+
+local function toolToggle(name, tip)
+    local tg
+    tg = buildTab:CreateToggle({
+        Name = name,
+        CurrentValue = false,
+        Tooltip = tip,
+        Callback = function(on)
+            if on then
+                -- only one builder tool at a time
+                for other, ref in pairs(toolToggles) do
+                    if other ~= name then pcall(function() ref:Set(false) end) end
+                end
+                startSession(name)
+            elseif B.tool == name then
+                stopSession()
+            end
+        end
+    })
+    toolToggles[name] = tg
+    return tg
+end
+
+buildTab:CreateSection("Tools")
+
+toolToggle("Move", "Left-click a corner, right-click the opposite, scroll to lift the hologram, right-click to confirm. Originals are removed.")
+toolToggle("Clone", "Same as Move but the originals stay. Right-click confirms a copy, left-click finishes.")
+toolToggle("Stack", "Repeats the selection in a row. Scroll to aim, set Stack Count, right-click to confirm.")
+toolToggle("Smear", "Stretches the selection between its origin and where you nudge it, filling every step.")
+toolToggle("Extrude", "No selection needed. Right-click a face to extrude it out, left-click to shrink it back.")
+toolToggle("Erase", "Select a cuboid then press Delete or Backspace. Right-click a block to erase connected blocks of that type.")
+toolToggle("Setup Symmetry", "Right-click to place the symmetry node, then Ctrl+F or Ctrl+R to enable mirroring for every other tool.")
+
+buildTab:CreateSection("Options", { Column = "right" })
+
+buildTab:CreateSlider({
+    Name = "Stack Count",
+    Range = { 1, 32 }, Increment = 1, CurrentValue = 3, Suffix = "x", Flag = "BldStack",
+    Callback = function(v) B.stackCount = v end
+})
+
+buildTab:CreateSlider({
+    Name = "Smear Length",
+    Range = { 1, 64 }, Increment = 1, CurrentValue = 8, Suffix = "blk", Flag = "BldSmear",
+    Callback = function(v) B.smearLen = v end
+})
+
+buildTab:CreateSlider({
+    Name = "Erase Connected Limit",
+    Range = { 16, 512 }, Increment = 16, CurrentValue = 128, Suffix = "blk", Flag = "BldEraseLim",
+    Callback = function(v) B.eraseLimit = v end
+})
+
+buildTab:CreateButton({
+    Name = "Undo",
+    Tooltip = "Same as Ctrl+Z. Reverts the last builder operation.",
+    Callback = doUndo
+})
+
+buildTab:CreateButton({
+    Name = "Redo",
+    Tooltip = "Same as Ctrl+Y.",
+    Callback = doRedo
+})
+
+buildTab:CreateButton({
+    Name = "Clear Selection",
+    Tooltip = "Drop the current corners and hologram.",
+    Callback = function()
+        B.a, B.b, B.clip = nil, nil, nil
+        B.off = { 0, 0, 0 } B.rotY = 0 B.flip = { false, false, false }
+        clearHolo()
+        setStatus(B.tool or "Builder", describeSelection())
+        notify("Cleared", "Selection dropped", 2, "info")
+    end
+})
+
+buildTab:CreateButton({
+    Name = "Stop Tool",
+    Tooltip = "Release the mouse and keyboard from the builder.",
+    Callback = function()
+        stopSession()
+        for _, ref in pairs(toolToggles) do pcall(function() ref:Set(false) end) end
+    end
+})
+
+buildTab:CreateSection("Symmetry", { Column = "right", Collapsible = true })
+
+buildTab:CreateParagraph({
+    Title = "Symmetry Node",
+    Content = "With the Setup Symmetry tool active, right-click a block to drop the node. Grey means off, yellow means active. Ctrl+F toggles a mirror on the axis you face, Ctrl+R toggles 4-way rotation. Delete removes the node.",
+})
+
+buildTab:CreateButton({
+    Name = "Clear Symmetry",
+    Tooltip = "Remove the symmetry node and all its modifiers.",
+    Callback = function()
+        B.sym = nil
+        B.symFlip = { false, false, false }
+        B.symRot = false
+        drawSymNode()
+        notify("Symmetry", "Cleared", 2, "info")
+    end
+})
+
+buildTab:CreateSection("Controls", { Collapsible = true })
+buildTab:CreateParagraph({
+    Title = "Mouse",
+    Content = "Left-click: first corner (Extrude: shrink face, Clone: finish)\nRight-click: second corner, then confirm (Extrude: extrude, Erase: erase connected)\nMiddle-click: expand the selection face, or jump the hologram to the clicked block\nScroll: nudge one block, away on scroll-up, based on where you face",
+})
+buildTab:CreateParagraph({
+    Title = "Keyboard",
+    Content = "Hold X / Y / Z: lock movement to that axis\nCtrl+F: flip on the axis you face\nCtrl+R: rotate 90 degrees clockwise\nCtrl+Z / Ctrl+Y: undo / redo\nDelete or Backspace: erase the selection, or remove the symmetry node",
+})
+
+Duvome:AddWatch("Builder", function() return B.tool or false end)
+Duvome:AddWatch("Symmetry", function()
+    if not B.sym then return false end
+    return symmetryActive() and "on" or "node set"
+end)
+
+end
+
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
 Duvome:AddWatch("Building", function()
