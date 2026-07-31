@@ -1767,8 +1767,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 	
 	do
-		local SnowCanvas = Create("Frame", {
-			Name                   = "SnowCanvas",
+		local StarCanvas = Create("Frame", {
+			Name                   = "StarCanvas",
 			BackgroundTransparency = 1,
 			Size                   = UDim2.new(1, 0, 1, 0),
 			Position               = UDim2.new(0, 0, 0, 0),
@@ -1777,72 +1777,63 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			Parent                 = MainWindow
 		})
 
-		local MAX_FLAKES = 45
+		local MAX_STARS = 26
+		local STAR_CHAR = "\226\156\166"   -- four-pointed star
 
-		
-		local function makeFlake()
-			local sz = 3 + math.random(0, 3)   
-			local f = Create("Frame", {
-				BackgroundColor3       = Color3.fromRGB(255, 255, 255),
-				BackgroundTransparency = 0.2 + math.random() * 0.5,
-				BorderSizePixel        = 0,
-				Size                   = UDim2.new(0, sz, 0, sz),
+		local function makeStar()
+			local sz = 8 + math.random(0, 8)
+			local st = Create("TextLabel", {
+				Text                   = STAR_CHAR,
+				Font                   = Enum.Font.GothamBold,
+				TextSize               = sz,
+				TextColor3             = Color3.fromRGB(225, 195, 255),
+				TextTransparency       = 1,
+				BackgroundTransparency = 1,
+				Size                   = UDim2.new(0, sz * 2, 0, sz * 2),
 				Position               = UDim2.new(math.random(), 0, math.random(), 0),
 				ZIndex                 = 1,
-				Parent                 = SnowCanvas
+				Parent                 = StarCanvas
 			})
-			Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = f})
-			return f, sz
+			return st, sz
 		end
 
-		local function animateFlake(f, sz)
-			
-			local startX  = math.random() * 0.98
-			
-			local fallTime = 4 + math.random() * 5
-			
-			local sway     = (math.random() - 0.5) * 40
+		-- Fade in, hold, fade out, then reappear somewhere else. No falling:
+		-- they simply pop in and out anywhere across the window.
+		local function twinkle(st)
+			local sz    = 8 + math.random(0, 8)
+			local dim   = 0.35 + math.random() * 0.4    -- never fully solid
+			local up    = 0.5 + math.random() * 0.8
+			local hold  = 0.3 + math.random() * 1.2
+			local down  = 0.6 + math.random() * 0.9
 
-			f.BackgroundTransparency = 0.2 + math.random() * 0.5
-			f.Size     = UDim2.new(0, sz, 0, sz)
-			f.Position = UDim2.new(startX, 0, -0.04, 0)
+			st.Position = UDim2.new(math.random(), 0, math.random(), 0)
+			st.TextSize = sz
+			st.Size     = UDim2.new(0, sz * 2, 0, sz * 2)
+			st.TextTransparency = 1
 
-			
-			TweenService:Create(f,
-				TweenInfo.new(fallTime, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-				{Position = UDim2.new(startX, sway, 1.04, 0)}
+			TweenService:Create(st,
+				TweenInfo.new(up, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+				{TextTransparency = dim}
 			):Play()
 
-			
-			local fadeDelay = fallTime * 0.75
-			task.delay(fadeDelay, function()
-				if f and f.Parent then
-					TweenService:Create(f,
-						TweenInfo.new(fallTime * 0.25, Enum.EasingStyle.Quint),
-						{BackgroundTransparency = 1}
-					):Play()
-				end
-			end)
-
-			
-			task.delay(fallTime + 0.1, function()
-				if f and f.Parent then
-					f.BackgroundTransparency = 0.2 + math.random() * 0.5
-					animateFlake(f, 3 + math.random(0, 3))
-				end
+			task.delay(up + hold, function()
+				if not (st and st.Parent) then return end
+				TweenService:Create(st,
+					TweenInfo.new(down, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+					{TextTransparency = 1}
+				):Play()
+				task.delay(down + math.random() * 1.5, function()
+					if st and st.Parent then twinkle(st) end
+				end)
 			end)
 		end
 
-		
 		task.spawn(function()
-			for i = 1, MAX_FLAKES do
-				local f, sz = makeFlake()
-				
-				if i <= MAX_FLAKES / 2 then
-					f.Position = UDim2.new(math.random(), 0, math.random() * 0.8, 0)
-				end
-				animateFlake(f, sz)
-				task.wait(0.05)
+			for _ = 1, MAX_STARS do
+				local st = makeStar()
+				twinkle(st)
+				-- stagger so they do not all pulse together
+				task.wait(0.08 + math.random() * 0.12)
 			end
 		end)
 	end
