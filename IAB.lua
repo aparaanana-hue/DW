@@ -10769,6 +10769,101 @@ refreshList()
 
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- EDITOR PANEL — floating side panel of the controls used most while building
+--
+-- Same idea as the avatar panel: docks beside the window, drag it anywhere.
+-- Built from the library's element factory, so these are real controls, not
+-- copies - they write to the same state the tabs do.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local B, O = BA.B, BA.O
+
+local panel = Duvome:MakeSidePanel({ Name = "Editor", Width = 250 })
+
+panel:AddLabel("Blocks")
+
+local blockList = (function()
+    local seen, b = {}, {}
+    local f = ReplicatedStorage:FindFirstChild("blocks")
+    if f then
+        for _, v in ipairs(f:GetChildren()) do
+            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
+        end
+    end
+    table.sort(b)
+    if #b == 0 then b = { "stone", "grass" } end
+    return b
+end)()
+
+panel:AddDropdown({
+    Name = "Active Block",
+    Options = blockList, Default = "stone", Search = true,
+    Callback = function(v) O.activeBlock = v end
+})
+
+panel:AddDivider()
+panel:AddLabel("Edit")
+
+panel:AddToggle({
+    Name = "Tool Mask",
+    Default = false,
+    Callback = function(v) O.mask.on = v end
+})
+
+panel:AddSlider({
+    Name = "Expand / Shrink",
+    Min = 1, Max = 16, Increment = 1, Default = 1, ValueName = "blk",
+    Callback = function(v) O.expandBy = v end
+})
+
+panel:AddSlider({
+    Name = "Stack Count",
+    Min = 1, Max = 32, Increment = 1, Default = 3, ValueName = "x",
+    Callback = function(v) B.stackCount = v end
+})
+
+panel:AddSlider({
+    Name = "Smear Length",
+    Min = 1, Max = 64, Increment = 1, Default = 8, ValueName = "blk",
+    Callback = function(v) B.smearLen = v end
+})
+
+panel:AddDivider()
+panel:AddLabel("History")
+
+panel:AddButton({
+    Name = "Undo",
+    Callback = function() BA.doUndo() end
+})
+
+panel:AddButton({
+    Name = "Redo",
+    Callback = function() BA.doRedo() end
+})
+
+panel:AddButton({
+    Name = "Clear Selection",
+    Callback = function()
+        B.a, B.b, B.clip = nil, nil, nil
+        notify("Builder", "Selection dropped", 2, "info")
+    end
+})
+
+-- the switch that reveals it, on the Edit tab
+tabEdit:CreateToggle({
+    Name = "Editor Panel",
+    CurrentValue = false,
+    Tooltip = "Floating panel of the controls you reach for most. Drag it by its title bar.",
+    Callback = function(on)
+        if on then panel:Show() else panel:Hide() end
+    end
+})
+
+end
+
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
 Duvome:AddWatch("Building", function()

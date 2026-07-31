@@ -4722,6 +4722,91 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			return ElementFunction
 		end
 
+		-- ── Side Panel ──────────────────────────────────────────────────────
+		-- A free-floating panel docked beside the window, built from the same
+		-- element factory as a tab, so it can hold real toggles/sliders/etc.
+		-- Defined here because Duvome, Create and GetElements are all in scope.
+		if not DuvomeLibrary.MakeSidePanel then
+			function DuvomeLibrary:MakeSidePanel(cfg)
+				cfg = cfg or {}
+				local title = cfg.Name or "Panel"
+				local width = cfg.Width or 250
+
+				local Panel = Create("Frame", {
+					Name = "SidePanel",
+					BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Main,
+					BorderSizePixel = 0,
+					Size = UDim2.new(0, width, 0, 340),
+					Position = UDim2.new(0.5, 320, 0.5, -170),
+					Visible = false,
+					ZIndex = 90,
+					Parent = Duvome,
+				})
+				AddThemeObject(Panel, "Main")
+				Create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = Panel})
+				AddThemeObject(Create("UIStroke", {Thickness = 1.5, Parent = Panel}), "Stroke")
+
+				local Bar = Create("Frame", {
+					BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34),
+					ZIndex = 91, Parent = Panel,
+				})
+				AddThemeObject(Create("TextLabel", {
+					Text = title, Font = Enum.Font.GothamBold, TextSize = 14,
+					TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
+					BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
+					Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -44, 1, 0),
+					ZIndex = 92, Parent = Bar,
+				}), "Text")
+				local CloseBtn = Create("TextButton", {
+					Text = "X", Font = Enum.Font.GothamBold, TextSize = 13,
+					TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].TextDark,
+					BackgroundTransparency = 1, Size = UDim2.new(0, 30, 1, 0),
+					Position = UDim2.new(1, -32, 0, 0), ZIndex = 92, Parent = Bar,
+				})
+
+				local Content = Create("ScrollingFrame", {
+					BackgroundTransparency = 1, BorderSizePixel = 0,
+					Position = UDim2.new(0, 10, 0, 38),
+					Size = UDim2.new(1, -20, 1, -48),
+					CanvasSize = UDim2.new(0, 0, 0, 0),
+					ScrollBarThickness = 3, ZIndex = 91, Parent = Panel,
+				})
+				local List = Create("UIListLayout", {
+					Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Content,
+				})
+				AddConnection(List:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+					Content.CanvasSize = UDim2.new(0, 0, 0, List.AbsoluteContentSize.Y + 8)
+				end)
+
+				-- drag by the title bar
+				local dragging, dragStart, startPos = false, nil, nil
+				AddConnection(Bar.InputBegan, function(i)
+					if i.UserInputType == Enum.UserInputType.MouseButton1 then
+						dragging = true dragStart = i.Position startPos = Panel.Position
+					end
+				end)
+				AddConnection(UserInputService.InputEnded, function(i)
+					if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+				end)
+				AddConnection(UserInputService.InputChanged, function(i)
+					if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+						local d = i.Position - dragStart
+						Panel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+						                           startPos.Y.Scale, startPos.Y.Offset + d.Y)
+					end
+				end)
+
+				local api = GetElements(Content)
+				function api:Show() Panel.Visible = true end
+				function api:Hide() Panel.Visible = false end
+				function api:Toggle() Panel.Visible = not Panel.Visible return Panel.Visible end
+				function api:IsOpen() return Panel.Visible end
+				function api:SetTitle(t) Bar:FindFirstChildWhichIsA("TextLabel").Text = t end
+				AddConnection(CloseBtn.MouseButton1Click, function() Panel.Visible = false end)
+				return api
+			end
+		end
+
 		local ElementFunction = {}
 
 		
