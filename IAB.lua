@@ -76,6 +76,7 @@ local function wrapTab(container)
             Name = cfg.Name,
             Tooltip = cfg.Tooltip,
             ShowKeybind = cfg.Keybind,
+            Options = cfg.Gear,
             Callback = cfg.Callback or function() end,
         })
     end
@@ -215,9 +216,9 @@ end
 
 -- Four tabs instead of eleven. The old per-feature tab variables now alias a
 -- shared tab, so each feature keeps its own sections without its own tab.
-local tabBuild    = main:CreateTab("Build", "hammer")
-local tabGenerate = main:CreateTab("Generate", "mountain")
-local tabEdit     = main:CreateTab("Edit", "wand-sparkles")
+local tabBuild    = main:CreateTab("Build", "layout-fluid")
+local tabGenerate = main:CreateTab("Generate", "star")
+local tabEdit     = main:CreateTab("Edit", "three-sliders-horizontal")
 
 -- Build: placing, previewing and saving a build file
 local auto        = tabBuild
@@ -2126,6 +2127,23 @@ end
 
 auto:CreateSection("Build")
 
+progressParagraph = auto:CreateParagraph({
+    Title = "Build Progress",
+    Content = "Idle. Start a build to see live progress and ETA."
+})
+
+auto:CreateDropdown({
+    Name = "Build Style",
+    Options = {"Around Preview", "Expand from Middle", "Batch (verify)"},
+    CurrentOption = {"Around Preview"},
+    MultipleOptions = false,
+    Flag = "BuildMode",
+    Callback = function(option)
+        buildMode = (typeof(option) == "table") and option[1] or option
+    end
+})
+
+
 fileDropdown = auto:CreateDropdown({
     Name = "Select Build File",
     -- Refresh and Delete live in this dropdown's gear rather than as two more
@@ -2180,6 +2198,12 @@ auto:CreateToggle({
     CurrentValue = false,
     Flag = "BuildToggle",
     Keybind = true,
+    Gear = {
+        { Type = "toggle", Name = "Skip Existing Blocks", Default = false,
+          Callback = function(v) placeMissingOnly = v end },
+        { Type = "toggle", Name = "Only Use Blocks I Own", Default = false,
+          Callback = function(v) onlyUseOwned = v end },
+    },
     Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
     Callback = function(v)
         if v then
@@ -2215,46 +2239,27 @@ auto:CreateToggle({
 })
 
 auto:CreateToggle({
-    Name = "Skip Existing Blocks",
-    CurrentValue = false,
-    Flag = "PlaceMissingToggle",
-    Tooltip = "Only place blocks that are missing. Useful for finishing a partial build.",
-    Callback = function(v)
-        placeMissingOnly = v
-    end
-})
-
-auto:CreateToggle({
-    Name = "Only Use Blocks I Own",
-    CurrentValue = false,
-    Flag = "OnlyUseOwned",
-    Tooltip = "Skip any block type you don't have in your inventory instead of failing on it.",
-    Callback = function(v)
-        onlyUseOwned = v
-    end
-})
-
-auto:CreateToggle({
-    Name = "Use Recommended Settings",
+    Name = "Build Tuning",
     CurrentValue = false,
     Flag = "UseRecommended",
-    Tooltip = "Applies safe, smooth values: interval 0.2, fly speed 25, gap 12. You can still adjust the sliders afterwards.",
+    Tooltip = "On applies safe values: interval 0.2s, fly 25, gap 12. Open the gear to tune them yourself.",
+    Gear = {
+        -- popover sliders are whole numbers only, hence milliseconds here
+        { Type = "slider", Name = "Place Interval (ms)", Min = 5, Max = 1000, Default = 20,
+          Callback = function(v) placeDelay = v / 1000 end },
+        { Type = "slider", Name = "Fly Speed", Min = 8, Max = 80, Default = 35,
+          Callback = function(v) buildFlySpeed = v end },
+        { Type = "slider", Name = "Build Gap", Min = 3, Max = 40, Default = 12,
+          Callback = function(v) buildStandoff = v end },
+    },
     Callback = function(v)
         if v then
-            pcall(function() intervalSlider:Set(0.2) end)
-            pcall(function() flySpeedSlider:Set(25) end)
-            pcall(function() gapSlider:Set(12) end)
             placeDelay = 0.2
             buildFlySpeed = 25
             buildStandoff = 12
-            notifyOK("Recommended Applied", "Interval 0.2, Fly 25, Gap 12", 4)
+            notifyOK("Build Tuning", "Interval 0.2s, Fly 25, Gap 12", 4)
         end
     end
-})
-
-progressParagraph = auto:CreateParagraph({
-    Title = "Build Progress",
-    Content = "Idle. Start a build to see live progress and ETA."
 })
 
 -- The Objects controls are identical on every tab that can stamp geometry, so
@@ -2767,28 +2772,6 @@ end
 
 auto:CreateSection("Build Speed & Movement", { Collapsible = true })
 
-auto:CreateDropdown({
-    Name = "Build Style",
-    Options = {"Around Preview", "Expand from Middle", "Batch (verify)"},
-    CurrentOption = {"Around Preview"},
-    MultipleOptions = false,
-    Flag = "BuildMode",
-    Callback = function(option)
-        buildMode = (typeof(option) == "table") and option[1] or option
-    end
-})
-
-local intervalSlider = auto:CreateSlider({
-    Name = "Place Interval",
-    Range = {0.005, 1},
-    Increment = 0.005,
-    CurrentValue = 0.02,
-    Suffix = "s",
-    Flag = "PlaceInterval",
-    Callback = function(v)
-        placeDelay = v
-    end
-})
 
 auto:CreateDivider()
 
@@ -2852,29 +2835,7 @@ auto:CreateDropdown({
     end
 })
 
-local flySpeedSlider = auto:CreateSlider({
-    Name = "Fly Speed",
-    Range = {8, 80},
-    Suffix = "st/s",
-    Increment = 1,
-    CurrentValue = 35,
-    Flag = "BuildFlySpeed",
-    Callback = function(v)
-        buildFlySpeed = v
-    end
-})
 
-local gapSlider = auto:CreateSlider({
-    Name = "Build Gap",
-    Range = {3, 40},
-    Suffix = "st",
-    Increment = 1,
-    CurrentValue = 12,
-    Flag = "BuildStandoff",
-    Callback = function(v)
-        buildStandoff = v
-    end
-})
 
 previewTab:CreateSection("Preview", { Collapsible = true })
 
@@ -2887,6 +2848,25 @@ previewTab:CreateToggle({
     Name = "Preview Build",
     CurrentValue = false,
     Flag = "PreviewToggle",
+    Gear = {
+        { Type = "toggle", Name = "Use Real Models", Default = true,
+          Callback = function(v) previewRealModels = v end },
+        { Type = "toggle", Name = "Low-Lag Preview", Default = false,
+          Callback = function(v) previewMinimized = v end },
+        -- popover sliders are integers, so transparency is a percentage
+        { Type = "slider", Name = "Transparency %", Min = 0, Max = 90, Default = 50,
+          Callback = function(v)
+              previewTransparency = v / 100
+              local folder = Workspace:FindFirstChild(previewFolderName)
+              if folder then
+                  for _, part in ipairs(folder:GetDescendants()) do
+                      if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
+                          part.Transparency = previewTransparency
+                      end
+                  end
+              end
+          end },
+    },
     Callback = function(v)
         if v then
             local data = loadSelectedBuild()
@@ -2931,50 +2911,6 @@ previewTab:CreateButton({
 -- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
 previewTab:CreateDivider()
-
-previewTab:CreateToggle({
-    Name = "Use Real Models",
-    Tooltip = "Show machines and objects as their real models instead of plain blocks. Looks better, costs more FPS.",
-    CurrentValue = true,
-    Flag = "PreviewRealModels",
-    Callback = function(v)
-        previewRealModels = v
-    end
-})
-
-previewTab:CreateToggle({
-    Name = "Low-Lag Preview",
-    Tooltip = "Draw a simplified ghost. Use this for very large builds.",
-    CurrentValue = false,
-    Flag = "PreviewMinimized",
-    Callback = function(v)
-        previewMinimized = v
-        if v then
-            notify("Minimized Preview", "Hides buried blocks. Re-preview to apply.", 4)
-        else
-            notify("Full Preview", "Re-preview to apply.", 3)
-        end
-    end
-})
-
-previewTab:CreateSlider({
-    Name = "Preview Transparency",
-    Range = {0, 0.9},
-    Increment = 0.05,
-    CurrentValue = 0.5,
-    Flag = "PreviewTransparency",
-    Callback = function(v)
-        previewTransparency = v
-        local folder = Workspace:FindFirstChild(previewFolderName)
-        if folder then
-            for _, part in ipairs(folder:GetDescendants()) do
-                if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
-                    part.Transparency = v
-                end
-            end
-        end
-    end
-})
 
 local requiredBlocksParagraph = previewTab:CreateParagraph({
     Title = "Required Blocks",
@@ -3099,6 +3035,11 @@ end
 
 buildTypeDropdown = previewTab:CreateDropdown({
     Name = "Replace Block",
+    Gear = { { Type = "button", Name = "Refresh Lists", OnClick = function()
+        buildTypeDropdown:Refresh(getBuildTypeOptions())
+        invBlockDropdown:Refresh(getInventoryOptions())
+        notify("Refreshed", "Build & inventory lists updated", 2)
+    end } },
     Options = getBuildTypeOptions(),
     CurrentOption = {},
     MultipleOptions = false,
@@ -3110,21 +3051,17 @@ buildTypeDropdown = previewTab:CreateDropdown({
 
 invBlockDropdown = previewTab:CreateDropdown({
     Name = "With Block",
+    Gear = { { Type = "button", Name = "Refresh Lists", OnClick = function()
+        buildTypeDropdown:Refresh(getBuildTypeOptions())
+        invBlockDropdown:Refresh(getInventoryOptions())
+        notify("Refreshed", "Build & inventory lists updated", 2)
+    end } },
     Options = getInventoryOptions(),
     CurrentOption = {},
     MultipleOptions = false,
     Callback = function(option)
         local disp = (typeof(option) == "table") and option[1] or option
         replaceToType = invTypeMap[disp]
-    end
-})
-
-previewTab:CreateButton({
-    Name = "Refresh Lists",
-    Callback = function()
-        buildTypeDropdown:Refresh(getBuildTypeOptions())
-        invBlockDropdown:Refresh(getInventoryOptions())
-        notify("Refreshed", "Build & inventory lists updated", 2)
     end
 })
 
@@ -3135,6 +3072,16 @@ replaceListParagraph = previewTab:CreateParagraph({
 
 previewTab:CreateButton({
     Name = "Add Replacement",
+    Gear = { { Type = "button", Name = "Clear Replacements", OnClick = function()
+        blockReplacements = {}
+        replaceListParagraph:Set({ Title = "Current Replacements", Content = "No replacements set." })
+        if lastPreviewBlocks then
+            pcall(function()
+                requiredBlocksParagraph:Set({ Title = "Required Blocks", Content = getRequiredBlocksText(lastPreviewBlocks) })
+            end)
+        end
+        notify("Cleared", "All replacements removed", 3)
+    end } },
     Callback = function()
         if not replaceFromType or not replaceToType then
             notify("Pick Both", "Choose a build block and an inventory block", 3)
@@ -3151,19 +3098,6 @@ previewTab:CreateButton({
     end
 })
 
-previewTab:CreateButton({
-    Name = "Clear Replacements",
-    Callback = function()
-        blockReplacements = {}
-        replaceListParagraph:Set({ Title = "Current Replacements", Content = "No replacements set." })
-        if lastPreviewBlocks then
-            pcall(function()
-                requiredBlocksParagraph:Set({ Title = "Required Blocks", Content = getRequiredBlocksText(lastPreviewBlocks) })
-            end)
-        end
-        notify("Cleared", "All replacements removed", 3)
-    end
-})
 
 do
 
@@ -6614,13 +6548,8 @@ buildTab:CreateSlider({
 buildTab:CreateButton({
     Name = "Undo",
     Tooltip = "Same as Ctrl+Z. Reverts the last builder operation.",
+    Gear = { { Type = "button", Name = "Redo", OnClick = function() doRedo() end } },
     Callback = doUndo
-})
-
-buildTab:CreateButton({
-    Name = "Redo",
-    Tooltip = "Same as Ctrl+Y.",
-    Callback = doRedo
 })
 
 buildTab:CreateButton({
@@ -8429,6 +8358,10 @@ tabEdit:CreateParagraph({
 
 tabEdit:CreateButton({
     Name = "Add Active Block to Palette",
+    Gear = { { Type = "button", Name = "Clear Palette", OnClick = function()
+        O.palette = {}
+        notify("Palette", "Emptied", 2, "info")
+    end } },
     Tooltip = "Append the current Active Block to the working palette.",
     Callback = function()
         for _, n in ipairs(O.palette) do
@@ -8439,15 +8372,6 @@ tabEdit:CreateButton({
         end
         O.palette[#O.palette + 1] = O.activeBlock
         notifyOK("Palette", O.activeBlock .. " added (" .. #O.palette .. " total)", 3)
-    end
-})
-
-tabEdit:CreateButton({
-    Name = "Clear Palette",
-    Tooltip = "Empty the working palette.",
-    Callback = function()
-        O.palette = {}
-        notify("Palette", "Emptied", 2, "info")
     end
 })
 
@@ -8646,6 +8570,11 @@ tabEdit:CreateInput({
 
 tabEdit:CreateButton({
     Name = "Place Annotation at Cursor",
+    Gear = { { Type = "button", Name = "Clear All Annotations", OnClick = function()
+        annFolder():ClearAllChildren()
+        pcall(function() annDropdown:Refresh(annList()) end)
+        notify("Annotations", "Cleared", 2, "info")
+    end } },
     Tooltip = "Drop a floating label on the block under your cursor.",
     Callback = function()
         local part = targetPart()
@@ -8689,16 +8618,6 @@ annDropdown = tabEdit:CreateDropdown({
             hrp.CFrame = CFrame.new(a.Position + Vector3.new(0, 3, 0)) * hrp.CFrame.Rotation
             notifyOK("Annotation", "Teleported to " .. name, 3)
         end
-    end
-})
-
-tabEdit:CreateButton({
-    Name = "Clear All Annotations",
-    Tooltip = "Remove every floating label.",
-    Callback = function()
-        annFolder():ClearAllChildren()
-        pcall(function() annDropdown:Refresh(annList()) end)
-        notify("Annotations", "Cleared", 2, "info")
     end
 })
 
@@ -9133,30 +9052,7 @@ tabEdit:CreateInput({
 
 tabEdit:CreateButton({
     Name = "Run Quick Script",
-    Tooltip = "Compile and run the one-liner above over the selection.",
-    Callback = function() runScript(SB.quick) end
-})
-
-tabEdit:CreateButton({
-    Name = "Run Script File",
-    Tooltip = "Run the script loaded from Saved Files over the selection.",
-    Callback = function() runScript(SB.source) end
-})
-
-BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
-    name = "Script", dir = SCRIPT_DIR, list = scriptFiles,
-    load = function(name)
-        local ok, src = pcall(function() return readfile(SCRIPT_DIR .. "/" .. name) end)
-        if not ok then notifyErr("Script Brush", "Could not read " .. name, 5) return end
-        SB.file = name SB.source = src
-        notifyOK("Script Loaded", name .. " (" .. #src .. " chars)", 4)
-    end,
-}
-
-tabEdit:CreateButton({
-    Name = "Write Example Script",
-    Tooltip = "Drop a commented example into autoBuilder/scripts to start from.",
-    Callback = function()
+    Gear = { { Type = "button", Name = "Write Example Script", OnClick = function()
         ensureScriptDir()
         local example = [[
 -- Example: grass on top, dirt just under it, stone deeper.
@@ -9185,8 +9081,26 @@ end
         if not ok then notifyErr("Scripts", tostring(err), 5) return end
         pcall(function() scriptDropdown:Refresh(scriptFiles()) end)
         notifyOK("Scripts", "example.lua written", 5)
-    end
+    end } },
+    Tooltip = "Compile and run the one-liner above over the selection.",
+    Callback = function() runScript(SB.quick) end
 })
+
+tabEdit:CreateButton({
+    Name = "Run Script File",
+    Tooltip = "Run the script loaded from Saved Files over the selection.",
+    Callback = function() runScript(SB.source) end
+})
+
+BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
+    name = "Script", dir = SCRIPT_DIR, list = scriptFiles,
+    load = function(name)
+        local ok, src = pcall(function() return readfile(SCRIPT_DIR .. "/" .. name) end)
+        if not ok then notifyErr("Script Brush", "Could not read " .. name, 5) return end
+        SB.file = name SB.source = src
+        notifyOK("Script Loaded", name .. " (" .. #src .. " chars)", 4)
+    end,
+}
 
 end
 
@@ -9588,6 +9502,13 @@ nodePara = tabEdit:CreateParagraph({
 
 tabEdit:CreateButton({
     Name = "Add Node at Cursor",
+    Gear = { { Type = "button", Name = "Clear Nodes", OnClick = function()
+        SP.nodes = {}
+        pcall(function()
+            nodePara:Set({ Title = "Path Nodes", Content = "No nodes yet. Point at a block and press Add Node." })
+        end)
+        notify("Path", "Nodes cleared", 2, "info")
+    end } },
     Tooltip = "Append the block under your cursor to the path.",
     Callback = function()
         local part = targetPart()
@@ -9601,18 +9522,6 @@ tabEdit:CreateButton({
             })
         end)
         notifyOK("Path", "Node " .. #SP.nodes .. " added", 2)
-    end
-})
-
-tabEdit:CreateButton({
-    Name = "Clear Nodes",
-    Tooltip = "Remove every path node.",
-    Callback = function()
-        SP.nodes = {}
-        pcall(function()
-            nodePara:Set({ Title = "Path Nodes", Content = "No nodes yet. Point at a block and press Add Node." })
-        end)
-        notify("Path", "Nodes cleared", 2, "info")
     end
 })
 
@@ -10068,6 +9977,13 @@ tabEdit:CreateDropdown({
 
 tabEdit:CreateButton({
     Name = "Add Model Node",
+    Gear = { { Type = "button", Name = "Clear Model Nodes", OnClick = function()
+        M.nodes = {}
+        pcall(function()
+            modelPara:Set({ Title = "Model Nodes", Content = "No nodes." })
+        end)
+        notify("Modelling", "Nodes cleared", 2, "info")
+    end } },
     Tooltip = "Append the block under your cursor to the model.",
     Callback = function()
         local part = targetPart()
@@ -10078,18 +9994,6 @@ tabEdit:CreateButton({
             modelPara:Set({ Title = "Model Nodes", Content = #M.nodes .. " nodes placed." })
         end)
         notifyOK("Modelling", "Node " .. #M.nodes, 2)
-    end
-})
-
-tabEdit:CreateButton({
-    Name = "Clear Model Nodes",
-    Tooltip = "Remove every model node.",
-    Callback = function()
-        M.nodes = {}
-        pcall(function()
-            modelPara:Set({ Title = "Model Nodes", Content = "No nodes." })
-        end)
-        notify("Modelling", "Nodes cleared", 2, "info")
     end
 })
 
@@ -10739,10 +10643,15 @@ imgPara = tabEdit:CreateParagraph({
         .. "Run Scan Block Colours on the Colour tab once first.",
 })
 
+tabEdit:CreateInput({
+    Name = "Image URL",
+    Default = "",
+    Callback = function(t) if t and t ~= "" then IMG.url = t end end
+})
+
 tabEdit:CreateButton({
-    Name = "Check URL",
-    Tooltip = "Download the link and report what it actually is, without building anything.",
-    Callback = function()
+    Name = "Load Image",
+    Gear = { { Type = "button", Name = "Check URL", OnClick = function()
         if IMG.url == "" then notifyWarn("Image", "Paste a link first", 3) return end
         task.spawn(function()
             say("Checking", IMG.url)
@@ -10763,17 +10672,7 @@ tabEdit:CreateButton({
                 notifyWarn("Image", why or ("Got " .. kind), 8)
             end
         end)
-    end
-})
-
-tabEdit:CreateInput({
-    Name = "Image URL",
-    Default = "",
-    Callback = function(t) if t and t ~= "" then IMG.url = t end end
-})
-
-tabEdit:CreateButton({
-    Name = "Load Image",
+    end } },
     Tooltip = "Download and decode the PNG. 8-bit non-interlaced PNGs are supported.",
     Callback = loadImage
 })
@@ -10805,17 +10704,12 @@ tabEdit:CreateSlider({
 
 tabEdit:CreateButton({
     Name = "Preview Image at Cursor",
-    Tooltip = "Show the image as coloured ghost blocks first, without placing anything.",
-    Callback = previewImage
-})
-
-tabEdit:CreateButton({
-    Name = "Clear Image Preview",
-    Tooltip = "Remove the ghost blocks.",
-    Callback = function()
+    Gear = { { Type = "button", Name = "Clear Image Preview", OnClick = function()
         clearImagePreview()
         notify("Image", "Preview cleared", 2, "info")
-    end
+    end } },
+    Tooltip = "Show the image as coloured ghost blocks first, without placing anything.",
+    Callback = previewImage
 })
 
 tabEdit:CreateButton({
