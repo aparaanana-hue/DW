@@ -5140,13 +5140,21 @@ pcall(function() Duvome:Init() end)
 
 end
 
-local KEY_URL = "https://pastebin.com/raw/4exUbvmt"
+local KEY_URL = "https://pastebin.com/raw/KrqauyVU"
 local validKeys = {}
 pcall(function()
-	local raw = game:HttpGet(KEY_URL)
-	for line in tostring(raw):gmatch("[^\r\n]+") do
+	local raw = tostring(game:HttpGet(KEY_URL))
+	-- A dead paste answers 404 with an HTML page. Without this check every line
+	-- of that page became a valid key, so "<!DOCTYPE html>" would unlock the hub
+	-- while the real key would not.
+	local head = raw:sub(1, 200):lower()
+	if head:find("<!doctype") or head:find("<html") then return end
+	for line in raw:gmatch("[^\r\n]+") do
 		local key = line:gsub("^%s+", ""):gsub("%s+$", "")
-		if key ~= "" then table.insert(validKeys, key) end
+		-- real keys are short single words; anything else is page noise
+		if key ~= "" and #key <= 64 and not key:find("[<>]") then
+			table.insert(validKeys, key)
+		end
 	end
 end)
 if #validKeys == 0 then validKeys = {"FreeIslandsKeyForNow"} end
