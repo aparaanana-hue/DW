@@ -8477,17 +8477,66 @@ BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
 -- Axiom's time / brightness / fluid opacity settings are all client-side.
 local Lighting = game:GetService("Lighting")
 
+-- Duvome runs Slider:Set(default) while building the UI, which fires the
+-- callback. These sliders used to apply immediately, so Min Brightness = 0 set
+-- Ambient to black on load and darkened the whole game. Nothing here touches
+-- Lighting until the master toggle is on, and the originals are restored when
+-- it goes off.
+S.wvOn = false
+S.wvSaved = {
+    Ambient        = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient,
+    FogEnd         = Lighting.FogEnd,
+    ClockTime      = Lighting.ClockTime,
+}
+pcall(function() S.wvSaved.WaterTransparency = Workspace.Terrain.WaterTransparency end)
+
+local function wvRestore()
+    pcall(function()
+        Lighting.Ambient        = S.wvSaved.Ambient
+        Lighting.OutdoorAmbient = S.wvSaved.OutdoorAmbient
+        Lighting.FogEnd         = S.wvSaved.FogEnd
+        Lighting.ClockTime      = S.wvSaved.ClockTime
+        if S.wvSaved.WaterTransparency then
+            Workspace.Terrain.WaterTransparency = S.wvSaved.WaterTransparency
+        end
+    end)
+end
+
 tabEdit:CreateDivider()
 
 tabEdit:CreateParagraph({
     Title = "World & View",
-    Content = "Local render settings. These change how the world looks for you only.",
+    Content = "Local render settings, off by default so nothing changes how your\n"
+        .. "game looks unless you ask. Turn the override on, then use the sliders.",
+})
+
+tabEdit:CreateToggle({
+    Name = "Enable World & View",
+    CurrentValue = false,
+    Tooltip = "Off means the sliders below do nothing and your lighting is untouched.",
+    Callback = function(on)
+        S.wvOn = on
+        if not on then
+            wvRestore()
+            notify("World & View", "Lighting restored", 3, "info")
+        end
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Reset Lighting",
+    Tooltip = "Put the game's original lighting back.",
+    Callback = function()
+        wvRestore()
+        notifyOK("World & View", "Original lighting restored", 4)
+    end
 })
 
 tabEdit:CreateSlider({
     Name = "Time of Day",
     Range = { 0, 24 }, Increment = 1, CurrentValue = 14, Suffix = "h", Flag = "WVTime",
-    Callback = function(v) pcall(function() Lighting.ClockTime = v end) end
+    Callback = function(v) if S.wvOn then pcall(function() Lighting.ClockTime = v end) end end
 })
 
 tabEdit:CreateToggle({
@@ -8510,6 +8559,7 @@ tabEdit:CreateSlider({
     Name = "Min Brightness",
     Range = { 0, 100 }, Increment = 5, CurrentValue = 0, Suffix = "%", Flag = "WVBright",
     Callback = function(v)
+        if not S.wvOn then return end
         pcall(function()
             -- lifting Ambient floors how dark shadowed faces can get
             local a = math.floor(v / 100 * 255)
@@ -8522,13 +8572,14 @@ tabEdit:CreateSlider({
 tabEdit:CreateSlider({
     Name = "Fog Distance",
     Range = { 100, 5000 }, Increment = 100, CurrentValue = 5000, Suffix = "st", Flag = "WVFog",
-    Callback = function(v) pcall(function() Lighting.FogEnd = v end) end
+    Callback = function(v) if S.wvOn then pcall(function() Lighting.FogEnd = v end) end end
 })
 
 tabEdit:CreateSlider({
     Name = "Water Opacity",
     Range = { 0, 100 }, Increment = 10, CurrentValue = 100, Suffix = "%", Flag = "WVWater",
     Callback = function(v)
+        if not S.wvOn then return end
         pcall(function() Workspace.Terrain.WaterTransparency = 1 - (v / 100) end)
     end
 })
