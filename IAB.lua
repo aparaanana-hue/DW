@@ -8207,6 +8207,15 @@ local function loadPreset(name)
     notifyOK("Preset Loaded", name .. " (sliders keep their old positions)", 6)
 end
 
+-- Expose colour matching so the Image module can reuse this index instead of
+-- building a second one.
+BuilderAPI.ensureColourCache = ensureCache
+BuilderAPI.nearestBlockName = function(col)
+    local list = nearestBlocks(col, 1)
+    return list[1] and list[1].name or nil
+end
+BuilderAPI.toOklab = toOklab
+
 colTab:CreateSection("Tool Presets", { Collapsible = true })
 
 colTab:CreateParagraph({
@@ -10140,6 +10149,568 @@ for _, mode in ipairs({ "Smooth", "Weld", "Melt" }) do
         Callback = function() gaussianOp(mode) end
     })
 end
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- IMAGE TOOLS — PNG decode, pixel art, and image heightmaps
+--
+-- PNG decoder adapted from the ImageConverter source, with fixes noted inline.
+-- Pixels are matched to blocks through the Colour tab's OKLab index, memoised
+-- so each distinct pixel colour is only matched once.
+--
+-- Own do-block; see check_locals.py for the 200-local budget.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local O = BA.O
+local key3, toCell, targetPart = BA.key3, BA.toCell, BA.targetPart
+local placeCells, runCommit = BA.placeCells, BA.runCommit
+
+local IMG = {
+    url = "",
+    width = 48,
+    mode = "Pixel Art (Wall)",
+    maxHeight = 24,
+    cache = nil,      -- decoded { pixels = {}, w = , h = }
+    match = {},       -- memo: "r,g,b" -> block name
+}
+
+local imgPara
+
+local function say(title, body)
+    pcall(function() imgPara:Set({ Title = title, Content = body }) end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- INFLATE  (zlib / DEFLATE)
+-- ═══════════════════════════════════════════════════════════════════════════
+local band, lshift, rshift = bit32.band, bit32.lshift, bit32.rshift
+
+local LENS = { [0] = 3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258 }
+local LEXT = { [0] = 0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0 }
+local DISTS = { [0] = 1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577 }
+local DEXT = { [0] = 0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13 }
+local ORDER = { 16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15 }
+local FIXED_LIT = { 0,8,144,9,256,7,280,8,288 }
+local FIXED_DIST = { 0,5,32 }
+
+local function memoize(fn)
+    local meta = {}
+    local m = setmetatable({}, meta)
+    function meta:__index(k) local v = fn(k) m[k] = v return v end
+    return m
+end
+
+local pow2 = memoize(function(n) return 2 ^ n end)
+
+local function createBitStream(reader)
+    local buffer, bitsLeft = 0, 0
+    local stream = {}
+    function stream:GetBitsLeft() return bitsLeft end
+    function stream:Read(count)
+        count = count or 1
+        while bitsLeft < count do
+            local byte = reader:ReadByte()
+            if not byte then return end
+            buffer = buffer + lshift(byte, bitsLeft)
+            bitsLeft = bitsLeft + 8
+        end
+        local bits
+        if count == 0 then bits = 0
+        elseif count == 32 then bits = buffer buffer = 0
+        else
+            bits = band(buffer, rshift(2 ^ 32 - 1, 32 - count))
+            buffer = rshift(buffer, count)
+        end
+        bitsLeft = bitsLeft - count
+        return bits
+    end
+    return stream
+end
+
+local function msb(bits, numBits)
+    local res = 0
+    for _ = 1, numBits do
+        res = lshift(res, 1) + band(bits, 1)
+        bits = rshift(bits, 1)
+    end
+    return res
+end
+
+local function createHuffmanTable(init, isFull)
+    local t = {}
+    if isFull then
+        for val, numBits in pairs(init) do
+            if numBits ~= 0 then t[#t + 1] = { Value = val, NumBits = numBits } end
+        end
+    else
+        for i = 1, #init - 2, 2 do
+            local firstVal, numBits, nextVal = init[i], init[i + 1], init[i + 2]
+            if numBits ~= 0 then
+                for val = firstVal, nextVal - 1 do
+                    t[#t + 1] = { Value = val, NumBits = numBits }
+                end
+            end
+        end
+    end
+    table.sort(t, function(a, b)
+        return a.NumBits == b.NumBits and a.Value < b.Value or a.NumBits < b.NumBits
+    end)
+    local code, numBits = 1, 0
+    for _, slide in ipairs(t) do
+        if slide.NumBits ~= numBits then
+            code = code * pow2[slide.NumBits - numBits]
+            numBits = slide.NumBits
+        end
+        slide.Code = code
+        code = code + 1
+    end
+    local minBits, look = math.huge, {}
+    for _, slide in ipairs(t) do
+        minBits = math.min(minBits, slide.NumBits)
+        look[slide.Code] = slide.Value
+    end
+    local firstCode = memoize(function(bits) return pow2[minBits] + msb(bits, minBits) end)
+    function t:Read(bitStream)
+        local c, nb = 1, 0
+        while true do
+            if nb == 0 then
+                c = firstCode[bitStream:Read(minBits)]
+                nb = nb + minBits
+            else
+                c = c * 2 + bitStream:Read()
+                nb = nb + 1
+            end
+            local val = look[c]
+            if val then return val end
+        end
+    end
+    return t
+end
+
+local function parseZlibHeader(bitStream)
+    local cm = bitStream:Read(4)
+    local cinfo = bitStream:Read(4)
+    local fcheck = bitStream:Read(5)
+    local fdict = bitStream:Read(1)
+    local flevel = bitStream:Read(2)
+    local cmf = cinfo * 16 + cm
+    local flg = fcheck + fdict * 32 + flevel * 64
+    if cm ~= 8 then error("unsupported zlib compression " .. tostring(cm)) end
+    if cinfo > 7 then error("invalid zlib window size") end
+    if (cmf * 256 + flg) % 31 ~= 0 then error("bad zlib header checksum") end
+    if fdict == 1 then error("zlib FDICT not supported") end
+end
+
+local function parseHuffmanTables(bitStream)
+    local numLits, numDists, numCodes = bitStream:Read(5), bitStream:Read(5), bitStream:Read(4)
+    local codeLens = {}
+    for i = 1, numCodes + 4 do codeLens[ORDER[i]] = bitStream:Read(3) end
+    codeLens = createHuffmanTable(codeLens, true)
+    local function decode(n)
+        local init, numBits, val = {}, nil, 0
+        while val < n do
+            local codeLen = codeLens:Read(bitStream)
+            local numRepeats
+            if codeLen <= 15 then numRepeats = 1 numBits = codeLen
+            elseif codeLen == 16 then numRepeats = 3 + bitStream:Read(2)
+            elseif codeLen == 17 then numRepeats = 3 + bitStream:Read(3) numBits = 0
+            else numRepeats = 11 + bitStream:Read(7) numBits = 0 end
+            for _ = 1, numRepeats do init[val] = numBits val = val + 1 end
+        end
+        return createHuffmanTable(init, true)
+    end
+    return decode(numLits + 257), decode(numDists + 1)
+end
+
+local function inflate(reader, out)
+    local bitStream = createBitStream(reader)
+    parseZlibHeader(bitStream)
+    local window, pos = {}, 1
+    local function write(byte)
+        out(byte)
+        window[pos] = byte
+        pos = pos % 32768 + 1
+    end
+    repeat
+        local bFinal = bitStream:Read(1)
+        local bType = bitStream:Read(2)
+        if bType == 0 then
+            bitStream:Read(bitStream:GetBitsLeft())
+            local len = bitStream:Read(16)
+            bitStream:Read(16)
+            for _ = 1, len do write(bitStream:Read(8)) end
+        elseif bType == 1 or bType == 2 then
+            local litTable, distTable
+            if bType == 2 then
+                litTable, distTable = parseHuffmanTables(bitStream)
+            else
+                litTable = createHuffmanTable(FIXED_LIT)
+                distTable = createHuffmanTable(FIXED_DIST)
+            end
+            while true do
+                local val = litTable:Read(bitStream)
+                if val < 256 then
+                    write(val)
+                elseif val == 256 then
+                    break
+                else
+                    local len = LENS[val - 257] + bitStream:Read(LEXT[val - 257])
+                    local dv = distTable:Read(bitStream)
+                    local dist = DISTS[dv] + bitStream:Read(DEXT[dv])
+                    for _ = 1, len do
+                        write(assert(window[(pos - 1 - dist) % 32768 + 1], "back-reference out of range"))
+                    end
+                end
+            end
+        else
+            error("invalid DEFLATE block type")
+        end
+    until bFinal ~= 0
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PNG
+-- ═══════════════════════════════════════════════════════════════════════════
+local Reader = {}
+Reader.__index = Reader
+
+function Reader.new(buf)
+    return setmetatable({ Position = 1, Buffer = buf, Length = #buf }, Reader)
+end
+function Reader:ReadByte()
+    local p = self.Position
+    if p <= self.Length then
+        self.Position = p + 1
+        return self.Buffer:byte(p)
+    end
+end
+function Reader:ReadBytes(n, asArray)
+    local v = {}
+    for i = 1, n do v[i] = self:ReadByte() end
+    if asArray then return v end
+    return table.unpack(v)
+end
+function Reader:ReadUInt16() local a, b = self:ReadBytes(2) return a * 256 + b end
+function Reader:ReadUInt32() return self:ReadUInt16() * 65536 + self:ReadUInt16() end
+function Reader:ReadInt32()
+    local u = self:ReadUInt32()
+    if u >= 2 ^ 31 then u = u - 2 ^ 32 end
+    return u
+end
+function Reader:ReadString(len)
+    local p = self.Position
+    local nextP = math.min(self.Length + 1, p + len)
+    self.Position = nextP
+    return self.Buffer:sub(p, nextP - 1)
+end
+function Reader:Fork(len) return Reader.new(self:ReadString(len)) end
+
+local function bytesPerPixel(colorType)
+    if colorType == 0 or colorType == 3 then return 1
+    elseif colorType == 4 then return 2
+    elseif colorType == 2 then return 3
+    elseif colorType == 6 then return 4 end
+    return 0
+end
+
+-- Unfilter. NOTE: the source's Average filter read pixels[row-1] in its own
+-- row == 1 branch, which is nil and throws. Row 1 has no row above, so the
+-- upper term is simply zero there.
+local function unfilter(ft, scan, pixels, bpp, row)
+    local out = pixels[row]
+    local up = pixels[row - 1]
+    if ft == 0 then
+        for i = 1, #scan do out[i] = scan[i] end
+    elseif ft == 1 then
+        for i = 1, bpp do out[i] = scan[i] end
+        for i = bpp + 1, #scan do out[i] = band(scan[i] + out[i - bpp], 0xFF) end
+    elseif ft == 2 then
+        if up then
+            for i = 1, #scan do out[i] = band(scan[i] + up[i], 0xFF) end
+        else
+            for i = 1, #scan do out[i] = scan[i] end
+        end
+    elseif ft == 3 then
+        for i = 1, #scan do
+            local a = (i > bpp) and out[i - bpp] or 0
+            local b = up and up[i] or 0
+            out[i] = band(scan[i] + rshift(a + b, 1), 0xFF)
+        end
+    elseif ft == 4 then
+        for i = 1, #scan do
+            local a = (i > bpp) and out[i - bpp] or 0
+            local b = up and up[i] or 0
+            local c = (up and i > bpp) and up[i - bpp] or 0
+            local p = a + b - c
+            local pa, pb, pc = math.abs(p - a), math.abs(p - b), math.abs(p - c)
+            local pr
+            if pa <= pb and pa <= pc then pr = a elseif pb <= pc then pr = b else pr = c end
+            out[i] = band(scan[i] + pr, 0xFF)
+        end
+    else
+        for i = 1, #scan do out[i] = scan[i] end
+    end
+end
+
+-- Returns { w, h, get(x, y) -> r, g, b, a } with 0-255 channels.
+local function decodePNG(data)
+    local reader = Reader.new(data)
+    if reader:ReadString(8) ~= "\137PNG\r\n\26\n" then
+        error("not a PNG file (bad signature)")
+    end
+
+    local width, height, bitDepth, colorType
+    local palette, alphaData
+    local zlib = {}
+    local reading = true
+
+    while reading do
+        local length = reader:ReadInt32()
+        local ctype = reader:ReadString(4)
+        local chunk
+        if length > 0 then
+            chunk = reader:Fork(length)
+            reader:ReadUInt32()          -- CRC, not verified
+        end
+        if ctype == "IHDR" then
+            width = chunk:ReadInt32()
+            height = chunk:ReadInt32()
+            bitDepth = chunk:ReadByte()
+            colorType = chunk:ReadByte()
+            chunk:ReadByte() chunk:ReadByte()
+            local interlace = chunk:ReadByte()
+            if interlace ~= 0 then error("interlaced PNGs are not supported") end
+        elseif ctype == "PLTE" then
+            palette = {}
+            local raw = chunk:ReadBytes(chunk.Length, true)
+            for i = 1, #raw, 3 do
+                palette[#palette + 1] = { raw[i], raw[i + 1], raw[i + 2] }
+            end
+        elseif ctype == "tRNS" then
+            if colorType == 3 then
+                alphaData = chunk:ReadBytes(chunk.Length, true)
+            end
+        elseif ctype == "IDAT" then
+            zlib[#zlib + 1] = chunk.Buffer
+        elseif ctype == "IEND" then
+            reading = false
+        end
+        if reader.Position > reader.Length then reading = false end
+    end
+
+    if not width then error("PNG has no IHDR header") end
+    if bitDepth ~= 8 then
+        error("only 8-bit PNGs are supported (this one is " .. tostring(bitDepth) .. "-bit)")
+    end
+
+    local outBytes, n = {}, 0
+    inflate(Reader.new(table.concat(zlib)), function(byte)
+        n = n + 1
+        outBytes[n] = string.char(byte)
+    end)
+
+    local buf = Reader.new(table.concat(outBytes))
+    local channels = bytesPerPixel(colorType)
+    local bpp = math.max(1, channels)
+    local rows = {}
+    for row = 1, height do
+        local ft = buf:ReadByte()
+        local scan = buf:ReadBytes(width * bpp, true)
+        rows[row] = {}
+        unfilter(ft, scan, rows, bpp, row)
+        if row % 64 == 0 then task.wait() end
+    end
+
+    local function get(x, y)
+        local row = rows[y]
+        if not row then return 0, 0, 0, 0 end
+        local i = (x - 1) * bpp + 1
+        if colorType == 0 then
+            local g = row[i] or 0
+            return g, g, g, 255
+        elseif colorType == 4 then
+            local g = row[i] or 0
+            return g, g, g, row[i + 1] or 255
+        elseif colorType == 2 then
+            return row[i] or 0, row[i + 1] or 0, row[i + 2] or 0, 255
+        elseif colorType == 6 then
+            return row[i] or 0, row[i + 1] or 0, row[i + 2] or 0, row[i + 3] or 255
+        elseif colorType == 3 then
+            local idx = (row[i] or 0) + 1
+            local p = palette and palette[idx] or { 0, 0, 0 }
+            local a = alphaData and alphaData[idx] or 255
+            return p[1], p[2], p[3], a
+        end
+        return 0, 0, 0, 255
+    end
+
+    return { w = width, h = height, get = get, colorType = colorType }
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- IMAGE -> BLOCKS
+-- ═══════════════════════════════════════════════════════════════════════════
+local function blockFor(r, g, b)
+    local k = r .. "," .. g .. "," .. b
+    local hit = IMG.match[k]
+    if hit then return hit end
+    local name = BA.nearestBlockName(Color3.fromRGB(r, g, b)) or O.activeBlock
+    IMG.match[k] = name
+    return name
+end
+
+local function loadImage()
+    if IMG.url == "" then
+        notifyWarn("Image", "Paste a direct .png link first", 4)
+        return
+    end
+    task.spawn(function()
+        say("Image", "Downloading...")
+        local ok, data = pcall(function() return game:HttpGet(IMG.url) end)
+        if not ok or not data or #data == 0 then
+            notifyErr("Image", "Download failed. Use a direct .png URL.", 6)
+            say("Image", "Download failed.")
+            return
+        end
+        say("Image", "Decoding " .. #data .. " bytes...")
+        local ok2, img = pcall(decodePNG, data)
+        if not ok2 then
+            notifyErr("Image", tostring(img), 8)
+            say("Image", "Decode failed: " .. tostring(img))
+            return
+        end
+        IMG.cache = img
+        IMG.match = {}
+        say("Image", "Loaded " .. img.w .. " x " .. img.h
+            .. "\nWill build at " .. IMG.width .. " blocks wide.")
+        notifyOK("Image", "Loaded " .. img.w .. "x" .. img.h, 5)
+    end)
+end
+
+-- Nearest-neighbour sample down to the target width, keeping aspect ratio.
+local function sampled()
+    local img = IMG.cache
+    local tw = math.min(IMG.width, img.w)
+    local th = math.max(1, math.floor(img.h * (tw / img.w)))
+    local out = {}
+    for py = 1, th do
+        out[py] = {}
+        local sy = math.min(img.h, math.max(1, math.floor((py - 0.5) * img.h / th) + 1))
+        for px = 1, tw do
+            local sx = math.min(img.w, math.max(1, math.floor((px - 0.5) * img.w / tw) + 1))
+            local r, g, b, a = img.get(sx, sy)
+            out[py][px] = { r, g, b, a }
+        end
+        if py % 16 == 0 then task.wait() end
+    end
+    return out, tw, th
+end
+
+local function buildImage()
+    if not IMG.cache then
+        notifyWarn("Image", "Load an image first", 4)
+        return
+    end
+    runCommit("Image", function(rec)
+        local grid, tw, th = sampled()
+        local ax, ay, az = 0, 0, 0
+        local part = targetPart()
+        if part then
+            ax, ay, az = toCell(part.Position)
+        else
+            local _, _, hrp = getCharacterParts()
+            if hrp then ax, ay, az = toCell(hrp.Position) end
+        end
+
+        local cells = {}
+        for py = 1, th do
+            for px = 1, tw do
+                local px4 = grid[py][px]
+                local r, g, b, a = px4[1], px4[2], px4[3], px4[4]
+                if a >= 128 then                       -- skip transparent pixels
+                    local name = blockFor(r, g, b)
+                    if IMG.mode == "Pixel Art (Wall)" then
+                        -- image rows run top-down, world Y runs up
+                        cells[#cells + 1] = { ax + px, ay + (th - py), az, name }
+                    elseif IMG.mode == "Pixel Art (Floor)" then
+                        cells[#cells + 1] = { ax + px, ay, az + py, name }
+                    else
+                        -- Heightmap: brightness drives column height
+                        local lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+                        local hgt = math.max(1, math.floor(lum * IMG.maxHeight + 0.5))
+                        for y = 1, hgt do
+                            cells[#cells + 1] = { ax + px, ay + y, az + py, name }
+                        end
+                    end
+                end
+            end
+            if py % 8 == 0 then task.wait() end
+        end
+
+        if #cells == 0 then notifyWarn("Image", "Nothing to build (all transparent?)", 4) return end
+        say("Image", "Placing " .. #cells .. " blocks...")
+        placeCells(cells, rec)
+        notifyOK("Image", #cells .. " blocks from " .. tw .. "x" .. th, 6)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════════════════
+tabEdit:CreateSection("Image", { Collapsible = true })
+
+imgPara = tabEdit:CreateParagraph({
+    Title = "Image",
+    Content = "Paste a direct .png link, press Load, then Build.\n"
+        .. "Colours are matched to blocks with the Colour tab's index, so run\n"
+        .. "Scan Block Colours once first.",
+})
+
+tabEdit:CreateInput({
+    Name = "Image URL",
+    Default = "",
+    Callback = function(t) if t and t ~= "" then IMG.url = t end end
+})
+
+tabEdit:CreateButton({
+    Name = "Load Image",
+    Tooltip = "Download and decode the PNG. 8-bit non-interlaced PNGs are supported.",
+    Callback = loadImage
+})
+
+tabEdit:CreateDropdown({
+    Name = "Image Mode",
+    Options = { "Pixel Art (Wall)", "Pixel Art (Floor)", "Heightmap Terrain" },
+    CurrentOption = { "Pixel Art (Wall)" }, MultipleOptions = false,
+    Flag = "IMGMode",
+    Callback = function(v) IMG.mode = (typeof(v) == "table") and v[1] or v end
+})
+
+tabEdit:CreateSlider({
+    Name = "Build Width", Range = { 8, 160 }, Increment = 4, CurrentValue = 48,
+    Suffix = "blk", Flag = "IMGW",
+    Callback = function(v)
+        IMG.width = v
+        if IMG.cache then
+            say("Image", "Loaded " .. IMG.cache.w .. " x " .. IMG.cache.h
+                .. "\nWill build at " .. v .. " blocks wide.")
+        end
+    end
+})
+
+tabEdit:CreateSlider({
+    Name = "Heightmap Max Height", Range = { 2, 64 }, Increment = 1, CurrentValue = 24,
+    Suffix = "blk", Flag = "IMGH", Callback = function(v) IMG.maxHeight = v end
+})
+
+tabEdit:CreateButton({
+    Name = "Build Image at Cursor",
+    Tooltip = "Place the image where you are pointing, or at you if pointing at nothing.",
+    Callback = buildImage
+})
 
 end
 
