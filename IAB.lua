@@ -10665,7 +10665,7 @@ do
 local BA = BuilderAPI
 local B, O = BA.B, BA.O
 
-local panel = Duvome:MakeSidePanel({ Name = "Editor", Width = 175, Height = 344, Side = "right" })
+local panel = Duvome:MakeSidePanel({ Name = "Editor", Width = 175, Height = 420, Side = "right" })
 BuilderAPI.editorPanel = panel
 
 panel:AddLabel("Blocks")
@@ -10748,7 +10748,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 do
 
-local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 320, Height = 344, Columns = true, Side = "right" })
+local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 320, Height = 420, Columns = true, Side = "right" })
 BuilderAPI.shapePanel = shapePanel
 local L, R = shapePanel:Left(), shapePanel:Right()
 

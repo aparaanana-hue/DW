@@ -4731,12 +4731,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				cfg = cfg or {}
 				local title  = cfg.Name or "Panel"
 				local width  = cfg.Width or 175
-				local height = cfg.Height or 344
+				local height = cfg.Height or 420
 
 				local Panel = Create("Frame", {
 					Name                   = "SidePanel",
 					BackgroundColor3       = Color3.fromRGB(12, 4, 24),
-					BackgroundTransparency = 1,
+					BackgroundTransparency = 0.05,
 					BorderSizePixel        = 0,
 					Size                   = UDim2.new(0, width, 0, height),
 					Position               = UDim2.new(0, 0, 0, 0),
@@ -4854,14 +4854,22 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 				function api:Show()
 					isOpen = true
+					-- Step aside if the Configs or avatar panel already holds this
+					-- side, the same way those two avoid each other.
+					local PS = DuvomeLibrary._panelState
+					if PS then
+						if (PS.cfgOpen and PS.cfgSide == side) or (PS.vpOpen and PS.vpSide == side) then
+							side = (side == "left") and "right" or "left"
+						end
+					end
 					-- slide in from off-side, matching the Configs panel entrance
 					local landX = sideX(side)
 					Panel.Position = UDim2.new(0, side == "left" and (landX - width - 40) or (landX + width + 40), 0, centreY())
 					Panel.BackgroundTransparency = 1
 					Panel.Visible = true
 					TweenService:Create(Panel,
-						TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-						{BackgroundTransparency = 0, Position = UDim2.new(0, landX, 0, centreY())}
+						TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+						{BackgroundTransparency = 0.05, Position = UDim2.new(0, landX, 0, centreY())}
 					):Play()
 				end
 				function api:Hide() isOpen = false Panel.Visible = false end
