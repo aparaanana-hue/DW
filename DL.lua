@@ -4750,11 +4750,19 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Color = Color3.fromRGB(90, 30, 140), Thickness = 1.5, Parent = Panel,
 				}), "Stroke")
 
+				-- Drag handle. Only this strip moves the panel: binding the whole
+				-- frame meant dragging a slider also dragged the panel.
+				local Header = Create("TextButton", {
+					Text = "", AutoButtonColor = false,
+					BackgroundTransparency = 1, BorderSizePixel = 0,
+					Size = UDim2.new(1, 0, 0, 38), Position = UDim2.new(0, 0, 0, 0),
+					ZIndex = 101, Parent = Panel,
+				})
 				AddThemeObject(Create("TextLabel", {
 					Text = title, Font = Enum.Font.GothamBlack, TextSize = 16,
 					TextColor3 = Color3.fromRGB(220, 180, 255), BackgroundTransparency = 1,
 					Size = UDim2.new(1, -16, 0, 24), Position = UDim2.new(0, 8, 0, 10),
-					TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 101, Parent = Panel,
+					TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 102, Parent = Panel,
 				}), "Text")
 				AddThemeObject(Create("Frame", {
 					BackgroundColor3 = Color3.fromRGB(80, 25, 130), BorderSizePixel = 0,
@@ -4828,7 +4836,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					end
 				end)
 
-				AddConnection(Panel.InputBegan, function(i)
+				AddConnection(Header.InputBegan, function(i)
 					if i.UserInputType == Enum.UserInputType.MouseButton1
 						or i.UserInputType == Enum.UserInputType.Touch then
 						dragging = true dragStart = i.Position startPos = Panel.Position
@@ -4902,7 +4910,19 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						{BackgroundTransparency = 0, Position = UDim2.new(0, landX, 0, centreY())}
 					):Play()
 				end
-				function api:Hide() isOpen = false Panel.Visible = false end
+				function api:Hide()
+					if not isOpen then Panel.Visible = false return end
+					isOpen = false
+					-- same exit as the avatar panel: slide out, fade, then hide
+					local curX, curY = Panel.Position.X.Offset, Panel.Position.Y.Offset
+					local exitX = (side == "left") and (curX - width - 40) or (curX + width + 40)
+					local t = TweenService:Create(Panel,
+						TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+						{Position = UDim2.new(0, exitX, 0, curY), BackgroundTransparency = 1}
+					)
+					t:Play()
+					t.Completed:Connect(function() Panel.Visible = false end)
+				end
 				function api:Toggle() if isOpen then api:Hide() else api:Show() end return isOpen end
 				function api:IsOpen() return isOpen end
 				return api
