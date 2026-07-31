@@ -5741,6 +5741,8 @@ end
 
 -- Shared bridge between the Builder scope and the Operations/Colour scope.
 local BuilderAPI = {}
+-- Every saved-file kind registers here; one UI drives them all.
+BuilderAPI.fileKinds = {}
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- BUILDER TAB — Axiom-style cuboid tools
@@ -7398,7 +7400,6 @@ local function blueprintFiles()
     return out
 end
 
-local bpDropdown
 
 local function saveBlueprint()
     if not O.clip then notifyWarn("Blueprint", "Copy something first", 3) return end
@@ -7409,7 +7410,6 @@ local function saveBlueprint()
         writefile(BP_DIR .. "/" .. name, HttpService:JSONEncode(O.clip))
     end)
     if not ok then notifyErr("Blueprint", tostring(err), 5) return end
-    pcall(function() bpDropdown:Refresh(blueprintFiles()) end)
     notifyOK("Blueprint Saved", name .. " (" .. #O.clip.cells .. " blocks)", 5)
 end
 
@@ -7696,22 +7696,12 @@ opsTab:CreateButton({
     Callback = function() O.clipChosen[3]() end
 })
 
+BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
+    name = "Blueprint", list = blueprintFiles, load = loadBlueprint,
+    save = function(n) O.blueprintName = n saveBlueprint() end,
+}
+
 opsTab:CreateSection("Blueprints", { Collapsible = true, Column = "right" })
-opsTab:CreateInput({
-    Name = "Blueprint Name",
-    Default = "MyBlueprint",
-    Callback = function(t) if t and t ~= "" then O.blueprintName = t end end
-})
-opsTab:CreateButton({ Name = "Save Blueprint", Tooltip = "Write the clipboard to autoBuilder/blueprints for later.", Callback = saveBlueprint })
-bpDropdown = opsTab:CreateDropdown({
-    Name = "Load Blueprint",
-    Options = blueprintFiles(), CurrentOption = {}, MultipleOptions = false,
-    Callback = function(v) loadBlueprint((typeof(v) == "table") and v[1] or v) end
-})
-opsTab:CreateButton({ Name = "Refresh Blueprints", Tooltip = "Rescan the blueprints folder.", Callback = function()
-    pcall(function() bpDropdown:Refresh(blueprintFiles()) end)
-    notify("Blueprints", "List refreshed", 2, "info")
-end })
 opsTab:CreateButton({ Name = "Export Selection as CSV", Tooltip = "Write x,y,z,block rows to the blueprints folder.", Callback = exportCSV })
 
 -- ── editor keybinds ────────────────────────────────────────────────────────
@@ -8146,7 +8136,6 @@ local function presetFiles()
     return out
 end
 
-local presetDropdown
 
 local function currentPreset()
     return {
@@ -8226,24 +8215,10 @@ colTab:CreateParagraph({
     Content = "Saves the Operations and Colour settings, plus the Builder's stack, smear and erase limits. The on-screen sliders won't visually move on load, but the saved values are what the tools use.",
 })
 
-colTab:CreateInput({
-    Name = "Preset Name",
-    Default = "MyPreset",
-    Callback = function(t) if t and t ~= "" then C.presetName = t end end
-})
-
-colTab:CreateButton({ Name = "Save Preset", Tooltip = "Write the current settings to autoBuilder/presets.", Callback = savePreset })
-
-presetDropdown = colTab:CreateDropdown({
-    Name = "Load Preset",
-    Options = presetFiles(), CurrentOption = {}, MultipleOptions = false,
-    Callback = function(v) loadPreset((typeof(v) == "table") and v[1] or v) end
-})
-
-colTab:CreateButton({ Name = "Refresh Presets", Tooltip = "Rescan the presets folder.", Callback = function()
-    pcall(function() presetDropdown:Refresh(presetFiles()) end)
-    notify("Presets", "List refreshed", 2, "info")
-end })
+BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
+    name = "Preset", list = presetFiles, load = loadPreset,
+    save = function(n) C.presetName = n savePreset() end,
+}
 
 
 
@@ -8271,7 +8246,7 @@ local S = {
     lastInfo = 0,
 }
 
-local histPara2, infoPara, viewDropdown, paletteDropdown
+local histPara2, infoPara
 
 -- ── History ────────────────────────────────────────────────────────────────
 local function refreshHistoryList()
@@ -8393,58 +8368,33 @@ local function viewFiles()
     return out
 end
 
-tabEdit:CreateSection("Views", { Collapsible = true })
-
-tabEdit:CreateParagraph({
-    Title = "Views",
-    Content = "Save spots you keep coming back to, then jump straight to them.",
-})
-
-tabEdit:CreateInput({
-    Name = "View Name",
-    Default = "MyView",
-    Callback = function(t) if t and t ~= "" then S.viewName = t end end
-})
-
-tabEdit:CreateButton({
-    Name = "Save Current Position",
-    Tooltip = "Store where you are standing under the view name above.",
-    Callback = function()
-        local _, _, hrp = getCharacterParts()
-        if not hrp then notifyWarn("Views", "No character found", 3) return end
-        local name = S.viewName
-        if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
-        ensureViewDir()
-        local p = hrp.Position
-        local ok, err = pcall(function()
-            writefile(VIEW_DIR .. "/" .. name,
-                HttpService:JSONEncode({ x = p.X, y = p.Y, z = p.Z }))
-        end)
-        if not ok then notifyErr("Views", tostring(err), 5) return end
-        pcall(function() viewDropdown:Refresh(viewFiles()) end)
-        notifyOK("View Saved", name, 4)
-    end
-})
-
-viewDropdown = tabEdit:CreateDropdown({
-    Name = "Go To View",
-    Options = viewFiles(), CurrentOption = {}, MultipleOptions = false,
-    Callback = function(v)
-        local name = (typeof(v) == "table") and v[1] or v
-        if not name or name == "(none saved)" then return end
+BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
+    name = "View", list = viewFiles,
+    load = function(name)
         local ok, data = pcall(function()
             return HttpService:JSONDecode(readfile(VIEW_DIR .. "/" .. name))
         end)
         if not ok or type(data) ~= "table" or not data.x then
-            notifyErr("Views", "Could not read " .. tostring(name), 5)
-            return
+            notifyErr("Views", "Could not read " .. tostring(name), 5) return
         end
         local _, _, hrp = getCharacterParts()
         if not hrp then notifyWarn("Views", "No character found", 3) return end
         hrp.CFrame = CFrame.new(data.x, data.y, data.z) * hrp.CFrame.Rotation
         notifyOK("View", "Teleported to " .. name, 3)
-    end
-})
+    end,
+    save = function(name)
+        local _, _, hrp = getCharacterParts()
+        if not hrp then notifyWarn("Views", "No character found", 3) return end
+        if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+        ensureViewDir()
+        local p2 = hrp.Position
+        local ok, err = pcall(function()
+            writefile(VIEW_DIR .. "/" .. name, HttpService:JSONEncode({ x = p2.X, y = p2.Y, z = p2.Z }))
+        end)
+        if not ok then notifyErr("Views", tostring(err), 5) return end
+        notifyOK("View Saved", name, 4)
+    end,
+}
 
 -- ── Palette ────────────────────────────────────────────────────────────────
 local PAL_DIR = "autoBuilder/palettes"
@@ -8497,48 +8447,30 @@ tabEdit:CreateButton({
     end
 })
 
-tabEdit:CreateInput({
-    Name = "Palette Name",
-    Default = "MyPalette",
-    Callback = function(t) if t and t ~= "" then S.paletteName = t end end
-})
-
-tabEdit:CreateButton({
-    Name = "Save Palette",
-    Tooltip = "Write the working palette to autoBuilder/palettes.",
-    Callback = function()
+BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
+    name = "Palette", list = palFiles,
+    load = function(name)
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(readfile(PAL_DIR .. "/" .. name))
+        end)
+        if not ok or type(data) ~= "table" or not data.blocks then
+            notifyErr("Palette", "Could not read " .. tostring(name), 5) return
+        end
+        O.palette = data.blocks
+        if O.palette[1] then O.activeBlock = O.palette[1] end
+        notifyOK("Palette Loaded", #O.palette .. " blocks", 5)
+    end,
+    save = function(name)
         if #O.palette == 0 then notifyWarn("Palette", "Add some blocks first", 3) return end
-        local name = S.paletteName
         if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
         ensurePalDir()
         local ok, err = pcall(function()
             writefile(PAL_DIR .. "/" .. name, HttpService:JSONEncode({ blocks = O.palette }))
         end)
         if not ok then notifyErr("Palette", tostring(err), 5) return end
-        pcall(function() paletteDropdown:Refresh(palFiles()) end)
         notifyOK("Palette Saved", name .. " (" .. #O.palette .. " blocks)", 4)
-    end
-})
-
-paletteDropdown = tabEdit:CreateDropdown({
-    Name = "Load Palette",
-    Options = palFiles(), CurrentOption = {}, MultipleOptions = false,
-    Callback = function(v)
-        local name = (typeof(v) == "table") and v[1] or v
-        if not name or name == "(none saved)" then return end
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(readfile(PAL_DIR .. "/" .. name))
-        end)
-        if not ok or type(data) ~= "table" or not data.blocks then
-            notifyErr("Palette", "Could not read " .. tostring(name), 5)
-            return
-        end
-        O.palette = data.blocks
-        -- first entry becomes the active block so it is usable immediately
-        if O.palette[1] then O.activeBlock = O.palette[1] end
-        notifyOK("Palette Loaded", #O.palette .. " blocks, active = " .. tostring(O.palette[1]), 5)
-    end
-})
+    end,
+}
 
 -- ── World & View ───────────────────────────────────────────────────────────
 -- Islands has no gamerules a client can set, but the render-side equivalents of
@@ -8947,7 +8879,7 @@ end
 local SCRIPT_DIR = "autoBuilder/scripts"
 
 local SB = { file = nil, quick = "return blocks.stone", source = nil }
-local scriptDropdown, scriptHelp
+local scriptHelp
 
 local function ensureScriptDir()
     if not isfolder("autoBuilder") then makefolder("autoBuilder") end
@@ -9150,34 +9082,21 @@ tabEdit:CreateButton({
     Callback = function() runScript(SB.quick) end
 })
 
-scriptDropdown = tabEdit:CreateDropdown({
-    Name = "Script File",
-    Options = scriptFiles(), CurrentOption = {}, MultipleOptions = false,
-    Callback = function(v)
-        local name = (typeof(v) == "table") and v[1] or v
-        if not name or name == "(none saved)" then return end
-        local ok, src = pcall(function() return readfile(SCRIPT_DIR .. "/" .. name) end)
-        if not ok then notifyErr("Script Brush", "Could not read " .. name, 5) return end
-        SB.file = name
-        SB.source = src
-        notifyOK("Script Loaded", name .. " (" .. #src .. " chars)", 4)
-    end
-})
-
 tabEdit:CreateButton({
     Name = "Run Script File",
-    Tooltip = "Run the loaded script file over the selection.",
+    Tooltip = "Run the script loaded from Saved Files over the selection.",
     Callback = function() runScript(SB.source) end
 })
 
-tabEdit:CreateButton({
-    Name = "Refresh Scripts",
-    Tooltip = "Rescan autoBuilder/scripts.",
-    Callback = function()
-        pcall(function() scriptDropdown:Refresh(scriptFiles()) end)
-        notify("Scripts", "List refreshed", 2, "info")
-    end
-})
+BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
+    name = "Script", list = scriptFiles,
+    load = function(name)
+        local ok, src = pcall(function() return readfile(SCRIPT_DIR .. "/" .. name) end)
+        if not ok then notifyErr("Script Brush", "Could not read " .. name, 5) return end
+        SB.file = name SB.source = src
+        notifyOK("Script Loaded", name .. " (" .. #src .. " chars)", 4)
+    end,
+}
 
 tabEdit:CreateButton({
     Name = "Write Example Script",
@@ -10849,6 +10768,98 @@ tabEdit:CreateButton({
     Tooltip = "Place the image where you are pointing, or at you if pointing at nothing.",
     Callback = buildImage
 })
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SAVED FILES — one picker for blueprints, presets, palettes, views, scripts
+--
+-- Each of those used to carry its own name box, save button, load dropdown and
+-- refresh button: twenty controls doing one job. They register a handler
+-- instead and this drives all of them.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local kinds = BuilderAPI.fileKinds
+local F = { kind = kinds[1], name = "MySave" }
+local fileDrop, filePara
+
+local kindNames = {}
+for _, k in ipairs(kinds) do kindNames[#kindNames + 1] = k.name end
+
+local function refreshList()
+    if not F.kind then return end
+    local ok, list = pcall(F.kind.list)
+    if not ok or type(list) ~= "table" or #list == 0 then list = { "(none saved)" } end
+    pcall(function() fileDrop:Refresh(list) end)
+    pcall(function()
+        filePara:Set({
+            Title = F.kind.name .. " Files",
+            Content = (list[1] == "(none saved)")
+                and ("No " .. F.kind.name:lower() .. "s saved yet.")
+                or (#list .. " saved. Pick one to load it."),
+        })
+    end)
+end
+
+tabEdit:CreateSection("Saved Files", { Collapsible = true })
+
+filePara = tabEdit:CreateParagraph({
+    Title = "Saved Files",
+    Content = "Blueprints, presets, palettes, views and scripts all load from here.",
+})
+
+tabEdit:CreateDropdown({
+    Name = "File Type",
+    Options = kindNames, CurrentOption = { kindNames[1] }, MultipleOptions = false,
+    Flag = "FileKind",
+    Callback = function(v)
+        local n = (typeof(v) == "table") and v[1] or v
+        for _, k in ipairs(kinds) do
+            if k.name == n then F.kind = k break end
+        end
+        refreshList()
+    end
+})
+
+fileDrop = tabEdit:CreateDropdown({
+    Name = "Load",
+    Options = { "(none saved)" }, CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v)
+        local n = (typeof(v) == "table") and v[1] or v
+        if not n or n == "(none saved)" or not F.kind then return end
+        F.kind.load(n)
+    end
+})
+
+tabEdit:CreateInput({
+    Name = "Save As",
+    Default = "MySave",
+    Callback = function(t) if t and t ~= "" then F.name = t end end
+})
+
+tabEdit:CreateButton({
+    Name = "Save",
+    Tooltip = "Save under the name above, for whichever file type is selected. Views save your current position.",
+    Callback = function()
+        if not F.kind then return end
+        if not F.kind.save then
+            notifyWarn("Saved Files",
+                F.kind.name .. " files are load-only. Put them in the folder yourself.", 6)
+            return
+        end
+        F.kind.save(F.name)
+        refreshList()
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Refresh List",
+    Tooltip = "Rescan the folder for the selected file type.",
+    Callback = refreshList
+})
+
+refreshList()
 
 end
 
