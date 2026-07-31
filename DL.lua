@@ -4764,10 +4764,19 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 				local Content = Create("ScrollingFrame", {
 					BackgroundTransparency = 1, BorderSizePixel = 0,
-					Position = UDim2.new(0, 8, 0, 48),
-					Size = UDim2.new(1, -16, 1, -58),
+					-- inset well clear of the 12px corner radius and the stroke,
+					-- with room on the right for the scrollbar
+					Position = UDim2.new(0, 12, 0, 46),
+					Size = UDim2.new(1, -28, 1, -58),
 					CanvasSize = UDim2.new(0, 0, 0, 0),
-					ScrollBarThickness = 3, ZIndex = 101, Parent = Panel,
+					ScrollBarThickness = 3,
+					ScrollBarImageColor3 = Color3.fromRGB(120, 60, 180),
+					ZIndex = 101, Parent = Panel,
+				})
+				Create("UIPadding", {
+					PaddingLeft = UDim.new(0, 2), PaddingRight = UDim.new(0, 4),
+					PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 6),
+					Parent = Content,
 				})
 
 				local LeftCol, RightCol
