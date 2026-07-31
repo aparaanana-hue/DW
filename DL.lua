@@ -1797,28 +1797,32 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				BackgroundColor3       = Color3.fromRGB(200, 170, 255),
 				BackgroundTransparency = 1,
 				BorderSizePixel        = 0,
-				Size                   = UDim2.new(0.55, 0, 0.55, 0),
-				Position               = UDim2.new(0.225, 0, 0.225, 0),
+				AnchorPoint            = Vector2.new(0.5, 0.5),
+				Position               = UDim2.new(0.5, 0, 0.5, 0),
+				Size                   = UDim2.new(0.45, 0, 0.45, 0),
 				ZIndex                 = 1,
 				Parent                 = holder
 			})
 			Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = glow})
 
-			local function bar(w, h, rot)
+			-- One tapered spike, rotated four ways, gives an eight-point
+			-- sparkle. Long axis runs vertically; the gradient fades both tips
+			-- to nothing so it reads as a point rather than a bar.
+			local function spike(rotation, lengthScale, widthScale)
 				local f = Create("Frame", {
 					BackgroundColor3       = Color3.fromRGB(255, 250, 255),
 					BackgroundTransparency = 1,
 					BorderSizePixel        = 0,
 					AnchorPoint            = Vector2.new(0.5, 0.5),
 					Position               = UDim2.new(0.5, 0, 0.5, 0),
-					Size                   = UDim2.new(w, 0, h, 0),
+					Size                   = UDim2.new(widthScale, 0, lengthScale, 0),
+					Rotation               = rotation,
 					ZIndex                 = 2,
 					Parent                 = holder
 				})
 				Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = f})
-				-- taper both ends to points
 				Create("UIGradient", {
-					Rotation = rot,
+					Rotation = 90,
 					Transparency = NumberSequence.new({
 						NumberSequenceKeypoint.new(0, 1),
 						NumberSequenceKeypoint.new(0.5, 0),
@@ -1829,9 +1833,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				return f
 			end
 
-			local vert = bar(0.16, 1, 90)
-			local horz = bar(1, 0.16, 0)
-			return holder, { glow = glow, parts = { vert, horz } }
+			local parts = {
+				spike(0,   1.00, 0.13),   -- long vertical
+				spike(90,  1.00, 0.13),   -- long horizontal
+				spike(45,  0.62, 0.09),   -- short diagonals
+				spike(135, 0.62, 0.09),
+			}
+			return holder, { glow = glow, parts = parts }
 		end
 
 		local function fade(st, targetBar, targetGlow, time, style, dir)
