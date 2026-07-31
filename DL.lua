@@ -3614,6 +3614,24 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 								alpha = 1-a; alphaCursor.Position = UDim2.new(a,0,0,-1); fire()
 							end
 						end)
+					elseif item.Type == "button" then
+						-- Action row: lets a gear hold things like Refresh or Delete
+						-- instead of them each needing their own control in the panel.
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,26), ZIndex=62, Parent=popContent})
+						local btn = Create("TextButton", {
+							Text = item.Name or "Action",
+							Font = Enum.Font.GothamBold, TextSize = 12,
+							TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
+							BackgroundColor3 = Color3.fromRGB(35, 12, 60),
+							BorderSizePixel = 0, AutoButtonColor = true,
+							Size = UDim2.new(1,0,1,0), ZIndex = 63, Parent = row,
+						})
+						AddThemeObject(btn, "Main")
+						Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=btn})
+						AddThemeObject(Create("UIStroke", {Thickness=1, Parent=btn}), "Stroke")
+						btn.MouseButton1Click:Connect(function()
+							if item.OnClick then pcall(item.OnClick) end
+						end)
 					end
 				end
 
@@ -4277,6 +4295,28 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Dropdown:Set(Dropdown.Value)
 				end
 				if DropdownConfig.Flag then DuvomeLibrary.Flags[DropdownConfig.Flag] = Dropdown end
+				-- Gear popover, same idea as toggles. Uses the key "Gear" because
+				-- a dropdown's "Options" is already its list of choices.
+				if DropdownConfig.Gear then
+					local dotBtn = Create("TextButton", {
+						Text = "", BackgroundColor3 = Color3.fromRGB(30, 10, 55),
+						BorderSizePixel = 0, Size = UDim2.new(0, 24, 0, 24),
+						Position = UDim2.new(1, -56, 0, 7), ZIndex = 7,
+						Parent = DropdownFrame:FindFirstChild("F") or DropdownFrame
+					})
+					AddThemeObject(dotBtn, "Second")
+					AddThemeObject(Create("TextLabel", {
+						Text = "gear", FontFace = MakeBIconFont(), TextSize = 13,
+						TextColor3 = Color3.fromRGB(140, 80, 200), BackgroundTransparency = 1,
+						Size = UDim2.new(1,0,1,0), ZIndex = 8, Parent = dotBtn,
+					}), "TextDark")
+					Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=dotBtn})
+					local _pop, showP, hideP, isOpen, setOpen = MakePopover(dotBtn, DropdownConfig.Gear)
+					dotBtn.MouseButton1Click:Connect(function()
+						if isOpen() then hideP() setOpen(false) else showP() setOpen(true) end
+					end)
+				end
+
 				function Dropdown:SetVisible(v) DropdownFrame.Visible = v end
 				return Dropdown
 			end

@@ -160,6 +160,7 @@ local function wrapTab(container)
             MultiSelect = cfg.MultipleOptions or false,
             SelectAll = cfg.MultipleOptions or false,
             Search = true,
+            Gear = cfg.Gear,
             Flag = cfg.Flag,
             Save = cfg.Flag ~= nil,
             Callback = function(v)
@@ -2127,6 +2128,37 @@ auto:CreateSection("Build")
 
 fileDropdown = auto:CreateDropdown({
     Name = "Select Build File",
+    -- Refresh and Delete live in this dropdown's gear rather than as two more
+    -- buttons in the panel.
+    Gear = {
+        { Type = "button", Name = "Refresh File List", OnClick = function()
+            pcall(function() fileDropdown:Refresh(getFiles()) end)
+            notify("Files", "List refreshed", 2, "info")
+        end },
+        { Type = "button", Name = "Delete Selected File", OnClick = function()
+            if not selectedFile or selectedFile == "" then
+                notifyWarn("No File", "Pick a build file first", 3)
+                return
+            end
+            local target = selectedFile
+            confirm("Delete Build File",
+                "Permanently delete '" .. target .. "'? This cannot be undone.",
+                "Delete", function()
+                    local ok = pcall(function()
+                        local path = "autoBuilder/" .. target
+                        if isfile(path) then delfile(path) end
+                    end)
+                    pcall(function() clearAlignment(target) end)
+                    if ok then
+                        selectedFile = nil
+                        fileDropdown:Refresh(getFiles())
+                        notifyOK("Deleted", "'" .. target .. "' removed", 4)
+                    else
+                        notifyErr("Delete Failed", "Couldn't delete the file", 4)
+                    end
+                end)
+        end },
+    },
     Options = getFiles(),
     CurrentOption = {},
     MultipleOptions = false,
@@ -2138,34 +2170,6 @@ fileDropdown = auto:CreateDropdown({
             selectedFile = option
         end
         savedPreviewTransform = nil
-    end
-})
-
-auto:CreateButton({
-    Name = "Delete Selected File",
-    Tooltip = "Permanently delete the selected build file from the autoBuilder folder.",
-    Callback = function()
-        if not selectedFile or selectedFile == "" then
-            notifyWarn("No File", "Pick a build file first", 3)
-            return
-        end
-        local target = selectedFile
-        confirm("Delete Build File",
-            "Permanently delete '" .. target .. "'? This cannot be undone.",
-            "Delete", function()
-                local ok = pcall(function()
-                    local path = "autoBuilder/" .. target
-                    if isfile(path) then delfile(path) end
-                end)
-                pcall(function() clearAlignment(target) end)
-                if ok then
-                    selectedFile = nil
-                    fileDropdown:Refresh(getFiles())
-                    notifyOK("Deleted", "'" .. target .. "' removed", 4)
-                else
-                    notifyErr("Delete Failed", "Couldn't delete the file", 4)
-                end
-            end)
     end
 })
 
@@ -7697,7 +7701,7 @@ opsTab:CreateButton({
 })
 
 BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
-    name = "Blueprint", list = blueprintFiles, load = loadBlueprint,
+    name = "Blueprint", dir = BP_DIR, list = blueprintFiles, load = loadBlueprint,
     save = function(n) O.blueprintName = n saveBlueprint() end,
 }
 
@@ -8216,7 +8220,7 @@ colTab:CreateParagraph({
 })
 
 BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
-    name = "Preset", list = presetFiles, load = loadPreset,
+    name = "Preset", dir = PRESET_DIR, list = presetFiles, load = loadPreset,
     save = function(n) C.presetName = n savePreset() end,
 }
 
@@ -8369,7 +8373,7 @@ local function viewFiles()
 end
 
 BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
-    name = "View", list = viewFiles,
+    name = "View", dir = VIEW_DIR, list = viewFiles,
     load = function(name)
         local ok, data = pcall(function()
             return HttpService:JSONDecode(readfile(VIEW_DIR .. "/" .. name))
@@ -8448,7 +8452,7 @@ tabEdit:CreateButton({
 })
 
 BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
-    name = "Palette", list = palFiles,
+    name = "Palette", dir = PAL_DIR, list = palFiles,
     load = function(name)
         local ok, data = pcall(function()
             return HttpService:JSONDecode(readfile(PAL_DIR .. "/" .. name))
@@ -9140,7 +9144,7 @@ tabEdit:CreateButton({
 })
 
 BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
-    name = "Script", list = scriptFiles,
+    name = "Script", dir = SCRIPT_DIR, list = scriptFiles,
     load = function(name)
         local ok, src = pcall(function() return readfile(SCRIPT_DIR .. "/" .. name) end)
         if not ok then notifyErr("Script Brush", "Could not read " .. name, 5) return end
@@ -10832,7 +10836,7 @@ end
 do
 
 local kinds = BuilderAPI.fileKinds
-local F = { kind = kinds[1], name = "MySave" }
+local F = { kind = kinds[1], name = "MySave", current = nil }
 local fileDrop, filePara
 
 local kindNames = {}
@@ -10876,9 +10880,36 @@ tabEdit:CreateDropdown({
 fileDrop = tabEdit:CreateDropdown({
     Name = "Load",
     Options = { "(none saved)" }, CurrentOption = {}, MultipleOptions = false,
+    Gear = {
+        { Type = "button", Name = "Refresh List", OnClick = function() refreshList() end },
+        { Type = "button", Name = "Delete Selected", OnClick = function()
+            if not F.current or not F.kind then
+                notifyWarn("Saved Files", "Pick a file first", 3)
+                return
+            end
+            local target, dir = F.current, F.kind.dir
+            if not dir then
+                notifyWarn("Saved Files", "This type cannot be deleted from here", 4)
+                return
+            end
+            confirm("Delete File", "Permanently delete '" .. target .. "'?", "Delete", function()
+                local ok = pcall(function()
+                    if isfile(dir .. "/" .. target) then delfile(dir .. "/" .. target) end
+                end)
+                if ok then
+                    F.current = nil
+                    refreshList()
+                    notifyOK("Deleted", target, 4)
+                else
+                    notifyErr("Delete Failed", target, 4)
+                end
+            end)
+        end },
+    },
     Callback = function(v)
         local n = (typeof(v) == "table") and v[1] or v
         if not n or n == "(none saved)" or not F.kind then return end
+        F.current = n
         F.kind.load(n)
     end
 })
@@ -10902,12 +10933,6 @@ tabEdit:CreateButton({
         F.kind.save(F.name)
         refreshList()
     end
-})
-
-tabEdit:CreateButton({
-    Name = "Refresh List",
-    Tooltip = "Rescan the folder for the selected file type.",
-    Callback = refreshList
 })
 
 refreshList()
