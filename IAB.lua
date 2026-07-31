@@ -9167,6 +9167,506 @@ end
 
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SHAPE, PATH AND MODIFY TOOLS
+--
+-- Shapes are implicit functions sampled over a bounding box, so hollow and
+-- scaling fall out of the same maths. Paths are node lists resolved by a curve
+-- function then thickened by a brush. Modify transforms the live selection.
+--
+-- Own scope for its own 200-local budget; everything routes through the
+-- Builder's place/erase/undo stack.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local B, O = BA.B, BA.O
+local key3, toCell = BA.key3, BA.toCell
+local blockPartMap, placeCells, eraseCells, runCommit =
+    BA.blockPartMap, BA.placeCells, BA.eraseCells, BA.runCommit
+local needSelection, selBounds, targetPart = BA.needSelection, BA.selBounds, BA.targetPart
+
+local SP = {
+    shape = "Sphere",
+    size = 8,
+    height = 8,
+    hollow = false,
+    nodes = {},
+    pathKind = "Line (DDA)",
+    radius = 1,
+    slack = 3,
+    looped = false,
+    modMode = "Translate Copies",
+    count = 3,
+    offX = 0, offY = 0, offZ = 0,
+    angle = 90,
+    axis = "Y",
+}
+
+local shapeDesc, nodePara, modDesc
+
+-- Where a generated shape is anchored: the cursor block, else the player.
+local function anchorCell()
+    local part = targetPart()
+    if part then return toCell(part.Position) end
+    local _, _, hrp = getCharacterParts()
+    if hrp then return toCell(hrp.Position) end
+    return 0, 0, 0
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SHAPES  (implicit field: <=1 is inside)
+-- ═══════════════════════════════════════════════════════════════════════════
+local SHAPES = {
+    { "Sphere",      "A round solid ball." },
+    { "Cuboid",      "A rectangular box." },
+    { "Octahedron",  "Eight triangular faces, a diamond." },
+    { "Cylinder",    "A round column of the given height." },
+    { "Cone",        "Tapers from a round base to a point." },
+    { "Pyramid",     "Tapers from a square base to a point." },
+    { "Torus",       "A doughnut ring lying flat." },
+    { "Supersphere", "A rounded cube, between a sphere and a box." },
+    { "Tube",        "A hollow cylinder, open through the middle." },
+    { "Disk",        "A flat filled circle, one block thick." },
+    { "Plane",       "A flat filled square, one block thick." },
+}
+
+-- Returns the implicit value for a shape at a normalised offset.
+local function shapeField(kind, dx, dy, dz, r, h)
+    local nx, nz = dx / r, dz / r
+    local ny = (h > 0) and (dy / h) or 0
+    if kind == "Sphere" then
+        return nx * nx + ny * ny + nz * nz
+    elseif kind == "Cuboid" then
+        return math.max(math.abs(nx), math.abs(ny), math.abs(nz))
+    elseif kind == "Octahedron" then
+        return math.abs(nx) + math.abs(ny) + math.abs(nz)
+    elseif kind == "Cylinder" then
+        return math.max(nx * nx + nz * nz, math.abs(ny))
+    elseif kind == "Cone" then
+        -- radius shrinks linearly from base (ny=-1) to tip (ny=1)
+        local t = (ny + 1) / 2
+        local allow = math.max(1 - t, 0.0001)
+        return math.max((nx * nx + nz * nz) / (allow * allow), math.abs(ny))
+    elseif kind == "Pyramid" then
+        local t = (ny + 1) / 2
+        local allow = math.max(1 - t, 0.0001)
+        return math.max(math.abs(nx) / allow, math.abs(nz) / allow, math.abs(ny))
+    elseif kind == "Torus" then
+        local q = math.sqrt(nx * nx + nz * nz) - 0.65
+        return (q * q + ny * ny) / (0.35 * 0.35)
+    elseif kind == "Supersphere" then
+        local p = 4
+        return math.abs(nx) ^ p + math.abs(ny) ^ p + math.abs(nz) ^ p
+    elseif kind == "Tube" then
+        local d = nx * nx + nz * nz
+        if d < 0.55 then return 99 end          -- carve the bore
+        return math.max(d, math.abs(ny))
+    elseif kind == "Disk" then
+        if dy ~= 0 then return 99 end
+        return nx * nx + nz * nz
+    elseif kind == "Plane" then
+        if dy ~= 0 then return 99 end
+        return math.max(math.abs(nx), math.abs(nz))
+    end
+    return 99
+end
+
+local function buildShape()
+    runCommit("Shape", function(rec)
+        local ax, ay, az = anchorCell()
+        local r = SP.size
+        local h = (SP.shape == "Disk" or SP.shape == "Plane") and 0 or SP.height
+        local cells = {}
+        local yr = (h > 0) and h or 0
+        for dx = -r, r do
+            for dy = -yr, yr do
+                for dz = -r, r do
+                    local v = shapeField(SP.shape, dx, dy, dz, r, h)
+                    if v <= 1 then
+                        local keep = true
+                        if SP.hollow then
+                            -- A cell is shell if any neighbour falls outside.
+                            -- Flat shapes are one block thick, so testing Y
+                            -- would mark every cell as shell and hollow would
+                            -- do nothing; check only the horizontal ring there.
+                            keep = false
+                            for _, d in ipairs(h > 0 and O.sides or O.flat) do
+                                if shapeField(SP.shape, dx + d[1], dy + d[2], dz + d[3], r, h) > 1 then
+                                    keep = true
+                                    break
+                                end
+                            end
+                        end
+                        if keep then
+                            cells[#cells + 1] = { ax + dx, ay + dy, az + dz, O.activeBlock }
+                        end
+                    end
+                end
+            end
+        end
+        if #cells == 0 then notifyWarn("Shape", "That shape produced nothing", 3) return end
+        placeCells(cells, rec)
+        notifyOK("Shape", SP.shape .. ": " .. #cells .. " blocks", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PATHS
+-- ═══════════════════════════════════════════════════════════════════════════
+local PATHS = {
+    { "Line (Bresenham)", "Exactly one block wide, straight between nodes." },
+    { "Line (DDA)",       "Straight between nodes, thickened by Radius." },
+    { "Catenary",         "Hangs between nodes like a rope. Slack sets the dip." },
+    { "Catmull-Rom",      "Smooth curve that passes through every node." },
+    { "Bezier",           "Smooth curve pulled toward the middle nodes." },
+}
+
+local function lerp3(a, b, t)
+    return a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t
+end
+
+local function catmull(p0, p1, p2, p3, t)
+    local function c(a, b, cc, d)
+        return 0.5 * ((2 * b) + (-a + cc) * t
+            + (2 * a - 5 * b + 4 * cc - d) * t * t
+            + (-a + 3 * b - 3 * cc + d) * t * t * t)
+    end
+    return c(p0[1], p1[1], p2[1], p3[1]), c(p0[2], p1[2], p2[2], p3[2]), c(p0[3], p1[3], p2[3], p3[3])
+end
+
+-- Samples the chosen curve into a list of float points.
+local function pathPoints()
+    local n = SP.nodes
+    local pts = {}
+    if #n < 2 then return pts end
+    local list = { table.unpack(n) }
+    if SP.looped then list[#list + 1] = n[1] end
+
+    if SP.pathKind == "Bezier" then
+        local steps = 24 * #list
+        for i = 0, steps do
+            local t = i / steps
+            -- de Casteljau over all nodes
+            local tmp = {}
+            for k, p in ipairs(list) do tmp[k] = { p[1], p[2], p[3] } end
+            for r = #tmp - 1, 1, -1 do
+                for k = 1, r do
+                    local x, y, z = lerp3(tmp[k], tmp[k + 1], t)
+                    tmp[k] = { x, y, z }
+                end
+            end
+            pts[#pts + 1] = tmp[1]
+        end
+        return pts
+    end
+
+    for i = 1, #list - 1 do
+        local a, b = list[i], list[i + 1]
+        local dist = math.max(math.abs(b[1] - a[1]), math.abs(b[2] - a[2]), math.abs(b[3] - a[3]))
+        local steps = math.max(math.floor(dist * 2), 2)
+        for s = 0, steps do
+            local t = s / steps
+            local x, y, z
+            if SP.pathKind == "Catmull-Rom" then
+                local p0 = list[math.max(i - 1, 1)]
+                local p3 = list[math.min(i + 2, #list)]
+                x, y, z = catmull(p0, a, b, p3, t)
+            elseif SP.pathKind == "Catenary" then
+                x, y, z = lerp3(a, b, t)
+                -- parabolic approximation of a hanging chain
+                y = y - SP.slack * 4 * t * (1 - t)
+            else
+                x, y, z = lerp3(a, b, t)
+            end
+            pts[#pts + 1] = { x, y, z }
+        end
+    end
+    return pts
+end
+
+local function buildPath()
+    if #SP.nodes < 2 then
+        notifyWarn("Path", "Add at least two nodes first", 4)
+        return
+    end
+    runCommit("Path", function(rec)
+        local pts = pathPoints()
+        local seen, cells = {}, {}
+        local r = (SP.pathKind == "Line (Bresenham)") and 0 or SP.radius
+        for _, p in ipairs(pts) do
+            local cx = math.floor(p[1] + 0.5)
+            local cy = math.floor(p[2] + 0.5)
+            local cz = math.floor(p[3] + 0.5)
+            for dx = -r, r do
+                for dy = -r, r do
+                    for dz = -r, r do
+                        if dx * dx + dy * dy + dz * dz <= r * r + 0.001 then
+                            local k = key3(cx + dx, cy + dy, cz + dz)
+                            if not seen[k] then
+                                seen[k] = true
+                                cells[#cells + 1] = { cx + dx, cy + dy, cz + dz, O.activeBlock }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if #cells == 0 then notifyWarn("Path", "Path produced nothing", 3) return end
+        placeCells(cells, rec)
+        notifyOK("Path", SP.pathKind .. ": " .. #cells .. " blocks", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- MODIFY  (transforms the current selection's blocks)
+-- ═══════════════════════════════════════════════════════════════════════════
+local MODS = {
+    { "Translate Copies", "Clone the selection Count times, each offset by X/Y/Z." },
+    { "Rotate Copies",    "Clone the selection Count times around its centre, stepping by Angle." },
+    { "Revolve",          "Sweep the selection around its centre through Angle degrees." },
+    { "Twist",            "Rotate each layer progressively, twisting the selection." },
+}
+
+local function selectionBlocks(map)
+    local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+    local out = {}
+    for x = minX, maxX do
+        for y = minY, maxY do
+            for z = minZ, maxZ do
+                local p = map[key3(x, y, z)]
+                if p then out[#out + 1] = { x, y, z, p.Name } end
+            end
+        end
+    end
+    return out, minX, maxX, minY, maxY, minZ, maxZ
+end
+
+local function rotateXZ(x, z, cx, cz, deg)
+    local a = math.rad(deg)
+    local ca, sa = math.cos(a), math.sin(a)
+    local rx, rz = x - cx, z - cz
+    return cx + rx * ca - rz * sa, cz + rx * sa + rz * ca
+end
+
+local function runModify()
+    if not needSelection() then return end
+    runCommit("Modify", function(rec)
+        local map = blockPartMap()
+        local src, minX, maxX, minY, maxY, minZ, maxZ = selectionBlocks(map)
+        if #src == 0 then notifyWarn("Modify", "Selection is empty", 3) return end
+        local cx = (minX + maxX) / 2
+        local cz = (minZ + maxZ) / 2
+        local seen, out = {}, {}
+
+        local function put(x, y, z, name)
+            x, y, z = math.floor(x + 0.5), math.floor(y + 0.5), math.floor(z + 0.5)
+            local k = key3(x, y, z)
+            if not seen[k] then
+                seen[k] = true
+                out[#out + 1] = { x, y, z, name }
+            end
+        end
+
+        if SP.modMode == "Translate Copies" then
+            for i = 1, SP.count do
+                for _, b in ipairs(src) do
+                    put(b[1] + SP.offX * i, b[2] + SP.offY * i, b[3] + SP.offZ * i, b[4])
+                end
+            end
+        elseif SP.modMode == "Rotate Copies" then
+            for i = 1, SP.count do
+                for _, b in ipairs(src) do
+                    local nx, nz = rotateXZ(b[1], b[3], cx, cz, SP.angle * i)
+                    put(nx, b[2] + SP.offY * i, nz, b[4])
+                end
+            end
+        elseif SP.modMode == "Revolve" then
+            -- many small steps so the sweep is continuous, not spaced copies
+            local steps = math.max(SP.angle, 1)
+            for d = 1, steps do
+                for _, b in ipairs(src) do
+                    local nx, nz = rotateXZ(b[1], b[3], cx, cz, d)
+                    put(nx, b[2], nz, b[4])
+                end
+            end
+        else -- Twist
+            local span = math.max(maxY - minY, 1)
+            for _, b in ipairs(src) do
+                local t = (b[2] - minY) / span
+                local nx, nz = rotateXZ(b[1], b[3], cx, cz, SP.angle * t)
+                put(nx, b[2], nz, b[4])
+            end
+        end
+
+        if #out == 0 then notifyWarn("Modify", "Nothing produced", 3) return end
+        if SP.modMode == "Twist" or SP.modMode == "Revolve" then
+            eraseCells(src, rec)
+        end
+        placeCells(out, rec)
+        notifyOK("Modify", SP.modMode .. ": " .. #out .. " blocks", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════════════════
+tabEdit:CreateSection("Shape Tool", { Collapsible = true })
+
+SP.shapeNames = {}
+for _, e in ipairs(SHAPES) do SP.shapeNames[#SP.shapeNames + 1] = e[1] end
+
+tabEdit:CreateDropdown({
+    Name = "Shape",
+    Options = SP.shapeNames, CurrentOption = { "Sphere" }, MultipleOptions = false,
+    Flag = "SPShape",
+    Callback = function(v)
+        SP.shape = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(SHAPES) do
+            if e[1] == SP.shape then
+                pcall(function() shapeDesc:Set({ Title = e[1], Content = e[2] }) end)
+                break
+            end
+        end
+    end
+})
+
+shapeDesc = tabEdit:CreateParagraph({ Title = SHAPES[1][1], Content = SHAPES[1][2] })
+
+tabEdit:CreateSlider({
+    Name = "Shape Size", Range = { 1, 40 }, Increment = 1, CurrentValue = 8,
+    Suffix = "blk", Flag = "SPSize", Callback = function(v) SP.size = v end
+})
+tabEdit:CreateSlider({
+    Name = "Shape Height", Range = { 1, 40 }, Increment = 1, CurrentValue = 8,
+    Suffix = "blk", Flag = "SPHeight", Callback = function(v) SP.height = v end
+})
+tabEdit:CreateToggle({
+    Name = "Hollow",
+    CurrentValue = false,
+    Tooltip = "Keep only the outer shell of the shape.",
+    Callback = function(v) SP.hollow = v end
+})
+tabEdit:CreateButton({
+    Name = "Build Shape at Cursor",
+    Tooltip = "Generates the shape in the Active Block where your cursor points, or at you if it points at nothing.",
+    Callback = buildShape
+})
+
+tabEdit:CreateSection("Path Tool", { Collapsible = true })
+
+SP.pathNames = {}
+for _, e in ipairs(PATHS) do SP.pathNames[#SP.pathNames + 1] = e[1] end
+
+nodePara = tabEdit:CreateParagraph({
+    Title = "Path Nodes",
+    Content = "No nodes yet. Point at a block and press Add Node.",
+})
+
+tabEdit:CreateButton({
+    Name = "Add Node at Cursor",
+    Tooltip = "Append the block under your cursor to the path.",
+    Callback = function()
+        local part = targetPart()
+        if not part then notifyWarn("Path", "Point at a block first", 3) return end
+        local x, y, z = toCell(part.Position)
+        SP.nodes[#SP.nodes + 1] = { x, y, z }
+        pcall(function()
+            nodePara:Set({
+                Title = "Path Nodes",
+                Content = #SP.nodes .. " nodes. Last: " .. x .. ", " .. y .. ", " .. z,
+            })
+        end)
+        notifyOK("Path", "Node " .. #SP.nodes .. " added", 2)
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Clear Nodes",
+    Tooltip = "Remove every path node.",
+    Callback = function()
+        SP.nodes = {}
+        pcall(function()
+            nodePara:Set({ Title = "Path Nodes", Content = "No nodes yet. Point at a block and press Add Node." })
+        end)
+        notify("Path", "Nodes cleared", 2, "info")
+    end
+})
+
+tabEdit:CreateDropdown({
+    Name = "Path Type",
+    Options = SP.pathNames, CurrentOption = { "Line (DDA)" }, MultipleOptions = false,
+    Flag = "SPPath",
+    Callback = function(v) SP.pathKind = (typeof(v) == "table") and v[1] or v end
+})
+
+tabEdit:CreateSlider({
+    Name = "Path Radius", Range = { 0, 8 }, Increment = 1, CurrentValue = 1,
+    Suffix = "blk", Flag = "SPRad", Callback = function(v) SP.radius = v end
+})
+tabEdit:CreateSlider({
+    Name = "Catenary Slack", Range = { 0, 20 }, Increment = 1, CurrentValue = 3,
+    Suffix = "blk", Flag = "SPSlack", Callback = function(v) SP.slack = v end
+})
+tabEdit:CreateToggle({
+    Name = "Looped Path",
+    CurrentValue = false,
+    Tooltip = "Join the last node back to the first.",
+    Callback = function(v) SP.looped = v end
+})
+tabEdit:CreateButton({
+    Name = "Build Path",
+    Tooltip = "Draw the path through the nodes using the Active Block.",
+    Callback = buildPath
+})
+
+tabEdit:CreateSection("Modify Tool", { Collapsible = true })
+
+SP.modNames = {}
+for _, e in ipairs(MODS) do SP.modNames[#SP.modNames + 1] = e[1] end
+
+tabEdit:CreateDropdown({
+    Name = "Modify Mode",
+    Options = SP.modNames, CurrentOption = { "Translate Copies" }, MultipleOptions = false,
+    Flag = "SPMod",
+    Callback = function(v)
+        SP.modMode = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(MODS) do
+            if e[1] == SP.modMode then
+                pcall(function() modDesc:Set({ Title = e[1], Content = e[2] }) end)
+                break
+            end
+        end
+    end
+})
+
+modDesc = tabEdit:CreateParagraph({ Title = MODS[1][1], Content = MODS[1][2] })
+
+tabEdit:CreateSlider({
+    Name = "Copy Count", Range = { 1, 32 }, Increment = 1, CurrentValue = 3,
+    Suffix = "x", Flag = "SPCount", Callback = function(v) SP.count = v end
+})
+for _, ax in ipairs({ { "Offset X", "SPOX", 1 }, { "Offset Y", "SPOY", 2 }, { "Offset Z", "SPOZ", 3 } }) do
+    tabEdit:CreateSlider({
+        Name = ax[1], Range = { -32, 32 }, Increment = 1, CurrentValue = 0,
+        Suffix = "blk", Flag = ax[2],
+        Callback = function(v)
+            if ax[3] == 1 then SP.offX = v elseif ax[3] == 2 then SP.offY = v else SP.offZ = v end
+        end
+    })
+end
+tabEdit:CreateSlider({
+    Name = "Angle", Range = { 1, 360 }, Increment = 1, CurrentValue = 90,
+    Suffix = "deg", Flag = "SPAngle", Callback = function(v) SP.angle = v end
+})
+tabEdit:CreateButton({
+    Name = "Run Modify",
+    Tooltip = "Apply the selected transform to the Builder selection.",
+    Callback = runModify
+})
+
+end
+
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
 Duvome:AddWatch("Building", function()
