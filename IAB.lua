@@ -4347,29 +4347,62 @@ cityTab:CreateSection("City Blocks", { Collapsible = true, Column = "right" })
 -- One dropdown per material slot. Same shape for all of them, so they are
 -- described as data and built in a loop.
 local cityOpts = cityBlockOptions()
+-- Slot picker: pick which material you are setting, then pick the block.
+-- Seven near-identical dropdowns became two.
 local cityBlockSlots = {
-    { "Roads",      "stone",          "CityRoad",   function(v) cityRoadBlock   = v end },
-    { "Walls",      "whiteBlock",     "CityWall",   function(v) cityWallBlock   = v end },
-    { "Roofs",      "stone",          "CityRoof",   function(v) cityRoofBlock   = v end },
-    { "Windows",    "glassBlockRed",  "CityWindow", function(v) cityWindowBlock = v end },
-    { "Foundation", "stone",          "CityTrim",   function(v) cityTrimBlock   = v end },
-    { "Yards",      "grass",          "CityYard",   function(v) cityYardBlock   = v end },
-    { "Terrain",    "grass",          "CityGrass",  function(v) cityGrassBlock  = v end },
+    { "Roads",      "stone",          function(v) cityRoadBlock   = v end },
+    { "Walls",      "whiteBlock",     function(v) cityWallBlock   = v end },
+    { "Roofs",      "stone",          function(v) cityRoofBlock   = v end },
+    { "Windows",    "glassBlockRed",  function(v) cityWindowBlock = v end },
+    { "Foundation", "stone",          function(v) cityTrimBlock   = v end },
+    { "Yards",      "grass",          function(v) cityYardBlock   = v end },
+    { "Terrain",    "grass",          function(v) cityGrassBlock  = v end },
 }
-
-for _, slot in ipairs(cityBlockSlots) do
-    local label, default, flag, apply = slot[1], slot[2], slot[3], slot[4]
-    cityTab:CreateDropdown({
-        Name = label,
-        Options = cityOpts,
-        CurrentOption = { default },
-        MultipleOptions = false,
-        Flag = flag,
-        Callback = function(v)
-            apply((typeof(v) == "table") and v[1] or v)
-        end
-    })
+cityBlockSlots.names = {}
+cityBlockSlots.current = {}
+for _, e in ipairs(cityBlockSlots) do
+    cityBlockSlots.names[#cityBlockSlots.names + 1] = e[1]
+    cityBlockSlots.current[e[1]] = e[2]
+    e[3](e[2])                       -- apply the default immediately
 end
+cityBlockSlots.pick = cityBlockSlots[1]
+
+cityBlockSlots.refresh = function()
+    local lines = {}
+    for _, e in ipairs(cityBlockSlots) do
+        lines[#lines + 1] = e[1] .. ": " .. cityBlockSlots.current[e[1]]
+    end
+    pcall(function()
+        cityBlockSlots.para:Set({ Title = "City Materials", Content = table.concat(lines, "\n") })
+    end)
+end
+
+cityTab:CreateDropdown({
+    Name = "Material Slot",
+    Options = cityBlockSlots.names, CurrentOption = { "Roads" }, MultipleOptions = false,
+    Flag = "CitySlot",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(cityBlockSlots) do
+            if e[1] == name then cityBlockSlots.pick = e break end
+        end
+    end
+})
+
+cityTab:CreateDropdown({
+    Name = "Set Material To",
+    Options = cityOpts, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "CitySlotVal",
+    Callback = function(v)
+        local blk = (typeof(v) == "table") and v[1] or v
+        cityBlockSlots.pick[3](blk)
+        cityBlockSlots.current[cityBlockSlots.pick[1]] = blk
+        cityBlockSlots.refresh()
+    end
+})
+
+cityBlockSlots.para = cityTab:CreateParagraph({ Title = "City Materials", Content = "" })
+cityBlockSlots.refresh()
 
 cityTab:CreateSection("City Output", { Collapsible = true, Column = "right" })
 
@@ -6690,6 +6723,8 @@ local opsTab = tabEdit
 local O = {
     activeBlock = "stone",
     palette = {},
+    gradFrom = "stone",
+    gradTo = "whiteBlock",
     replaceFrom = "stone",
     filterBlock = "stone",
     expandBy = 1,
@@ -7440,19 +7475,57 @@ end
 
 local opsBlocks = opsBlockOptions()
 
+-- One slot picker plus one block list, instead of a dropdown per block role.
+O.slotList = {
+    { "Active Block",  function() return O.activeBlock end, function(v) O.activeBlock = v end },
+    { "Replace Block", function() return O.replaceFrom end, function(v) O.replaceFrom = v end },
+    { "Mask Block",    function() return O.mask.block end,  function(v) O.mask.block = v end },
+    { "Shade Dark",    function() return O.shadeDark end,   function(v) O.shadeDark = v end },
+    { "Shade Mid",     function() return O.shadeMid end,    function(v) O.shadeMid = v end },
+    { "Shade Light",   function() return O.shadeLight end,  function(v) O.shadeLight = v end },
+    { "Gradient From", function() return O.gradFrom end,    function(v) O.gradFrom = v end },
+    { "Gradient To",   function() return O.gradTo end,      function(v) O.gradTo = v end },
+}
+O.slotNames = {}
+for _, e in ipairs(O.slotList) do O.slotNames[#O.slotNames + 1] = e[1] end
+O.slotPick = O.slotList[1]
+
+function O.refreshSlots()
+    local lines = {}
+    for _, e in ipairs(O.slotList) do
+        lines[#lines + 1] = e[1] .. ": " .. tostring(e[2]())
+    end
+    pcall(function()
+        O.slotPara:Set({ Title = "Blocks In Use", Content = table.concat(lines, "\n") })
+    end)
+end
+
 opsTab:CreateDropdown({
-    Name = "Active Block",
-    Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
-    Flag = "OpsActive",
-    Callback = function(v) O.activeBlock = (typeof(v) == "table") and v[1] or v end
+    Name = "Block Slot",
+    Options = O.slotNames, CurrentOption = { "Active Block" }, MultipleOptions = false,
+    Flag = "OpsSlot",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(O.slotList) do
+            if e[1] == name then O.slotPick = e break end
+        end
+    end
 })
 
 opsTab:CreateDropdown({
-    Name = "Replace This Block",
+    Name = "Set Slot To",
     Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
-    Flag = "OpsFrom",
-    Callback = function(v) O.replaceFrom = (typeof(v) == "table") and v[1] or v end
+    Flag = "OpsSlotVal",
+    Callback = function(v)
+        local blk = (typeof(v) == "table") and v[1] or v
+        O.slotPick[3](blk)
+        O.refreshSlots()
+        notify("Blocks", O.slotPick[1] .. " = " .. blk, 2, "info")
+    end
 })
+
+O.slotPara = opsTab:CreateParagraph({ Title = "Blocks In Use", Content = "" })
+O.refreshSlots()
 
 opsTab:CreateToggle({
     Name = "Keep Existing",
@@ -7551,13 +7624,6 @@ opsTab:CreateDropdown({
 
 O.maskDesc = opsTab:CreateParagraph({ Title = O.maskRules[1][1], Content = O.maskRules[1][2] })
 
-opsTab:CreateDropdown({
-    Name = "Mask Block",
-    Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
-    Flag = "OpsMaskBlock",
-    Callback = function(v) O.mask.block = (typeof(v) == "table") and v[1] or v end
-})
-
 opsTab:CreateInput({
     Name = "Lua Condition",
     Default = "y > 40",
@@ -7580,17 +7646,6 @@ opsTab:CreateToggle({
 })
 
 opsTab:CreateSection("Autoshade Palette", { Collapsible = true, Column = "right" })
-for _, sl in ipairs({
-    { "Dark Block",  "stone",      "OpsShadeDark",  function(v) O.shadeDark  = v end },
-    { "Mid Block",   "whiteBlock", "OpsShadeMid",   function(v) O.shadeMid   = v end },
-    { "Light Block", "whiteBlock", "OpsShadeLight", function(v) O.shadeLight = v end },
-}) do
-    opsTab:CreateDropdown({
-        Name = sl[1], Options = opsBlocks, CurrentOption = { sl[2] }, MultipleOptions = false,
-        Flag = sl[3],
-        Callback = function(v) sl[4]((typeof(v) == "table") and v[1] or v) end
-    })
-end
 
 analyzePara = opsTab:CreateParagraph({
     Title = "Analyze",
@@ -7728,8 +7783,6 @@ local colTab = tabEdit
 local C = {
     cache = nil,            -- { {name=, col=Color3, L=, a=, b=} }
     target = Color3.fromRGB(150, 150, 150),
-    gradFrom = "stone",
-    gradTo = "whiteBlock",
     steps = 8,
     gradient = nil,         -- ordered list of block names
     axis = "Y",
@@ -7868,7 +7921,7 @@ end
 -- Interpolates in OKLab between the two endpoint blocks, then snaps each step
 -- to the closest real block.
 local function buildGradient()
-    local from, to = findByName(C.gradFrom), findByName(C.gradTo)
+    local from, to = findByName(O.gradFrom), findByName(O.gradTo)
     if not (from and to) then
         notifyWarn("Gradient", "Scan colours first, then pick both endpoints", 4)
         return
@@ -8023,22 +8076,6 @@ matchPara = colTab:CreateParagraph({
 
 colTab:CreateSection("Gradient Helper", { Collapsible = true, Column = "right" })
 
-local colBlocks = opsBlockOptions()
-
-colTab:CreateDropdown({
-    Name = "From Block",
-    Options = colBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
-    Flag = "ColGradFrom",
-    Callback = function(v) C.gradFrom = (typeof(v) == "table") and v[1] or v end
-})
-
-colTab:CreateDropdown({
-    Name = "To Block",
-    Options = colBlocks, CurrentOption = { "whiteBlock" }, MultipleOptions = false,
-    Flag = "ColGradTo",
-    Callback = function(v) C.gradTo = (typeof(v) == "table") and v[1] or v end
-})
-
 colTab:CreateSlider({
     Name = "Gradient Steps",
     Range = { 2, 24 }, Increment = 1, CurrentValue = 8, Flag = "ColSteps",
@@ -8120,8 +8157,8 @@ local function currentPreset()
         shadeMid = O.shadeMid,
         shadeLight = O.shadeLight,
         expandBy = O.expandBy,
-        gradFrom = C.gradFrom,
-        gradTo = C.gradTo,
+        gradFrom = O.gradFrom,
+        gradTo = O.gradTo,
         steps = C.steps,
         axis = C.axis,
         gradient = C.gradient,
@@ -8159,8 +8196,8 @@ local function loadPreset(name)
     O.shadeMid     = data.shadeMid     or O.shadeMid
     O.shadeLight   = data.shadeLight   or O.shadeLight
     O.expandBy     = data.expandBy     or O.expandBy
-    C.gradFrom     = data.gradFrom     or C.gradFrom
-    C.gradTo       = data.gradTo       or C.gradTo
+    O.gradFrom     = data.gradFrom     or O.gradFrom
+    O.gradTo       = data.gradTo       or O.gradTo
     C.steps        = data.steps        or C.steps
     C.axis         = data.axis         or C.axis
     C.gradient     = data.gradient     or C.gradient
