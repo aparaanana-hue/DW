@@ -7920,7 +7920,6 @@ local function savePreset()
         writefile(PRESET_DIR .. "/" .. name, HttpService:JSONEncode(currentPreset()))
     end)
     if not ok then notifyErr("Preset", tostring(err), 5) return end
-    pcall(function() presetDropdown:Refresh(presetFiles()) end)
     notifyOK("Preset Saved", name, 4)
 end
 
@@ -8901,7 +8900,6 @@ end
             writefile(SCRIPT_DIR .. "/example.lua", example)
         end)
         if not ok then notifyErr("Scripts", tostring(err), 5) return end
-        pcall(function() scriptDropdown:Refresh(scriptFiles()) end)
         notifyOK("Scripts", "example.lua written", 5)
     end } },
     Tooltip = "Compile and run the one-liner above over the selection.",
