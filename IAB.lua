@@ -10455,12 +10455,47 @@ local function unfilter(ft, scan, pixels, bpp, row)
     end
 end
 
+-- Works out what a download actually is, so a wrong link produces a useful
+-- message instead of "bad signature".
+local function sniffFormat(data)
+    if not data or #data == 0 then return "nothing", "The link returned an empty response." end
+    local head = data:sub(1, 16)
+    if head:sub(1, 8) == "\137PNG\r\n\26\n" then return "png" end
+    if head:sub(1, 3) == "\255\216\255" then
+        return "jpeg", "That link is a JPEG. Only PNG is supported - convert it to .png first."
+    end
+    if head:sub(1, 4) == "GIF8" then
+        return "gif", "That link is a GIF. Only PNG is supported."
+    end
+    if head:sub(1, 4) == "RIFF" and data:sub(9, 12) == "WEBP" then
+        return "webp", "That link is a WebP. Only PNG is supported - convert it to .png first."
+    end
+    if head:sub(1, 2) == "BM" then
+        return "bmp", "That link is a BMP. Only PNG is supported."
+    end
+    local start = data:sub(1, 400):lower()
+    if start:find("<!doctype") or start:find("<html") or start:find("<head") then
+        return "html", "That link returned a web page, not an image. Open the image itself, "
+            .. "right-click it and copy the image address - it should end in .png"
+    end
+    if start:find("^%s*{") or start:find("^%s*%[") then
+        return "json", "That link returned JSON, not an image. Use a direct image URL."
+    end
+    -- unknown: show the leading bytes so the cause is at least visible
+    local hex = {}
+    for i = 1, math.min(#data, 8) do hex[#hex + 1] = string.format("%02X", data:byte(i)) end
+    return "unknown", "Not a PNG. First bytes: " .. table.concat(hex, " ")
+        .. " (" .. #data .. " bytes). Use a direct .png link."
+end
+
 -- Returns { w, h, get(x, y) -> r, g, b, a } with 0-255 channels.
 local function decodePNG(data)
-    local reader = Reader.new(data)
-    if reader:ReadString(8) ~= "\137PNG\r\n\26\n" then
-        error("not a PNG file (bad signature)")
+    local kind, why = sniffFormat(data)
+    if kind ~= "png" then
+        error(why or "not a PNG file")
     end
+    local reader = Reader.new(data)
+    reader:ReadString(8)
 
     local width, height, bitDepth, colorType
     local palette, alphaData
@@ -10578,8 +10613,10 @@ local function loadImage()
         say("Image", "Decoding " .. #data .. " bytes...")
         local ok2, img = pcall(decodePNG, data)
         if not ok2 then
-            notifyErr("Image", tostring(img), 8)
-            say("Image", "Decode failed: " .. tostring(img))
+            -- pcall prefixes "file:line:", which is noise for a URL problem
+            local msg = tostring(img):gsub("^.-:%d+:%s*", "")
+            notifyErr("Image", msg, 10)
+            say("Image Problem", msg)
             return
         end
         IMG.cache = img
@@ -10664,9 +10701,39 @@ tabEdit:CreateSection("Image", { Collapsible = true })
 
 imgPara = tabEdit:CreateParagraph({
     Title = "Image",
-    Content = "Paste a direct .png link, press Load, then Build.\n"
-        .. "Colours are matched to blocks with the Colour tab's index, so run\n"
-        .. "Scan Block Colours once first.",
+    Content = "Needs a DIRECT link to a .png file - one that ends in .png and\n"
+        .. "shows only the image, no page around it.\n"
+        .. "A gallery page link (imgur.com/abc) returns HTML, not an image;\n"
+        .. "open the image, right-click it, Copy image address.\n"
+        .. "Only PNG works. JPEG, WebP and GIF are not supported.\n"
+        .. "Run Scan Block Colours on the Colour tab once first.",
+})
+
+tabEdit:CreateButton({
+    Name = "Check URL",
+    Tooltip = "Download the link and report what it actually is, without building anything.",
+    Callback = function()
+        if IMG.url == "" then notifyWarn("Image", "Paste a link first", 3) return end
+        task.spawn(function()
+            say("Checking", IMG.url)
+            local ok, data = pcall(function() return game:HttpGet(IMG.url) end)
+            if not ok then
+                local msg = tostring(data):gsub("^.-:%d+:%s*", "")
+                say("Check Failed", "The request itself failed:\n" .. msg
+                    .. "\nThe host may be blocking the game.")
+                notifyErr("Image", "Request failed", 6)
+                return
+            end
+            local kind, why = sniffFormat(data)
+            if kind == "png" then
+                say("Check OK", "That is a PNG, " .. #data .. " bytes. Press Load Image.")
+                notifyOK("Image", "Valid PNG (" .. #data .. " bytes)", 5)
+            else
+                say("Check: " .. kind, why or "Unsupported file type.")
+                notifyWarn("Image", why or ("Got " .. kind), 8)
+            end
+        end)
+    end
 })
 
 tabEdit:CreateInput({
