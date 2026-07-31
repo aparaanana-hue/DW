@@ -2123,7 +2123,7 @@ local function getRequiredBlocksText(blocks)
     return table.concat(lines, "\n")
 end
 
-auto:CreateSection("Build File")
+auto:CreateSection("Build")
 
 fileDropdown = auto:CreateDropdown({
     Name = "Select Build File",
@@ -2169,7 +2169,7 @@ auto:CreateButton({
     end
 })
 
-auto:CreateSection("Build")
+auto:CreateDivider()
 
 auto:CreateToggle({
     Name = "Start Build",
@@ -2590,7 +2590,7 @@ local function showSelBox()
     end)
 end
 
-saveTab:CreateSection("Save Build", { Collapsible = true })
+saveTab:CreateSection("Save", { Collapsible = true })
 
 saveTab:CreateInput({
     Name = "Save As",
@@ -2603,7 +2603,7 @@ saveTab:CreateInput({
     end
 })
 
-saveTab:CreateSection("Selection Box", { Collapsible = true })
+saveTab:CreateDivider()
 
 saveTab:CreateToggle({
     Name = "Show Selection Box",
@@ -2627,7 +2627,7 @@ saveTab:CreateToggle({
     end
 })
 
-saveTab:CreateSection("Block Brush Select", { Collapsible = true })
+saveTab:CreateDivider()
 
 saveTab:CreateParagraph({
     Title = "Paint-Select Blocks",
@@ -2699,7 +2699,7 @@ saveTab:CreateButton({
     end
 })
 
-saveTab:CreateSection("Save & Mirror", { Collapsible = true })
+saveTab:CreateDivider()
 
 saveTab:CreateParagraph({
     Title = "Split / Mirror Save",
@@ -2761,7 +2761,7 @@ saveTab:CreateButton({
 
 end
 
-auto:CreateSection("Style & Speed", { Collapsible = true })
+auto:CreateSection("Build Speed & Movement", { Collapsible = true })
 
 auto:CreateDropdown({
     Name = "Build Style",
@@ -2786,7 +2786,7 @@ local intervalSlider = auto:CreateSlider({
     end
 })
 
-auto:CreateSection("Advanced Speed", { Collapsible = true })
+auto:CreateDivider()
 
 auto:CreateToggle({
     Name = "Adaptive Rate",
@@ -2825,7 +2825,7 @@ auto:CreateSlider({
     end
 })
 
-auto:CreateSection("Movement", { Collapsible = true })
+auto:CreateDivider()
 
 auto:CreateToggle({
     Name = "Move Before Placing",
@@ -2900,7 +2900,7 @@ previewTab:CreateToggle({
     end
 })
 
-previewTab:CreateSection("Move Preview", { Collapsible = true })
+previewTab:CreateDivider()
 
 previewTab:CreateToggle({
     Name = "Move Handles",
@@ -2926,7 +2926,7 @@ previewTab:CreateButton({
 
 -- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
-previewTab:CreateSection("Appearance", { Collapsible = true })
+previewTab:CreateDivider()
 
 previewTab:CreateToggle({
     Name = "Use Real Models",
@@ -3024,7 +3024,7 @@ previewTab:CreateButton({
     end
 })
 
-previewTab:CreateSection("Replace Blocks", { Collapsible = true })
+previewTab:CreateDivider()
 
 previewTab:CreateParagraph({
     Title = "Swap Block Types",
@@ -3609,7 +3609,7 @@ structTab:CreateToggle({
     end
 })
 
-structTab:CreateSection("Shape")
+structTab:CreateSection("Structures")
 
 structTab:CreateDropdown({
     Name = "Shape Mode",
@@ -3722,7 +3722,7 @@ structTab:CreateSlider({
     Callback = function(v) structTurns = v structRefreshPreview() end
 })
 
-structTab:CreateSection("Noise", { Collapsible = true })
+structTab:CreateDivider()
 
 structTab:CreateSlider({
     Name = "Smoothness",
@@ -3742,7 +3742,7 @@ structTab:CreateSlider({
     Callback = function(v) structSeed = v structHeightmap = nil structRefreshPreview() end
 })
 
-structTab:CreateSection("Rotation", { Collapsible = true })
+structTab:CreateDivider()
 
 -- Three identical 0-360 axis sliders; only the target variable differs.
 for _, axis in ipairs({
@@ -3779,7 +3779,7 @@ local function structToBlocks()
     return blocks
 end
 
-structTab:CreateSection("Terraform", { Collapsible = true })
+structTab:CreateDivider()
 
 structTab:CreateParagraph({
     Title = "Sculpt the Terrain",
@@ -3978,7 +3978,7 @@ structTab:CreateToggle({
     end
 })
 
-structTab:CreateSection("Structure Output", { Collapsible = true })
+structTab:CreateDivider()
 
 local structStatsParagraph = structTab:CreateParagraph({
     Title = "Shape Stats",
@@ -4280,14 +4280,14 @@ local function cityGenerate()
     return cellsToBlocks(all), lotFiles
 end
 
-cityTab:CreateSection("City Generator", { Collapsible = true })
+cityTab:CreateSection("City", { Collapsible = true })
 
 cityTab:CreateParagraph({
     Title = "City Generator",
     Content = "Makes roads and drops a house on each lot. The same seed makes the same city. Then preview and build it."
 })
 
-cityTab:CreateSection("City Layout", { Collapsible = true, Column = "left" })
+cityTab:CreateDivider()
 
 for _, s in ipairs({
     { "Lots Across",  1,  8, 1, 3,  "CityLotsX", function(v) cityLotsX = v end },
@@ -4305,7 +4305,7 @@ for _, s in ipairs({
     })
 end
 
-cityTab:CreateSection("City Houses", { Collapsible = true, Column = "left" })
+cityTab:CreateDivider()
 
 -- Was two separate Min/Max sliders; a single two-handle range slider makes the
 -- relationship obvious and can't be set inside-out.
@@ -4326,7 +4326,7 @@ cityTab:CreateSlider({
     Callback = function(v) citySeed = v end
 })
 
-cityTab:CreateSection("City Terrain", { Collapsible = true, Column = "left" })
+cityTab:CreateDivider()
 
 cityTab:CreateToggle({
     Name = "Generate on Landscape",
@@ -4342,7 +4342,7 @@ cityTab:CreateSlider({
     Callback = function(v) cityTerrainH = v end
 })
 
-cityTab:CreateSection("City Blocks", { Collapsible = true, Column = "right" })
+cityTab:CreateDivider()
 
 -- One dropdown per material slot. Same shape for all of them, so they are
 -- described as data and built in a loop.
@@ -4404,7 +4404,7 @@ cityTab:CreateDropdown({
 cityBlockSlots.para = cityTab:CreateParagraph({ Title = "City Materials", Content = "" })
 cityBlockSlots.refresh()
 
-cityTab:CreateSection("City Output", { Collapsible = true, Column = "right" })
+cityTab:CreateDivider()
 
 local cityStats = cityTab:CreateParagraph({
     Title = "City Stats",
@@ -4595,7 +4595,7 @@ local function platGenerate()
     return out
 end
 
-platTab:CreateSection("Platform Designer", { Collapsible = true })
+platTab:CreateSection("Platforms", { Collapsible = true })
 
 platTab:CreateParagraph({
     Title = "Platform Designer",
@@ -4637,7 +4637,7 @@ platTab:CreateToggle({
     Callback = function(v) platMirrorDiag = v end
 })
 
-platTab:CreateSection("Platform Blocks", { Collapsible = true })
+platTab:CreateDivider()
 
 local platOpts = platBlockOptions()
 
@@ -4670,7 +4670,7 @@ platBaseDropdown = platTab:CreateDropdown({
     Callback = function(v) platBaseBlock = (typeof(v) == "table") and v[1] or v end
 })
 
-platTab:CreateSection("Platform Output", { Collapsible = true })
+platTab:CreateDivider()
 
 local platStats = platTab:CreateParagraph({
     Title = "Pattern Stats",
@@ -4933,7 +4933,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SELECTION TOOLS
 -- ═══════════════════════════════════════════════════════════════════════════
-toolTab:CreateSection("Selection Tools", { Collapsible = true })
+toolTab:CreateSection("Tools")
 
 statusPara = toolTab:CreateParagraph({
     Title = "Active Tool",
@@ -5073,7 +5073,7 @@ toolTab:CreateButton({
 })
 
 -- ── Ruler ──────────────────────────────────────────────────────────────────
-toolTab:CreateSection("Ruler", { Collapsible = true })
+toolTab:CreateDivider()
 
 local rulerPara = toolTab:CreateParagraph({
     Title = "Measurement",
@@ -5111,7 +5111,7 @@ toolTab:CreateToggle({
 -- ═══════════════════════════════════════════════════════════════════════════
 -- TOOL SETTINGS
 -- ═══════════════════════════════════════════════════════════════════════════
-toolTab:CreateSection("Tool Settings", { Collapsible = true, Column = "right" })
+toolTab:CreateDivider()
 
 -- cityBlockOptions lives inside a closed do-block, so the tools tab builds its
 -- own list of placeable block names from ReplicatedStorage.
@@ -5605,7 +5605,7 @@ for _, e in ipairs(TOOL_OPS) do toolOpNames[#toolOpNames + 1] = e[1] end
 local chosenOp = TOOL_OPS[1]
 local opDescPara
 
-toolTab:CreateSection("Edit Operations")
+toolTab:CreateDivider()
 
 toolTab:CreateDropdown({
     Name = "Operation",
@@ -5651,7 +5651,7 @@ toolTab:CreateButton({
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OUTPUT
 -- ═══════════════════════════════════════════════════════════════════════════
-toolTab:CreateSection("Tool Output", { Collapsible = true, Column = "right" })
+toolTab:CreateDivider()
 
 toolTab:CreateParagraph({
     Title = "How This Works",
@@ -6530,7 +6530,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-buildTab:CreateSection("Session", { Collapsible = true })
+buildTab:CreateSection("Builder", { Collapsible = true })
 
 statusPara = buildTab:CreateParagraph({
     Title = "Builder",
@@ -6556,7 +6556,7 @@ B.toolNames = {}
 for _, e in ipairs(B.toolList) do B.toolNames[#B.toolNames + 1] = e[1] end
 B.pick = B.toolList[1]
 
-buildTab:CreateSection("Builder Tools")
+buildTab:CreateDivider()
 
 buildTab:CreateDropdown({
     Name = "Active Tool",
@@ -6587,7 +6587,7 @@ B.armToggle = buildTab:CreateToggle({
     end
 })
 
-buildTab:CreateSection("Builder Options", { Collapsible = true, Column = "right" })
+buildTab:CreateDivider()
 
 buildTab:CreateSlider({
     Name = "Stack Count",
@@ -6640,7 +6640,7 @@ buildTab:CreateButton({
     end
 })
 
-buildTab:CreateSection("Symmetry", { Column = "right", Collapsible = true })
+buildTab:CreateDivider()
 
 buildTab:CreateParagraph({
     Title = "Symmetry Node",
@@ -6659,7 +6659,7 @@ buildTab:CreateButton({
     end
 })
 
-buildTab:CreateSection("Controls", { Collapsible = true })
+buildTab:CreateDivider()
 buildTab:CreateParagraph({
     Title = "Mouse",
     Content = "Left-click: first corner (Extrude: shrink face, Clone: finish)\nRight-click: second corner, then confirm (Extrude: extrude, Erase: erase connected)\nMiddle-click: expand the selection face, or jump the hologram to the clicked block\nScroll: nudge one block, away on scroll-up, based on where you face",
@@ -7452,7 +7452,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OPERATIONS UI
 -- ═══════════════════════════════════════════════════════════════════════════
-opsTab:CreateSection("Operations")
+opsTab:CreateSection("Operations", { Collapsible = true })
 
 opsStatus = opsTab:CreateParagraph({
     Title = "Operations",
@@ -7563,7 +7563,7 @@ for _, e in ipairs(O.list) do O.names[#O.names + 1] = e[1] end
 
 O.chosen = O.list[1]
 
-opsTab:CreateSection("Run an Operation", { Collapsible = true })
+opsTab:CreateDivider()
 
 opsTab:CreateDropdown({
     Name = "Operation",
@@ -7595,7 +7595,7 @@ opsTab:CreateSlider({
     Callback = function(v) O.expandBy = v end
 })
 
-opsTab:CreateSection("Tool Mask", { Collapsible = true, Column = "right" })
+opsTab:CreateDivider()
 
 O.maskNames = {}
 for _, e in ipairs(O.maskRules) do O.maskNames[#O.maskNames + 1] = e[1] end
@@ -7645,14 +7645,14 @@ opsTab:CreateToggle({
     Callback = function(v) O.mask.invert = v end
 })
 
-opsTab:CreateSection("Autoshade Palette", { Collapsible = true, Column = "right" })
+opsTab:CreateDivider()
 
 analyzePara = opsTab:CreateParagraph({
     Title = "Analyze",
     Content = "Run Analyze to see the block breakdown.",
 })
 
-opsTab:CreateSection("Clipboard", { Collapsible = true })
+opsTab:CreateDivider()
 
 O.clipList = {
     { "Copy",      "Copy the selection's blocks to the clipboard.",            function() copySelection(false) end },
@@ -7701,13 +7701,13 @@ BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
     save = function(n) O.blueprintName = n saveBlueprint() end,
 }
 
-opsTab:CreateSection("Blueprints", { Collapsible = true, Column = "right" })
+opsTab:CreateDivider()
 opsTab:CreateButton({ Name = "Export Selection as CSV", Tooltip = "Write x,y,z,block rows to the blueprints folder.", Callback = exportCSV })
 
 -- ── editor keybinds ────────────────────────────────────────────────────────
 -- Ctrl+C / X / V / J work whenever the Operations tab's shortcuts are enabled.
 local editorKeys
-opsTab:CreateSection("Shortcuts", { Collapsible = true })
+opsTab:CreateDivider()
 opsTab:CreateParagraph({
     Title = "Editor Keybinds",
     Content = "Ctrl+C copy · Ctrl+X cut · Ctrl+V paste · Ctrl+J duplicate\nCtrl+Z undo · Ctrl+Y redo (always on while a Builder tool is active)",
@@ -7987,7 +7987,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-colTab:CreateSection("Colour Index", { Collapsible = true })
+colTab:CreateSection("Colour", { Collapsible = true })
 
 scanPara = colTab:CreateParagraph({
     Title = "Colour Index",
@@ -8000,7 +8000,7 @@ colTab:CreateButton({
     Callback = function() task.spawn(scanColours) end
 })
 
-colTab:CreateSection("Colour Picker", { Collapsible = true })
+colTab:CreateDivider()
 
 local targetPicker
 targetPicker = colTab:CreateColorpicker({
@@ -8064,7 +8064,7 @@ matchPara = colTab:CreateParagraph({
     Content = "Pick a colour, then Find Similar Blocks.",
 })
 
-colTab:CreateSection("Gradient Helper", { Collapsible = true, Column = "right" })
+colTab:CreateDivider()
 
 colTab:CreateSlider({
     Name = "Gradient Steps",
@@ -8083,7 +8083,7 @@ gradPara = colTab:CreateParagraph({
     Content = "Build a gradient to see the block sequence.",
 })
 
-colTab:CreateSection("Gradient Painter", { Collapsible = true, Column = "right" })
+colTab:CreateDivider()
 
 colTab:CreateDropdown({
     Name = "Gradient Axis",
@@ -8208,7 +8208,7 @@ BuilderAPI.nearestBlockEntry = function(col)
 end
 BuilderAPI.toOklab = toOklab
 
-colTab:CreateSection("Tool Presets", { Collapsible = true })
+colTab:CreateDivider()
 
 colTab:CreateParagraph({
     Title = "About Presets",
@@ -8264,7 +8264,7 @@ local function refreshHistoryList()
     end)
 end
 
-tabEdit:CreateSection("History", { Collapsible = true })
+tabEdit:CreateSection("Session Info", { Collapsible = true })
 
 histPara2 = tabEdit:CreateParagraph({
     Title = "History",
@@ -8289,7 +8289,7 @@ tabEdit:CreateButton({
 })
 
 -- ── Target Info ────────────────────────────────────────────────────────────
-tabEdit:CreateSection("Target Info", { Collapsible = true })
+tabEdit:CreateDivider()
 
 infoPara = tabEdit:CreateParagraph({
     Title = "Target Info",
@@ -8416,7 +8416,7 @@ local function palFiles()
     return out
 end
 
-tabEdit:CreateSection("Palette", { Collapsible = true })
+tabEdit:CreateDivider()
 
 tabEdit:CreateParagraph({
     Title = "Palette",
@@ -8477,7 +8477,7 @@ BuilderAPI.fileKinds[#BuilderAPI.fileKinds + 1] = {
 -- Axiom's time / brightness / fluid opacity settings are all client-side.
 local Lighting = game:GetService("Lighting")
 
-tabEdit:CreateSection("World & View", { Collapsible = true })
+tabEdit:CreateDivider()
 
 tabEdit:CreateParagraph({
     Title = "World & View",
@@ -8562,7 +8562,7 @@ tabEdit:CreateToggle({
 
 -- ── Annotations ────────────────────────────────────────────────────────────
 -- Floating labels you can leave around a build as notes.
-tabEdit:CreateSection("Annotations", { Collapsible = true })
+tabEdit:CreateDivider()
 
 local function annFolder()
     local f = Workspace:FindFirstChild("IABAnnotations")
@@ -8648,7 +8648,7 @@ tabEdit:CreateButton({
 })
 
 -- ── Theme ──────────────────────────────────────────────────────────────────
-tabEdit:CreateSection("Theme", { Collapsible = true })
+tabEdit:CreateDivider()
 
 tabEdit:CreateDropdown({
     Name = "UI Theme",
@@ -9007,7 +9007,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Noise Painter", { Collapsible = true })
+tabEdit:CreateSection("Noise & Scripting", { Collapsible = true })
 
 NP.names = {}
 for _, e in ipairs(NOISE_KINDS) do NP.names[#NP.names + 1] = e[1] end
@@ -9057,7 +9057,7 @@ tabEdit:CreateButton({
     Callback = runNoisePainter
 })
 
-tabEdit:CreateSection("Script Brush", { Collapsible = true })
+tabEdit:CreateDivider()
 
 scriptHelp = tabEdit:CreateParagraph({
     Title = "Script Brush",
@@ -9479,7 +9479,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Shape Tool", { Collapsible = true })
+tabEdit:CreateSection("Shape, Path & Modify", { Collapsible = true })
 
 SP.shapeNames = {}
 for _, e in ipairs(SHAPES) do SP.shapeNames[#SP.shapeNames + 1] = e[1] end
@@ -9521,7 +9521,7 @@ tabEdit:CreateButton({
     Callback = buildShape
 })
 
-tabEdit:CreateSection("Path Tool", { Collapsible = true })
+tabEdit:CreateDivider()
 
 SP.pathNames = {}
 for _, e in ipairs(PATHS) do SP.pathNames[#SP.pathNames + 1] = e[1] end
@@ -9588,7 +9588,7 @@ tabEdit:CreateButton({
     Callback = buildPath
 })
 
-tabEdit:CreateSection("Modify Tool", { Collapsible = true })
+tabEdit:CreateDivider()
 
 SP.modNames = {}
 for _, e in ipairs(MODS) do SP.modNames[#SP.modNames + 1] = e[1] end
@@ -9963,7 +9963,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Fluid Ball", { Collapsible = true })
+tabEdit:CreateSection("Sculpting", { Collapsible = true })
 
 fluidPara = tabEdit:CreateParagraph({
     Title = "Fluid Blocks",
@@ -9997,7 +9997,7 @@ tabEdit:CreateButton({
     Callback = fluidBall
 })
 
-tabEdit:CreateSection("Modelling", { Collapsible = true })
+tabEdit:CreateDivider()
 
 modelPara = tabEdit:CreateParagraph({
     Title = "Model Nodes",
@@ -10044,7 +10044,7 @@ tabEdit:CreateButton({
     Callback = buildModel
 })
 
-tabEdit:CreateSection("Gaussian Terrain", { Collapsible = true })
+tabEdit:CreateDivider()
 
 tabEdit:CreateParagraph({
     Title = "Gaussian Terrain",
