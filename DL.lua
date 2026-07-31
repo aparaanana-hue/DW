@@ -4771,12 +4771,36 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					CanvasSize = UDim2.new(0, 0, 0, 0),
 					ScrollBarThickness = 3, ZIndex = 91, Parent = Panel,
 				})
-				local List = Create("UIListLayout", {
-					Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Content,
-				})
-				AddConnection(List:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-					Content.CanvasSize = UDim2.new(0, 0, 0, List.AbsoluteContentSize.Y + 8)
-				end)
+
+				-- Two-column mode: side-by-side lists, each its own element set.
+				local LeftCol, RightCol
+				if cfg.Columns then
+					LeftCol = Create("Frame", {
+						BackgroundTransparency = 1, Size = UDim2.new(0.5, -5, 1, 0),
+						Position = UDim2.new(0, 0, 0, 0), ZIndex = 91, Parent = Content,
+					})
+					RightCol = Create("Frame", {
+						BackgroundTransparency = 1, Size = UDim2.new(0.5, -5, 1, 0),
+						Position = UDim2.new(0.5, 5, 0, 0), ZIndex = 91, Parent = Content,
+					})
+					local ll = Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = LeftCol})
+					local rl = Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = RightCol})
+					local function sync()
+						local h = math.max(ll.AbsoluteContentSize.Y, rl.AbsoluteContentSize.Y)
+						LeftCol.Size  = UDim2.new(0.5, -5, 0, h)
+						RightCol.Size = UDim2.new(0.5, -5, 0, h)
+						Content.CanvasSize = UDim2.new(0, 0, 0, h + 8)
+					end
+					AddConnection(ll:GetPropertyChangedSignal("AbsoluteContentSize"), sync)
+					AddConnection(rl:GetPropertyChangedSignal("AbsoluteContentSize"), sync)
+				else
+					local List = Create("UIListLayout", {
+						Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Content,
+					})
+					AddConnection(List:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+						Content.CanvasSize = UDim2.new(0, 0, 0, List.AbsoluteContentSize.Y + 8)
+					end)
+				end
 
 				-- drag by the title bar
 				local dragging, dragStart, startPos = false, nil, nil
@@ -4796,7 +4820,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					end
 				end)
 
-				local api = GetElements(Content)
+				local api = GetElements(cfg.Columns and LeftCol or Content)
+				if cfg.Columns then
+					local leftAPI, rightAPI = GetElements(LeftCol), GetElements(RightCol)
+					function api:Left() return leftAPI end
+					function api:Right() return rightAPI end
+				end
 				function api:Show() Panel.Visible = true end
 				function api:Hide() Panel.Visible = false end
 				function api:Toggle() Panel.Visible = not Panel.Visible return Panel.Visible end

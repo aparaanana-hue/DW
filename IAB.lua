@@ -230,6 +230,11 @@ local structTab   = tabGenerate
 local cityTab     = tabGenerate
 local platTab     = tabGenerate
 
+-- Shared bridge between the Builder scope and the Operations/Colour scope.
+local BuilderAPI = {}
+-- Every saved-file kind registers here; one UI drives them all.
+BuilderAPI.fileKinds = {}
+
 local net = ReplicatedStorage
     :WaitForChild("rbxts_include")
     :WaitForChild("node_modules")
@@ -3385,6 +3390,7 @@ local function structRefreshPreview()
         structRenderPreview()
     end)
 end
+BuilderAPI.structRefresh = structRefreshPreview
 
 local function structUpdatePreviewLive()
     if not structShowPreview then return end
@@ -5612,11 +5618,6 @@ Duvome:AddWatch("Tool", function() return T.mode or false end)
 Duvome:AddWatch("Selected Blocks", function() return T.count > 0 and T.count or false end)
 
 end
-
--- Shared bridge between the Builder scope and the Operations/Colour scope.
-local BuilderAPI = {}
--- Every saved-file kind registers here; one UI drives them all.
-BuilderAPI.fileKinds = {}
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- BUILDER TAB — Axiom-style cuboid tools
@@ -10859,6 +10860,88 @@ tabEdit:CreateToggle({
     Tooltip = "Floating panel of the controls you reach for most. Drag it by its title bar.",
     Callback = function(on)
         if on then panel:Show() else panel:Hide() end
+    end
+})
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SHAPE PANEL — the Structures parameters as a two-column floating panel
+--
+-- Same live state as the Generate tab's sliders, so a change here refreshes the
+-- structure preview exactly as it would there.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 430, Columns = true })
+local L, R = shapePanel:Left(), shapePanel:Right()
+
+L:AddLabel("Size")
+for _, sl in ipairs({
+    { "Radius / Length", 3, 450, 3, 30, function(v) structRadius = v end },
+    { "Width",           3, 450, 3, 30, function(v) structWidth  = v end },
+    { "Height",          3, 450, 3, 30, function(v) structHeight = v end },
+    { "Thickness",       1,  10, 1,  1, function(v) structThickness = v end },
+}) do
+    L:AddSlider({
+        Name = sl[1], Min = sl[2], Max = sl[3], Increment = sl[4], Default = sl[5],
+        ValueName = "blk",
+        Callback = function(v)
+            sl[6](v)
+            structHeightmap = nil
+            BuilderAPI.structRefresh()
+        end
+    })
+end
+
+L:AddDivider()
+L:AddLabel("Shell")
+L:AddToggle({
+    Name = "Hollow", Default = true,
+    Callback = function(v) structHollow = v BuilderAPI.structRefresh() end
+})
+L:AddToggle({
+    Name = "Fill Steps", Default = false,
+    Callback = function(v) structFillSteps = v BuilderAPI.structRefresh() end
+})
+
+R:AddLabel("Form")
+R:AddSlider({
+    Name = "Spiral Turns", Min = 1, Max = 40, Increment = 1, Default = 4,
+    Callback = function(v)
+        -- panel sliders are whole numbers; the tab slider steps in 0.25
+        structTurns = v / 4
+        BuilderAPI.structRefresh()
+    end
+})
+R:AddSlider({
+    Name = "Smoothness", Min = 5, Max = 200, Increment = 1, Default = 25,
+    Callback = function(v) structSmooth = v structHeightmap = nil BuilderAPI.structRefresh() end
+})
+R:AddSlider({
+    Name = "Seed", Min = 1, Max = 10000, Increment = 1, Default = 1,
+    Callback = function(v) structSeed = v structHeightmap = nil BuilderAPI.structRefresh() end
+})
+
+R:AddDivider()
+R:AddLabel("Rotation")
+for _, ax in ipairs({
+    { "Tilt (X)", function(v) structRX = v end },
+    { "Spin (Y)", function(v) structRY = v end },
+    { "Roll (Z)", function(v) structRZ = v end },
+}) do
+    R:AddSlider({
+        Name = ax[1], Min = 0, Max = 360, Increment = 90, Default = 0, ValueName = "deg",
+        Callback = function(v) ax[2](v) BuilderAPI.structRefresh() end
+    })
+end
+
+structTab:CreateToggle({
+    Name = "Shape Panel",
+    CurrentValue = false,
+    Tooltip = "Floating two-column panel with every shape parameter. Drag it by its title bar.",
+    Callback = function(on)
+        if on then shapePanel:Show() else shapePanel:Hide() end
     end
 })
 
