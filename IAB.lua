@@ -8688,6 +8688,485 @@ tabEdit:CreateColorpicker({
 
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- NOISE PAINTER + SCRIPT BRUSH
+--
+-- Own scope for its own 200-local budget. Everything it changes goes through
+-- the Builder's place/erase/undo stack, so Ctrl+Z reverts a script run.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local B, O = BA.B, BA.O
+local key3, toCell = BA.key3, BA.toCell
+local blockPartMap, placeCells, eraseCells, runCommit =
+    BA.blockPartMap, BA.placeCells, BA.eraseCells, BA.runCommit
+local needSelection, selCells, selBounds = BA.needSelection, BA.selCells, BA.selBounds
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- NOISE LIBRARY
+-- Gradient (Perlin-style) fBm plus cellular variants. Not Minecraft's exact
+-- OpenSimplex, but the same families with the same tuning knobs.
+-- ═══════════════════════════════════════════════════════════════════════════
+local N = {}
+
+-- Integer hash in [0,1). Uses bit32 so intermediates stay inside 32 bits;
+-- the arithmetic version overflowed double precision and returned garbage.
+local function hash3(i, j, k, seed)
+    local h = bit32.bxor(
+        bit32.band(i * 374761393, 0xFFFFFFFF),
+        bit32.band(j * 668265263, 0xFFFFFFFF),
+        bit32.band(k * 1274126177, 0xFFFFFFFF),
+        bit32.band((seed or 0) * 971, 0xFFFFFFFF)
+    )
+    h = bit32.bxor(h, bit32.rshift(h, 13))
+    h = bit32.band(h * 1274126177, 0xFFFFFFFF)
+    h = bit32.bxor(h, bit32.rshift(h, 16))
+    return h / 4294967296
+end
+
+-- pseudo-random unit-ish gradient for a lattice corner
+local function grad3(i, j, k, seed, x, y, z)
+    local a = hash3(i, j, k, seed) * 6.2831853
+    local b = hash3(i, j, k, (seed or 0) + 7919) * 6.2831853
+    local gx = math.cos(a) * math.sin(b)
+    local gy = math.sin(a) * math.sin(b)
+    local gz = math.cos(b)
+    return gx * x + gy * y + gz * z
+end
+
+local function fade(t) return t * t * t * (t * (t * 6 - 15) + 10) end
+local function lerp(a, b, t) return a + (b - a) * t end
+
+-- Gradient noise in [0,1]
+function N.gradient(x, y, z, seed)
+    local i, j, k = math.floor(x), math.floor(y), math.floor(z)
+    local fx, fy, fz = x - i, y - j, z - k
+    local u, v, w = fade(fx), fade(fy), fade(fz)
+    local n = lerp(
+        lerp(
+            lerp(grad3(i,   j,   k,   seed, fx,   fy,   fz),
+                 grad3(i+1, j,   k,   seed, fx-1, fy,   fz), u),
+            lerp(grad3(i,   j+1, k,   seed, fx,   fy-1, fz),
+                 grad3(i+1, j+1, k,   seed, fx-1, fy-1, fz), u), v),
+        lerp(
+            lerp(grad3(i,   j,   k+1, seed, fx,   fy,   fz-1),
+                 grad3(i+1, j,   k+1, seed, fx-1, fy,   fz-1), u),
+            lerp(grad3(i,   j+1, k+1, seed, fx,   fy-1, fz-1),
+                 grad3(i+1, j+1, k+1, seed, fx-1, fy-1, fz-1), u), v), w)
+    return math.clamp(n * 0.7 + 0.5, 0, 1)
+end
+
+-- Fractal Brownian motion: octaves / lacunarity / gain, as in the spec
+function N.fbm(x, y, z, seed, octaves, lacunarity, gain)
+    local amp, freq, sum, norm = 1, 1, 0, 0
+    for _ = 1, math.max(1, octaves) do
+        sum = sum + N.gradient(x * freq, y * freq, z * freq, seed) * amp
+        norm = norm + amp
+        amp = amp * gain
+        freq = freq * lacunarity
+    end
+    return norm > 0 and (sum / norm) or 0
+end
+
+-- Distances to the nearest feature points in the surrounding cells
+local function cellular(x, y, z, seed, jitter)
+    local i, j, k = math.floor(x), math.floor(y), math.floor(z)
+    local d1, d2 = math.huge, math.huge
+    for oi = -1, 1 do
+        for oj = -1, 1 do
+            for ok = -1, 1 do
+                local ci, cj, ck = i + oi, j + oj, k + ok
+                local px = ci + 0.5 + (hash3(ci, cj, ck, seed) - 0.5) * 2 * jitter
+                local py = cj + 0.5 + (hash3(ci, cj, ck, (seed or 0) + 13) - 0.5) * 2 * jitter
+                local pz = ck + 0.5 + (hash3(ci, cj, ck, (seed or 0) + 29) - 0.5) * 2 * jitter
+                local dx, dy, dz = px - x, py - y, pz - z
+                local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if d < d1 then d2 = d1 d1 = d elseif d < d2 then d2 = d end
+            end
+        end
+    end
+    return d1, d2
+end
+
+function N.worley(x, y, z, seed, jitter)
+    local d1 = cellular(x, y, z, seed, jitter)
+    return math.clamp(d1 / 1.1, 0, 1)
+end
+
+function N.voronoiEdges(x, y, z, seed, jitter)
+    local d1, d2 = cellular(x, y, z, seed, jitter)
+    return math.clamp((d2 - d1) / 0.75, 0, 1)
+end
+
+function N.metaball(x, y, z, seed, jitter, range)
+    local d1 = cellular(x, y, z, seed, jitter)
+    local r = math.max(range or 1, 0.001)
+    return math.clamp(1 - (d1 / (r * 1.4)), 0, 1)
+end
+
+function N.white(x, y, z, seed)
+    return hash3(math.floor(x), math.floor(y), math.floor(z), seed)
+end
+
+function N.splatter(x, y, z, seed, octaves, lacunarity, gain)
+    local jx = (hash3(math.floor(x), math.floor(y), math.floor(z), (seed or 0) + 3) - 0.5) * 2
+    local jz = (hash3(math.floor(x), math.floor(y), math.floor(z), (seed or 0) + 5) - 0.5) * 2
+    return N.fbm(x + jx, y, z + jz, seed, octaves, lacunarity, gain)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- NOISE PAINTER
+-- ═══════════════════════════════════════════════════════════════════════════
+local NP = {
+    kind = "Simplex",
+    scale = 12,
+    octaves = 3,
+    lacunarity = 2,
+    gain = 0.5,
+    seed = 1,
+    jitter = 1,
+    range = 1,
+    threshold = 50,
+    three_d = false,
+}
+
+local NOISE_KINDS = {
+    { "Simplex",       "Smooth rolling fBm. Good for terrain-like blends." },
+    { "Worley",        "Cellular blobs, each cell fading from its centre." },
+    { "Voronoi Edges", "Cracked lines along cell boundaries. Good for stone tiling." },
+    { "Metaball",      "Overlapping spheres with smooth joins, lava-lamp style." },
+    { "White Noise",   "Pure static, no structure at all." },
+    { "Splatter",      "Simplex with a random offset, for a speckled look." },
+}
+
+local function noiseAt(x, y, z)
+    local s = math.max(NP.scale, 0.001)
+    -- Offset off the integer lattice: gradient noise is exactly 0 there, so a
+    -- scale that divides the cell coordinate evenly would give flat output.
+    local nx, nz = x / s + 0.37, z / s + 0.61
+    local ny = NP.three_d and (y / s + 0.23) or 0.19
+    if NP.kind == "Simplex" then
+        return N.fbm(nx, ny, nz, NP.seed, NP.octaves, NP.lacunarity, NP.gain)
+    elseif NP.kind == "Worley" then
+        return N.worley(nx, ny, nz, NP.seed, NP.jitter)
+    elseif NP.kind == "Voronoi Edges" then
+        return N.voronoiEdges(nx, ny, nz, NP.seed, NP.jitter)
+    elseif NP.kind == "Metaball" then
+        return N.metaball(nx, ny, nz, NP.seed, NP.jitter, NP.range)
+    elseif NP.kind == "White Noise" then
+        return N.white(nx, ny, nz, NP.seed)
+    end
+    return N.splatter(nx, ny, nz, NP.seed, NP.octaves, NP.lacunarity, NP.gain)
+end
+
+-- Paints the selection using the palette when there is one, otherwise the
+-- active block against whatever is already there.
+local function runNoisePainter()
+    if not needSelection() then return end
+    runCommit("Noise Painter", function(rec)
+        local map = blockPartMap()
+        local want = {}
+        local pal = O.palette
+        local usePal = #pal > 1
+        local t = NP.threshold / 100
+        for _, c in ipairs(selCells()) do
+            if map[key3(c[1], c[2], c[3])] and O.maskAllows(map, c[1], c[2], c[3]) then
+                local n = noiseAt(c[1], c[2], c[3])
+                if usePal then
+                    -- spread the palette across the noise range
+                    local idx = math.clamp(math.floor(n * #pal) + 1, 1, #pal)
+                    want[#want + 1] = { c[1], c[2], c[3], pal[idx] }
+                elseif n >= t then
+                    want[#want + 1] = { c[1], c[2], c[3], O.activeBlock }
+                end
+            end
+        end
+        if #want == 0 then notifyWarn("Noise Painter", "Nothing matched", 3) return end
+        eraseCells(want, rec)
+        placeCells(want, rec)
+        notifyOK("Noise Painter", #want .. " blocks (" .. NP.kind .. ")", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SCRIPT BRUSH
+--
+-- Duvome textboxes are single-line, so scripts live as files in
+-- autoBuilder/scripts. The quick box is there for one-liners.
+-- ═══════════════════════════════════════════════════════════════════════════
+local SCRIPT_DIR = "autoBuilder/scripts"
+
+local SB = { file = nil, quick = "return blocks.stone", source = nil }
+local scriptDropdown, scriptHelp
+
+local function ensureScriptDir()
+    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+    if not isfolder(SCRIPT_DIR) then makefolder(SCRIPT_DIR) end
+end
+
+local function scriptFiles()
+    local out = {}
+    pcall(function()
+        ensureScriptDir()
+        for _, f in ipairs(listfiles(SCRIPT_DIR)) do
+            local low = f:lower()
+            if low:sub(-4) == ".lua" or low:sub(-4) == ".txt" then
+                out[#out + 1] = f:match("[^/\\]+$")
+            end
+        end
+    end)
+    if #out == 0 then out = { "(none saved)" } end
+    return out
+end
+
+-- Builds the sandbox a script runs inside. `writes` collects setBlock calls.
+local function makeEnv(map, writes)
+    local blocksTable = setmetatable({}, {
+        -- blocks.stone -> "stone"; unknown names still resolve to themselves
+        __index = function(_, k) return tostring(k) end,
+    })
+
+    local function getBlock(x, y, z)
+        local p = map[key3(x, y, z)]
+        return p and p.Name or "air"
+    end
+
+    local function setBlock(x, y, z, name)
+        if not name or name == "air" then return end
+        writes[#writes + 1] = { x, y, z, tostring(name) }
+    end
+
+    local function isSolid(name)
+        return name ~= nil and name ~= "air" and name ~= ""
+    end
+
+    local function getHighestBlockYAt(x, z)
+        for y = 128, -64, -1 do
+            if map[key3(x, y, z)] then return y end
+        end
+        return -64
+    end
+
+    return {
+        blocks = blocksTable,
+        getBlock = getBlock,
+        setBlock = setBlock,
+        isSolid = isSolid,
+        getHighestBlockYAt = getHighestBlockYAt,
+        getSimplexNoise = function(x, y, z, seed) return N.gradient(x / 8, y / 8, z / 8, seed or 0) end,
+        getVoronoiEdgeNoise = function(x, y, z, seed) return N.voronoiEdges(x / 8, y / 8, z / 8, seed or 0, 1) end,
+        getWorleyNoise = function(x, y, z, seed) return N.worley(x / 8, y / 8, z / 8, seed or 0, 1) end,
+        -- read-only maths helpers; no game access from inside a script
+        math = math, string = string, table = table,
+        tostring = tostring, tonumber = tonumber, ipairs = ipairs, pairs = pairs,
+        print = function(...) end,
+    }
+end
+
+local function runScript(source)
+    if not source or source == "" then
+        notifyWarn("Script Brush", "Pick a script file or type a quick script", 4)
+        return
+    end
+    if not needSelection() then return end
+
+    -- Wrap so both `return blocks.x` and multi-statement scripts work.
+    local chunk, err = loadstring("return function(x, y, z)\n" .. source .. "\nend")
+    if not chunk then
+        notifyErr("Script Brush", "Compile error: " .. tostring(err), 8)
+        pcall(function()
+            scriptHelp:Set({ Title = "Script Error", Content = tostring(err) })
+        end)
+        return
+    end
+    runCommit("Script Brush", function(rec)
+        local map = blockPartMap()
+        local writes = {}
+        local env = makeEnv(map, writes)
+
+        -- The sandbox has to be attached to the chunk BEFORE it runs, so the
+        -- closure it returns inherits it. Running the chunk first would build
+        -- the script body against the real globals instead.
+        if setfenv then setfenv(chunk, env) end
+        local okc, body = pcall(chunk)
+        if not okc or type(body) ~= "function" then
+            notifyErr("Script Brush", "Script did not load: " .. tostring(body), 6)
+            return
+        end
+
+        local errors, ran = 0, 0
+        for _, c in ipairs(selCells()) do
+            if O.maskAllows(map, c[1], c[2], c[3]) then
+                local ok, res = pcall(body, c[1], c[2], c[3])
+                ran = ran + 1
+                if not ok then
+                    errors = errors + 1
+                    if errors == 1 then
+                        notifyErr("Script Brush", "Runtime error: " .. tostring(res), 8)
+                    end
+                elseif res ~= nil and res ~= false then
+                    -- a returned block name places at the target cell
+                    writes[#writes + 1] = { c[1], c[2], c[3], tostring(res) }
+                end
+            end
+            if ran % 400 == 0 then task.wait() end
+        end
+
+        if #writes == 0 then
+            notifyWarn("Script Brush", "Script produced no blocks", 4)
+            return
+        end
+        eraseCells(writes, rec)
+        placeCells(writes, rec)
+        notifyOK("Script Brush", #writes .. " blocks from " .. ran .. " cells", 6)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════════════════
+tabEdit:CreateSection("Noise Painter", { Collapsible = true })
+
+NP.names = {}
+for _, e in ipairs(NOISE_KINDS) do NP.names[#NP.names + 1] = e[1] end
+
+tabEdit:CreateDropdown({
+    Name = "Noise Type",
+    Options = NP.names, CurrentOption = { "Simplex" }, MultipleOptions = false,
+    Flag = "NPKind",
+    Callback = function(v)
+        NP.kind = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(NOISE_KINDS) do
+            if e[1] == NP.kind then
+                pcall(function() NP.desc:Set({ Title = e[1], Content = e[2] }) end)
+                break
+            end
+        end
+    end
+})
+
+NP.desc = tabEdit:CreateParagraph({ Title = NOISE_KINDS[1][1], Content = NOISE_KINDS[1][2] })
+
+for _, sl in ipairs({
+    { "Noise Scale",  2, 64,  1, 12, "NPScale",  function(v) NP.scale = v end },
+    { "Octaves",      1,  6,  1, 3,  "NPOct",    function(v) NP.octaves = v end },
+    { "Lacunarity",   1,  4,  1, 2,  "NPLac",    function(v) NP.lacunarity = v end },
+    { "Gain",         1, 10,  1, 5,  "NPGain",   function(v) NP.gain = v / 10 end },
+    { "Jitter",       0, 10,  1, 10, "NPJit",    function(v) NP.jitter = v / 10 end },
+    { "Threshold",    0, 100, 5, 50, "NPThresh", function(v) NP.threshold = v end },
+    { "Noise Seed",   1, 10000, 1, 1, "NPSeed",  function(v) NP.seed = v end },
+}) do
+    tabEdit:CreateSlider({
+        Name = sl[1], Range = { sl[2], sl[3] }, Increment = sl[4],
+        CurrentValue = sl[5], Flag = sl[6], Callback = sl[7]
+    })
+end
+
+tabEdit:CreateToggle({
+    Name = "3D Noise",
+    CurrentValue = false,
+    Tooltip = "Vary the pattern with height too, so vertical faces get textured instead of striped.",
+    Callback = function(v) NP.three_d = v end
+})
+
+tabEdit:CreateButton({
+    Name = "Run Noise Painter",
+    Tooltip = "Paint the selection with the noise. Uses the Palette if it has 2+ blocks, otherwise the Active Block above the threshold.",
+    Callback = runNoisePainter
+})
+
+tabEdit:CreateSection("Script Brush", { Collapsible = true })
+
+scriptHelp = tabEdit:CreateParagraph({
+    Title = "Script Brush",
+    Content = "Runs Lua for every block in the selection.\n"
+        .. "Variables: x, y, z\n"
+        .. "Return a block name to place it there.\n"
+        .. "API: getBlock(x,y,z), setBlock(x,y,z,name), isSolid(name),\n"
+        .. "getHighestBlockYAt(x,z), getSimplexNoise(x,y,z,seed),\n"
+        .. "getVoronoiEdgeNoise(...), getWorleyNoise(...), blocks.<name>\n"
+        .. "Put .lua files in autoBuilder/scripts for longer scripts.",
+})
+
+tabEdit:CreateInput({
+    Name = "Quick Script",
+    Default = "return blocks.stone",
+    Callback = function(t) if t and t ~= "" then SB.quick = t end end
+})
+
+tabEdit:CreateButton({
+    Name = "Run Quick Script",
+    Tooltip = "Compile and run the one-liner above over the selection.",
+    Callback = function() runScript(SB.quick) end
+})
+
+scriptDropdown = tabEdit:CreateDropdown({
+    Name = "Script File",
+    Options = scriptFiles(), CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        if not name or name == "(none saved)" then return end
+        local ok, src = pcall(function() return readfile(SCRIPT_DIR .. "/" .. name) end)
+        if not ok then notifyErr("Script Brush", "Could not read " .. name, 5) return end
+        SB.file = name
+        SB.source = src
+        notifyOK("Script Loaded", name .. " (" .. #src .. " chars)", 4)
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Run Script File",
+    Tooltip = "Run the loaded script file over the selection.",
+    Callback = function() runScript(SB.source) end
+})
+
+tabEdit:CreateButton({
+    Name = "Refresh Scripts",
+    Tooltip = "Rescan autoBuilder/scripts.",
+    Callback = function()
+        pcall(function() scriptDropdown:Refresh(scriptFiles()) end)
+        notify("Scripts", "List refreshed", 2, "info")
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Write Example Script",
+    Tooltip = "Drop a commented example into autoBuilder/scripts to start from.",
+    Callback = function()
+        ensureScriptDir()
+        local example = [[
+-- Example: grass on top, dirt just under it, stone deeper.
+-- Runs once per block in the selection. x, y, z are that block's cell.
+
+local here = getBlock(x, y, z)
+if not isSolid(here) then return end
+
+local top = getHighestBlockYAt(x, z)
+
+if y == top then
+    return blocks.grass
+elseif y > top - 3 then
+    return blocks.dirt
+else
+    -- speckle the deep stone with a second material
+    if getSimplexNoise(x, y, z, 1337) > 0.6 then
+        return blocks.sand
+    end
+    return blocks.stone
+end
+]]
+        local ok, err = pcall(function()
+            writefile(SCRIPT_DIR .. "/example.lua", example)
+        end)
+        if not ok then notifyErr("Scripts", tostring(err), 5) return end
+        pcall(function() scriptDropdown:Refresh(scriptFiles()) end)
+        notifyOK("Scripts", "example.lua written", 5)
+    end
+})
+
+end
+
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
 Duvome:AddWatch("Building", function()
