@@ -8214,6 +8214,9 @@ BuilderAPI.nearestBlockName = function(col)
     local list = nearestBlocks(col, 1)
     return list[1] and list[1].name or nil
 end
+BuilderAPI.nearestBlockEntry = function(col)
+    return nearestBlocks(col, 1)[1]
+end
 BuilderAPI.toOklab = toOklab
 
 colTab:CreateSection("Tool Presets", { Collapsible = true })
@@ -10588,13 +10591,25 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- IMAGE -> BLOCKS
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Memoised per distinct pixel colour: returns the block name and the colour
+-- that block actually is, so the preview shows the quantised result.
 local function blockFor(r, g, b)
     local k = r .. "," .. g .. "," .. b
     local hit = IMG.match[k]
-    if hit then return hit end
-    local name = BA.nearestBlockName(Color3.fromRGB(r, g, b)) or O.activeBlock
-    IMG.match[k] = name
-    return name
+    if hit then return hit[1], hit[2] end
+    local e = BA.nearestBlockEntry(Color3.fromRGB(r, g, b))
+    local rec = e and { e.name, e.col } or { O.activeBlock, Color3.fromRGB(r, g, b) }
+    IMG.match[k] = rec
+    return rec[1], rec[2]
+end
+
+-- ── preview ────────────────────────────────────────────────────────────────
+local PREVIEW_FOLDER = "IABImagePreview"
+local MAX_PREVIEW = 12000
+
+local function clearImagePreview()
+    local f = Workspace:FindFirstChild(PREVIEW_FOLDER)
+    if f then f:Destroy() end
 end
 
 local function loadImage()
@@ -10610,7 +10625,7 @@ local function loadImage()
             say("Image", "Download failed.")
             return
         end
-        say("Image", "Decoding " .. #data .. " bytes...")
+        say("Image", "Decoding " .. #data .. " bytes...\nLarge images can take 10-60 seconds. The game may look frozen.")
         local ok2, img = pcall(decodePNG, data)
         if not ok2 then
             -- pcall prefixes "file:line:", which is noise for a URL problem
@@ -10646,48 +10661,89 @@ local function sampled()
     return out, tw, th
 end
 
+-- Resolves the image into world cells. Each entry is {x, y, z, name, colour}.
+local function imageCells()
+    local grid, tw, th = sampled()
+    local ax, ay, az = 0, 0, 0
+    local part = targetPart()
+    if part then
+        ax, ay, az = toCell(part.Position)
+    else
+        local _, _, hrp = getCharacterParts()
+        if hrp then ax, ay, az = toCell(hrp.Position) end
+    end
+
+    local cells = {}
+    for py = 1, th do
+        for px = 1, tw do
+            local px4 = grid[py][px]
+            local r, g, b, a = px4[1], px4[2], px4[3], px4[4]
+            if a >= 128 then                       -- skip transparent pixels
+                local name, col = blockFor(r, g, b)
+                if IMG.mode == "Pixel Art (Wall)" then
+                    -- image rows run top-down, world Y runs up
+                    cells[#cells + 1] = { ax + px, ay + (th - py), az, name, col }
+                elseif IMG.mode == "Pixel Art (Floor)" then
+                    cells[#cells + 1] = { ax + px, ay, az + py, name, col }
+                else
+                    -- Heightmap: brightness drives column height
+                    local lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+                    local hgt = math.max(1, math.floor(lum * IMG.maxHeight + 0.5))
+                    for y = 1, hgt do
+                        cells[#cells + 1] = { ax + px, ay + y, az + py, name, col }
+                    end
+                end
+            end
+        end
+        if py % 8 == 0 then task.wait() end
+    end
+    return cells, tw, th
+end
+
+local function previewImage()
+    if not IMG.cache then notifyWarn("Image", "Load an image first", 4) return end
+    task.spawn(function()
+        clearImagePreview()
+        say("Image", "Building preview...")
+        local cells, tw, th = imageCells()
+        if #cells == 0 then
+            notifyWarn("Image", "Nothing to preview (all transparent?)", 4)
+            return
+        end
+        local folder = Instance.new("Folder")
+        folder.Name = PREVIEW_FOLDER
+        folder.Parent = Workspace
+        local drawn = 0
+        for i, c in ipairs(cells) do
+            if drawn >= MAX_PREVIEW then break end
+            local p = Instance.new("Part")
+            p.Anchored = true p.CanCollide = false p.CanQuery = false
+            p.Size = Vector3.new(3, 3, 3)
+            p.Position = Vector3.new(c[1] * 3, c[2] * 3, c[3] * 3)
+            p.Color = c[5] or Color3.fromRGB(200, 200, 200)
+            p.Material = Enum.Material.SmoothPlastic
+            p.Transparency = 0.25
+            p.Parent = folder
+            drawn = drawn + 1
+            if i % 500 == 0 then task.wait() end
+        end
+        local note = drawn .. " of " .. #cells .. " ghost blocks"
+        if drawn < #cells then note = note .. " (preview capped)" end
+        say("Preview", note .. "\n" .. tw .. " x " .. th
+            .. "\nHappy with it? Press Build. Otherwise Clear Preview.")
+        notifyOK("Image Preview", note, 6)
+    end)
+end
+
 local function buildImage()
     if not IMG.cache then
         notifyWarn("Image", "Load an image first", 4)
         return
     end
     runCommit("Image", function(rec)
-        local grid, tw, th = sampled()
-        local ax, ay, az = 0, 0, 0
-        local part = targetPart()
-        if part then
-            ax, ay, az = toCell(part.Position)
-        else
-            local _, _, hrp = getCharacterParts()
-            if hrp then ax, ay, az = toCell(hrp.Position) end
-        end
-
-        local cells = {}
-        for py = 1, th do
-            for px = 1, tw do
-                local px4 = grid[py][px]
-                local r, g, b, a = px4[1], px4[2], px4[3], px4[4]
-                if a >= 128 then                       -- skip transparent pixels
-                    local name = blockFor(r, g, b)
-                    if IMG.mode == "Pixel Art (Wall)" then
-                        -- image rows run top-down, world Y runs up
-                        cells[#cells + 1] = { ax + px, ay + (th - py), az, name }
-                    elseif IMG.mode == "Pixel Art (Floor)" then
-                        cells[#cells + 1] = { ax + px, ay, az + py, name }
-                    else
-                        -- Heightmap: brightness drives column height
-                        local lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-                        local hgt = math.max(1, math.floor(lum * IMG.maxHeight + 0.5))
-                        for y = 1, hgt do
-                            cells[#cells + 1] = { ax + px, ay + y, az + py, name }
-                        end
-                    end
-                end
-            end
-            if py % 8 == 0 then task.wait() end
-        end
-
+        local cells, tw, th = imageCells()
         if #cells == 0 then notifyWarn("Image", "Nothing to build (all transparent?)", 4) return end
+        clearImagePreview()
         say("Image", "Placing " .. #cells .. " blocks...")
         placeCells(cells, rec)
         notifyOK("Image", #cells .. " blocks from " .. tw .. "x" .. th, 6)
@@ -10771,6 +10827,21 @@ tabEdit:CreateSlider({
 tabEdit:CreateSlider({
     Name = "Heightmap Max Height", Range = { 2, 64 }, Increment = 1, CurrentValue = 24,
     Suffix = "blk", Flag = "IMGH", Callback = function(v) IMG.maxHeight = v end
+})
+
+tabEdit:CreateButton({
+    Name = "Preview Image at Cursor",
+    Tooltip = "Show the image as coloured ghost blocks first, without placing anything.",
+    Callback = previewImage
+})
+
+tabEdit:CreateButton({
+    Name = "Clear Image Preview",
+    Tooltip = "Remove the ghost blocks.",
+    Callback = function()
+        clearImagePreview()
+        notify("Image", "Preview cleared", 2, "info")
+    end
 })
 
 tabEdit:CreateButton({
