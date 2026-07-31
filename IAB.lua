@@ -10748,7 +10748,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 do
 
-local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 320, Height = 420, Columns = true, Side = "right" })
+local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 240, Height = 420, Columns = true, Side = "right" })
 BuilderAPI.shapePanel = shapePanel
 local L, R = shapePanel:Left(), shapePanel:Right()
 

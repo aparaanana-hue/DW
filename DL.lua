@@ -4736,7 +4736,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				local Panel = Create("Frame", {
 					Name                   = "SidePanel",
 					BackgroundColor3       = Color3.fromRGB(12, 4, 24),
-					BackgroundTransparency = 0.05,
+					BackgroundTransparency = 0,
 					BorderSizePixel        = 0,
 					Size                   = UDim2.new(0, width, 0, height),
 					Position               = UDim2.new(0, 0, 0, 0),
@@ -4845,6 +4845,26 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					end
 				end)
 
+				-- The element factory never sets ZIndex, so everything it builds
+				-- defaults to 1 while this frame sits at 100. Under Sibling
+				-- ZIndex behaviour the panel background then draws OVER its own
+				-- controls, which reads as a dim sheet across the panel. Lift
+				-- every descendant above the frame.
+				local function liftZ()
+					for _, d in ipairs(Panel:GetDescendants()) do
+						if d:IsA("GuiObject") and d.ZIndex < 102 then
+							d.ZIndex = d.ZIndex + 102
+						end
+					end
+				end
+				AddConnection(Panel.DescendantAdded, function(d)
+					if d:IsA("GuiObject") then
+						task.defer(function()
+							if d.Parent and d.ZIndex < 102 then d.ZIndex = d.ZIndex + 102 end
+						end)
+					end
+				end)
+
 				local api = GetElements(cfg.Columns and LeftCol or Content)
 				if cfg.Columns then
 					local l, r = GetElements(LeftCol), GetElements(RightCol)
@@ -4854,6 +4874,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 				function api:Show()
 					isOpen = true
+					liftZ()
 					-- Step aside if the Configs or avatar panel already holds this
 					-- side, the same way those two avoid each other.
 					local PS = DuvomeLibrary._panelState
@@ -4869,7 +4890,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Panel.Visible = true
 					TweenService:Create(Panel,
 						TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-						{BackgroundTransparency = 0.05, Position = UDim2.new(0, landX, 0, centreY())}
+						{BackgroundTransparency = 0, Position = UDim2.new(0, landX, 0, centreY())}
 					):Play()
 				end
 				function api:Hide() isOpen = false Panel.Visible = false end
