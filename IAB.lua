@@ -9667,6 +9667,445 @@ tabEdit:CreateButton({
 
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FLUID BALL, MODELLING, GAUSSIAN SMOOTH / WELD / MELT
+--
+-- Own do-block: the main chunk has only ~39 locals of headroom, so every module
+-- must keep its declarations inside a scope of its own. See check_locals.py.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local B, O = BA.B, BA.O
+local key3, toCell, targetPart = BA.key3, BA.toCell, BA.targetPart
+local blockPartMap, placeCells, eraseCells, runCommit =
+    BA.blockPartMap, BA.placeCells, BA.eraseCells, BA.runCommit
+local needSelection, selBounds, selCells = BA.needSelection, BA.selBounds, BA.selCells
+
+local M = {
+    fluid = "water",
+    fluidRadius = 3,
+    flowLength = 6,
+    modelMode = "Convex Hull",
+    nodes = {},
+    smoothStrength = 2,
+    blockRatio = 100,
+    weldStrength = 3,
+    weldThreshold = 50,
+}
+
+local fluidPara, modelPara
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FLUID BALL
+-- Block names are discovered at runtime rather than hardcoded, since the
+-- game's internal names are not guaranteed to be "water"/"lava"/"snow".
+-- ═══════════════════════════════════════════════════════════════════════════
+local function findFluidNames()
+    local found = { water = nil, lava = nil, snow = nil }
+    local folder = ReplicatedStorage:FindFirstChild("blocks")
+    if not folder then return found end
+    for _, v in ipairs(folder:GetChildren()) do
+        local low = v.Name:lower()
+        if not found.water and low:find("water") then found.water = v.Name end
+        if not found.lava and (low:find("lava") or low:find("magma")) then found.lava = v.Name end
+        if not found.snow and low:find("snow") then found.snow = v.Name end
+    end
+    return found
+end
+
+local function reportFluids()
+    local f = findFluidNames()
+    local lines = {}
+    for _, k in ipairs({ "water", "lava", "snow" }) do
+        lines[#lines + 1] = k .. ": " .. (f[k] or "not found in this game")
+    end
+    pcall(function()
+        fluidPara:Set({ Title = "Fluid Blocks", Content = table.concat(lines, "\n") })
+    end)
+    return f
+end
+
+-- Places a ball of fluid, then lets it run downhill across the surface.
+local function fluidBall()
+    local part = targetPart()
+    if not part then notifyWarn("Fluid Ball", "Point at a block first", 3) return end
+    local names = findFluidNames()
+    local blockName = names[M.fluid]
+    if not blockName then
+        notifyErr("Fluid Ball", "No " .. M.fluid .. " block exists in this game", 5)
+        reportFluids()
+        return
+    end
+
+    runCommit("Fluid Ball", function(rec)
+        local map = blockPartMap()
+        local cx, cy, cz = toCell(part.Position)
+        local r = M.fluidRadius
+        local seen, sources, cells = {}, {}, {}
+
+        -- the initial ball, only where there is space
+        for dx = -r, r do
+            for dy = -r, r do
+                for dz = -r, r do
+                    if dx * dx + dy * dy + dz * dz <= r * r then
+                        local x, y, z = cx + dx, cy + dy + r, cz + dz
+                        local k = key3(x, y, z)
+                        if not map[k] and not seen[k] then
+                            seen[k] = true
+                            cells[#cells + 1] = { x, y, z, blockName }
+                            sources[#sources + 1] = { x, y, z }
+                        end
+                    end
+                end
+            end
+        end
+
+        -- spread outward and downward, the way a fluid settles on terrain
+        local frontier = sources
+        for _ = 1, M.flowLength do
+            local nextF = {}
+            for _, c in ipairs(frontier) do
+                for _, d in ipairs({ {1,0,0},{-1,0,0},{0,0,1},{0,0,-1},{0,-1,0} }) do
+                    local x, y, z = c[1] + d[1], c[2] + d[2], c[3] + d[3]
+                    local k = key3(x, y, z)
+                    -- flow into empty space that has something to sit on
+                    if not map[k] and not seen[k] and (map[key3(x, y - 1, z)] or d[2] == -1) then
+                        seen[k] = true
+                        cells[#cells + 1] = { x, y, z, blockName }
+                        nextF[#nextF + 1] = { x, y, z }
+                    end
+                end
+            end
+            frontier = nextF
+            if #frontier == 0 then break end
+        end
+
+        if #cells == 0 then notifyWarn("Fluid Ball", "No space to place fluid", 3) return end
+        placeCells(cells, rec)
+        notifyOK("Fluid Ball", #cells .. " x " .. blockName, 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- MODELLING
+-- Convex Hull: every triple of nodes forms a candidate face; a triple is a real
+-- hull face when all other nodes sit on one side of its plane. A cell is inside
+-- when it is behind every face.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function hullFaces(pts)
+    local faces = {}
+    local n = #pts
+    for i = 1, n - 2 do
+        for j = i + 1, n - 1 do
+            for k = j + 1, n do
+                local a, b, c = pts[i], pts[j], pts[k]
+                local ux, uy, uz = b[1] - a[1], b[2] - a[2], b[3] - a[3]
+                local vx, vy, vz = c[1] - a[1], c[2] - a[2], c[3] - a[3]
+                -- plane normal from the cross product
+                local nx = uy * vz - uz * vy
+                local ny = uz * vx - ux * vz
+                local nz = ux * vy - uy * vx
+                if nx ~= 0 or ny ~= 0 or nz ~= 0 then
+                    local pos, neg = false, false
+                    for m2 = 1, n do
+                        if m2 ~= i and m2 ~= j and m2 ~= k then
+                            local p = pts[m2]
+                            local s = nx * (p[1] - a[1]) + ny * (p[2] - a[2]) + nz * (p[3] - a[3])
+                            if s > 1e-9 then pos = true elseif s < -1e-9 then neg = true end
+                        end
+                    end
+                    -- All remaining points on one side => this is a hull face.
+                    -- Those points are the interior, so the outward normal is
+                    -- the one pointing AWAY from them: flip when they are on
+                    -- the positive side. Getting this backwards makes every
+                    -- test fail and the hull come out empty.
+                    if not (pos and neg) then
+                        local sign = pos and -1 or 1
+                        faces[#faces + 1] = { a, nx * sign, ny * sign, nz * sign }
+                    end
+                end
+            end
+        end
+    end
+    return faces
+end
+
+local function buildModel()
+    if #M.nodes < 3 then
+        notifyWarn("Modelling", "Add at least 3 nodes", 4)
+        return
+    end
+    runCommit("Modelling", function(rec)
+        local pts = M.nodes
+        local minX, maxX = math.huge, -math.huge
+        local minY, maxY = math.huge, -math.huge
+        local minZ, maxZ = math.huge, -math.huge
+        for _, p in ipairs(pts) do
+            minX = math.min(minX, p[1]) maxX = math.max(maxX, p[1])
+            minY = math.min(minY, p[2]) maxY = math.max(maxY, p[2])
+            minZ = math.min(minZ, p[3]) maxZ = math.max(maxZ, p[3])
+        end
+
+        local cells = {}
+        if M.modelMode == "Convex Hull" then
+            local faces = hullFaces(pts)
+            if #faces == 0 then
+                notifyWarn("Modelling", "Nodes are flat or in a line; hull needs volume", 5)
+                return
+            end
+            for x = minX, maxX do
+                for y = minY, maxY do
+                    for z = minZ, maxZ do
+                        local inside = true
+                        for _, f in ipairs(faces) do
+                            local a = f[1]
+                            local s = f[2] * (x - a[1]) + f[3] * (y - a[2]) + f[4] * (z - a[3])
+                            if s > 1e-9 then inside = false break end
+                        end
+                        if inside then cells[#cells + 1] = { x, y, z, O.activeBlock } end
+                    end
+                end
+            end
+        else
+            -- Triangle Fan: every triangle shares node 1, sampled barycentrically
+            local seen = {}
+            local a = pts[1]
+            for i = 2, #pts - 1 do
+                local b, c = pts[i], pts[i + 1]
+                local steps = 40
+                for u = 0, steps do
+                    for v = 0, steps - u do
+                        local wu, wv = u / steps, v / steps
+                        local ww = 1 - wu - wv
+                        local x = math.floor(a[1] * ww + b[1] * wu + c[1] * wv + 0.5)
+                        local y = math.floor(a[2] * ww + b[2] * wu + c[2] * wv + 0.5)
+                        local z = math.floor(a[3] * ww + b[3] * wu + c[3] * wv + 0.5)
+                        local k = key3(x, y, z)
+                        if not seen[k] then
+                            seen[k] = true
+                            cells[#cells + 1] = { x, y, z, O.activeBlock }
+                        end
+                    end
+                end
+            end
+        end
+
+        if #cells == 0 then notifyWarn("Modelling", "Nothing produced", 3) return end
+        placeCells(cells, rec)
+        notifyOK("Modelling", M.modelMode .. ": " .. #cells .. " blocks", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- GAUSSIAN SMOOTH / WELD / MELT
+-- All three blur a column height field. Smooth keeps the block count, Weld
+-- biases upward (adds mass), Melt biases downward (removes it).
+-- ═══════════════════════════════════════════════════════════════════════════
+local function columnHeights(map, minX, maxX, minY, maxY, minZ, maxZ)
+    local h, types = {}, {}
+    for x = minX, maxX do
+        for z = minZ, maxZ do
+            local top = nil
+            for y = maxY, minY, -1 do
+                if map[key3(x, y, z)] then top = y break end
+            end
+            local k = x .. "," .. z
+            h[k] = top or (minY - 1)
+            if top then types[k] = map[key3(x, top, z)].Name end
+        end
+    end
+    return h, types
+end
+
+-- separable-ish Gaussian over the column grid
+local function blurHeights(h, minX, maxX, minZ, maxZ, strength)
+    local out = {}
+    local rad = math.max(1, math.floor(strength))
+    local sigma = math.max(strength, 0.5)
+    for x = minX, maxX do
+        for z = minZ, maxZ do
+            local sum, wsum = 0, 0
+            for ox = -rad, rad do
+                for oz = -rad, rad do
+                    local v = h[(x + ox) .. "," .. (z + oz)]
+                    if v then
+                        local w = math.exp(-(ox * ox + oz * oz) / (2 * sigma * sigma))
+                        sum = sum + v * w
+                        wsum = wsum + w
+                    end
+                end
+            end
+            out[x .. "," .. z] = wsum > 0 and (sum / wsum) or h[x .. "," .. z]
+        end
+    end
+    return out
+end
+
+local function gaussianOp(mode)
+    if not needSelection() then return end
+    runCommit(mode, function(rec)
+        local map = blockPartMap()
+        local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+        local h, types = columnHeights(map, minX, maxX, minY, maxY, minZ, maxZ)
+        local blurred = blurHeights(h, minX, maxX, minZ, maxZ, M.smoothStrength)
+
+        -- Smooth preserves total mass; the ratio nudges it up or down.
+        local before, after = 0, 0
+        for k, v in pairs(h) do before = before + math.max(v - minY + 1, 0) end
+        for k, v in pairs(blurred) do after = after + math.max(v - minY + 1, 0) end
+        local bias = 0
+        if mode == "Smooth" and after > 0 then
+            local target = before * (M.blockRatio / 100)
+            bias = (target - after) / math.max(#selCells() / math.max(maxY - minY + 1, 1), 1)
+        elseif mode == "Weld" then
+            bias = M.weldStrength
+        elseif mode == "Melt" then
+            bias = -M.weldStrength
+        end
+
+        local add, remove = {}, {}
+        for k, target in pairs(blurred) do
+            local x, z = k:match("(-?%d+),(-?%d+)")
+            x, z = tonumber(x), tonumber(z)
+            local newTop = math.floor(target + bias + 0.5)
+            local oldTop = h[k]
+            local name = types[k] or O.activeBlock
+            if newTop > oldTop then
+                for y = oldTop + 1, math.min(newTop, maxY) do
+                    add[#add + 1] = { x, y, z, name }
+                end
+            elseif newTop < oldTop then
+                for y = math.max(newTop + 1, minY), oldTop do
+                    remove[#remove + 1] = { x, y, z }
+                end
+            end
+        end
+
+        if #add == 0 and #remove == 0 then
+            notifyWarn(mode, "Nothing changed; try a higher strength", 3)
+            return
+        end
+        if #remove > 0 then eraseCells(remove, rec) end
+        if #add > 0 then placeCells(add, rec) end
+        notifyOK(mode, "+" .. #add .. " / -" .. #remove .. " blocks", 5)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════════════════
+tabEdit:CreateSection("Fluid Ball", { Collapsible = true })
+
+fluidPara = tabEdit:CreateParagraph({
+    Title = "Fluid Blocks",
+    Content = "Press Detect to see which fluid blocks this game actually has.",
+})
+
+tabEdit:CreateButton({
+    Name = "Detect Fluid Blocks",
+    Tooltip = "Scan the game's block list for water, lava and snow.",
+    Callback = function() reportFluids() end
+})
+
+tabEdit:CreateDropdown({
+    Name = "Fluid Type",
+    Options = { "water", "lava", "snow" }, CurrentOption = { "water" }, MultipleOptions = false,
+    Flag = "FBType",
+    Callback = function(v) M.fluid = (typeof(v) == "table") and v[1] or v end
+})
+
+tabEdit:CreateSlider({
+    Name = "Fluid Radius", Range = { 1, 10 }, Increment = 1, CurrentValue = 3,
+    Suffix = "blk", Flag = "FBRad", Callback = function(v) M.fluidRadius = v end
+})
+tabEdit:CreateSlider({
+    Name = "Flow Length", Range = { 0, 24 }, Increment = 1, CurrentValue = 6,
+    Suffix = "blk", Flag = "FBFlow", Callback = function(v) M.flowLength = v end
+})
+tabEdit:CreateButton({
+    Name = "Place Fluid at Cursor",
+    Tooltip = "Drop a ball of fluid above the block you are pointing at and let it run downhill.",
+    Callback = fluidBall
+})
+
+tabEdit:CreateSection("Modelling", { Collapsible = true })
+
+modelPara = tabEdit:CreateParagraph({
+    Title = "Model Nodes",
+    Content = "No nodes. Point at blocks and press Add Node to outline a shape.",
+})
+
+tabEdit:CreateDropdown({
+    Name = "Model Mode",
+    Options = { "Convex Hull", "Triangle Fan" }, CurrentOption = { "Convex Hull" },
+    MultipleOptions = false, Flag = "MDMode",
+    Callback = function(v) M.modelMode = (typeof(v) == "table") and v[1] or v end
+})
+
+tabEdit:CreateButton({
+    Name = "Add Model Node",
+    Tooltip = "Append the block under your cursor to the model.",
+    Callback = function()
+        local part = targetPart()
+        if not part then notifyWarn("Modelling", "Point at a block first", 3) return end
+        local x, y, z = toCell(part.Position)
+        M.nodes[#M.nodes + 1] = { x, y, z }
+        pcall(function()
+            modelPara:Set({ Title = "Model Nodes", Content = #M.nodes .. " nodes placed." })
+        end)
+        notifyOK("Modelling", "Node " .. #M.nodes, 2)
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Clear Model Nodes",
+    Tooltip = "Remove every model node.",
+    Callback = function()
+        M.nodes = {}
+        pcall(function()
+            modelPara:Set({ Title = "Model Nodes", Content = "No nodes." })
+        end)
+        notify("Modelling", "Nodes cleared", 2, "info")
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Build Model",
+    Tooltip = "Fill the shape described by the nodes with the Active Block.",
+    Callback = buildModel
+})
+
+tabEdit:CreateSection("Gaussian Terrain", { Collapsible = true })
+
+tabEdit:CreateParagraph({
+    Title = "Gaussian Terrain",
+    Content = "Blurs the surface height of the selection. Smooth keeps the block count, Weld adds mass, Melt removes it.",
+})
+
+tabEdit:CreateSlider({
+    Name = "Smoothing Strength", Range = { 1, 8 }, Increment = 1, CurrentValue = 2,
+    Flag = "GSStr", Callback = function(v) M.smoothStrength = v end
+})
+tabEdit:CreateSlider({
+    Name = "Block Ratio", Range = { 80, 120 }, Increment = 1, CurrentValue = 100,
+    Suffix = "%", Flag = "GSRatio", Callback = function(v) M.blockRatio = v end
+})
+tabEdit:CreateSlider({
+    Name = "Weld / Melt Amount", Range = { 1, 10 }, Increment = 1, CurrentValue = 3,
+    Suffix = "blk", Flag = "GSWeld", Callback = function(v) M.weldStrength = v end
+})
+
+for _, mode in ipairs({ "Smooth", "Weld", "Melt" }) do
+    tabEdit:CreateButton({
+        Name = mode .. " (Gaussian)",
+        Tooltip = "Gaussian " .. mode:lower() .. " over the selection's surface.",
+        Callback = function() gaussianOp(mode) end
+    })
+end
+
+end
+
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
 Duvome:AddWatch("Building", function()
