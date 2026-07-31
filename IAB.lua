@@ -3507,6 +3507,17 @@ structTab:CreateDropdown({
     end
 })
 
+structTab:CreateToggle({
+    Name = "Shape Panel",
+    CurrentValue = false,
+    Tooltip = "Floating two-column panel with every shape parameter. Drag it by its title bar.",
+    Callback = function(on)
+        local sp = BuilderAPI.shapePanel
+        if not sp then return end
+        if on then sp:Show() else sp:Hide() end
+    end
+})
+
 local structBlockDropdown = structTab:CreateDropdown({
     Name = "Select Block",
     Options = structFetchBlocks(),
@@ -4814,6 +4825,18 @@ end
 -- SELECTION TOOLS
 -- ═══════════════════════════════════════════════════════════════════════════
 toolTab:CreateSection("Tools")
+
+toolTab:CreateToggle({
+    Name = "Editor Panel",
+    CurrentValue = false,
+    Tooltip = "Floating panel of the controls you reach for most. Drag it by its title bar.",
+    Callback = function(on)
+        local ep = BuilderAPI.editorPanel
+        if not ep then return end
+        if on then ep:Show() else ep:Hide() end
+    end
+})
+
 
 statusPara = toolTab:CreateParagraph({
     Title = "Active Tool",
@@ -10783,6 +10806,7 @@ local BA = BuilderAPI
 local B, O = BA.B, BA.O
 
 local panel = Duvome:MakeSidePanel({ Name = "Editor", Width = 250 })
+BuilderAPI.editorPanel = panel
 
 panel:AddLabel("Blocks")
 
@@ -10854,15 +10878,6 @@ panel:AddButton({
 })
 
 -- the switch that reveals it, on the Edit tab
-tabEdit:CreateToggle({
-    Name = "Editor Panel",
-    CurrentValue = false,
-    Tooltip = "Floating panel of the controls you reach for most. Drag it by its title bar.",
-    Callback = function(on)
-        if on then panel:Show() else panel:Hide() end
-    end
-})
-
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -10874,6 +10889,7 @@ end
 do
 
 local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 430, Columns = true })
+BuilderAPI.shapePanel = shapePanel
 local L, R = shapePanel:Left(), shapePanel:Right()
 
 L:AddLabel("Size")
@@ -10935,15 +10951,6 @@ for _, ax in ipairs({
         Callback = function(v) ax[2](v) BuilderAPI.structRefresh() end
     })
 end
-
-structTab:CreateToggle({
-    Name = "Shape Panel",
-    CurrentValue = false,
-    Tooltip = "Floating two-column panel with every shape parameter. Drag it by its title bar.",
-    Callback = function(on)
-        if on then shapePanel:Show() else shapePanel:Hide() end
-    end
-})
 
 end
 
