@@ -1777,63 +1777,101 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			Parent                 = MainWindow
 		})
 
-		local MAX_STARS = 26
-		local STAR_CHAR = "\226\156\166"   -- four-pointed star
+		local MAX_STARS = 24
+		-- Three sizes so the field has depth rather than one uniform sparkle.
+		local TIERS = { 9, 15, 23 }
 
-		local function makeStar()
-			local sz = 8 + math.random(0, 8)
-			local st = Create("TextLabel", {
-				Text                   = STAR_CHAR,
-				Font                   = Enum.Font.GothamBold,
-				TextSize               = sz,
-				TextColor3             = Color3.fromRGB(225, 195, 255),
-				TextTransparency       = 1,
+		-- A star is drawn, not typed: Roblox fonts have no star glyph, which is
+		-- why a text character rendered as a box. Two tapered bars crossed over
+		-- a soft round glow reads as a four-point sparkle at any size.
+		local function makeStar(size)
+			local holder = Create("Frame", {
 				BackgroundTransparency = 1,
-				Size                   = UDim2.new(0, sz * 2, 0, sz * 2),
+				Size                   = UDim2.new(0, size, 0, size),
 				Position               = UDim2.new(math.random(), 0, math.random(), 0),
 				ZIndex                 = 1,
 				Parent                 = StarCanvas
 			})
-			return st, sz
+
+			local glow = Create("Frame", {
+				BackgroundColor3       = Color3.fromRGB(200, 170, 255),
+				BackgroundTransparency = 1,
+				BorderSizePixel        = 0,
+				Size                   = UDim2.new(0.55, 0, 0.55, 0),
+				Position               = UDim2.new(0.225, 0, 0.225, 0),
+				ZIndex                 = 1,
+				Parent                 = holder
+			})
+			Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = glow})
+
+			local function bar(w, h, rot)
+				local f = Create("Frame", {
+					BackgroundColor3       = Color3.fromRGB(255, 250, 255),
+					BackgroundTransparency = 1,
+					BorderSizePixel        = 0,
+					AnchorPoint            = Vector2.new(0.5, 0.5),
+					Position               = UDim2.new(0.5, 0, 0.5, 0),
+					Size                   = UDim2.new(w, 0, h, 0),
+					ZIndex                 = 2,
+					Parent                 = holder
+				})
+				Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = f})
+				-- taper both ends to points
+				Create("UIGradient", {
+					Rotation = rot,
+					Transparency = NumberSequence.new({
+						NumberSequenceKeypoint.new(0, 1),
+						NumberSequenceKeypoint.new(0.5, 0),
+						NumberSequenceKeypoint.new(1, 1),
+					}),
+					Parent = f
+				})
+				return f
+			end
+
+			local vert = bar(0.16, 1, 90)
+			local horz = bar(1, 0.16, 0)
+			return holder, { glow = glow, parts = { vert, horz } }
 		end
 
-		-- Fade in, hold, fade out, then reappear somewhere else. No falling:
-		-- they simply pop in and out anywhere across the window.
-		local function twinkle(st)
-			local sz    = 8 + math.random(0, 8)
-			local dim   = 0.35 + math.random() * 0.4    -- never fully solid
-			local up    = 0.5 + math.random() * 0.8
-			local hold  = 0.3 + math.random() * 1.2
-			local down  = 0.6 + math.random() * 0.9
+		local function fade(st, targetBar, targetGlow, time, style, dir)
+			local info = TweenInfo.new(time, style, dir)
+			for _, f in ipairs(st.parts) do
+				TweenService:Create(f, info, {BackgroundTransparency = targetBar}):Play()
+			end
+			TweenService:Create(st.glow, info, {BackgroundTransparency = targetGlow}):Play()
+		end
 
-			st.Position = UDim2.new(math.random(), 0, math.random(), 0)
-			st.TextSize = sz
-			st.Size     = UDim2.new(0, sz * 2, 0, sz * 2)
-			st.TextTransparency = 1
+		-- Fade up, hold, fade out, reappear elsewhere at a new size.
+		local function twinkle(holder, st)
+			local size  = TIERS[math.random(1, #TIERS)]
+			local peak  = 0.25 + math.random() * 0.35     -- stays soft, never solid
+			local up    = 0.6 + math.random() * 0.9
+			local hold  = 0.25 + math.random() * 1.1
+			local down  = 0.7 + math.random() * 1.0
 
-			TweenService:Create(st,
-				TweenInfo.new(up, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-				{TextTransparency = dim}
-			):Play()
+			holder.Position = UDim2.new(math.random(), 0, math.random(), 0)
+			holder.Size     = UDim2.new(0, size, 0, size)
+			for _, f in ipairs(st.parts) do f.BackgroundTransparency = 1 end
+			st.glow.BackgroundTransparency = 1
+
+			fade(st, peak, math.min(peak + 0.35, 1), up, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
 			task.delay(up + hold, function()
-				if not (st and st.Parent) then return end
-				TweenService:Create(st,
-					TweenInfo.new(down, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-					{TextTransparency = 1}
-				):Play()
-				task.delay(down + math.random() * 1.5, function()
-					if st and st.Parent then twinkle(st) end
+				if not (holder and holder.Parent) then return end
+				fade(st, 1, 1, down, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+				task.delay(down + math.random() * 1.6, function()
+					if holder and holder.Parent then twinkle(holder, st) end
 				end)
 			end)
 		end
 
 		task.spawn(function()
 			for _ = 1, MAX_STARS do
-				local st = makeStar()
-				twinkle(st)
-				-- stagger so they do not all pulse together
-				task.wait(0.08 + math.random() * 0.12)
+				local holder, st = makeStar(TIERS[math.random(1, #TIERS)])
+				twinkle(holder, st)
+				-- stagger so they never pulse in unison
+				task.wait(0.06 + math.random() * 0.14)
 			end
 		end)
 	end
