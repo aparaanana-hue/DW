@@ -3617,18 +3617,25 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					elseif item.Type == "button" then
 						-- Action row: lets a gear hold things like Refresh or Delete
 						-- instead of them each needing their own control in the panel.
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,26), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,20), ZIndex=62, Parent=popContent})
+						-- Styled like the other popover rows: plain label weight, no
+						-- filled background, so it does not shout next to them.
 						local btn = Create("TextButton", {
 							Text = item.Name or "Action",
 							Font = Enum.Font.GothamBold, TextSize = 12,
 							TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
-							BackgroundColor3 = Color3.fromRGB(35, 12, 60),
-							BorderSizePixel = 0, AutoButtonColor = true,
+							BackgroundTransparency = 1,
+							BorderSizePixel = 0, AutoButtonColor = false,
+							TextXAlignment = Enum.TextXAlignment.Left,
 							Size = UDim2.new(1,0,1,0), ZIndex = 63, Parent = row,
 						})
-						AddThemeObject(btn, "Main")
-						Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=btn})
-						AddThemeObject(Create("UIStroke", {Thickness=1, Parent=btn}), "Stroke")
+						AddThemeObject(btn, "Text")
+						btn.MouseEnter:Connect(function()
+							btn.TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Stroke
+						end)
+						btn.MouseLeave:Connect(function()
+							btn.TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text
+						end)
 						btn.MouseButton1Click:Connect(function()
 							if item.OnClick then pcall(item.OnClick) end
 						end)

@@ -2197,12 +2197,17 @@ auto:CreateToggle({
     Name = "Start Build",
     CurrentValue = false,
     Flag = "BuildToggle",
-    Keybind = true,
     Gear = {
-        { Type = "toggle", Name = "Skip Existing Blocks", Default = false,
+        { Type = "toggle", Name = "Skip Existing", Default = false,
           Callback = function(v) placeMissingOnly = v end },
-        { Type = "toggle", Name = "Only Use Blocks I Own", Default = false,
+        { Type = "toggle", Name = "Owned Only", Default = false,
           Callback = function(v) onlyUseOwned = v end },
+        { Type = "toggle", Name = "Adaptive Rate", Default = false,
+          Callback = function(v) adaptiveRate = v end },
+        { Type = "toggle", Name = "Pipelined Placing", Default = false,
+          Callback = function(v) pipelineMode = v end },
+        { Type = "slider", Name = "Pipeline Depth", Min = 2, Max = 30, Default = 8,
+          Callback = function(v) pipelineDepth = v end },
     },
     Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
     Callback = function(v)
@@ -2235,6 +2240,27 @@ auto:CreateToggle({
             releaseShift()
             notifyWarn("Stopped", "Build stopped", 3)
         end
+    end
+})
+
+auto:CreateToggle({
+    Name = "Move Before Placing",
+    CurrentValue = true,
+    Flag = "MoveNearBlock",
+    Tooltip = "Walk or fly close to each block before placing it. Slower, but far more reliable.",
+    Callback = function(v)
+        moveToBuildPosition = v
+    end
+})
+
+auto:CreateDropdown({
+    Name = "Movement Mode",
+    Options = {"Fly", "Float", "Teleport"},
+    CurrentOption = {"Fly"},
+    MultipleOptions = false,
+    Flag = "MoveMode",
+    Callback = function(option)
+        moveMode = (typeof(option) == "table") and option[1] or option
     end
 })
 
@@ -2612,13 +2638,13 @@ saveTab:CreateInput({
     end
 })
 
-saveTab:CreateDivider()
-
 saveTab:CreateToggle({
     Name = "Show Selection Box",
     CurrentValue = false,
     Flag = "ShowSelBox",
+    Tooltip = "Shows the box and limits Save Island Build to what is inside it.",
     Callback = function(v)
+        selBoxOnly = v
         if v then
             showSelBox()
             notify("Box Shown", "Drag the face handles to resize it", 3)
@@ -2628,28 +2654,27 @@ saveTab:CreateToggle({
     end
 })
 
-saveTab:CreateToggle({
-    Name = "Save Only Box Area",
-    CurrentValue = false,
-    Callback = function(v)
-        selBoxOnly = v
-    end
-})
+saveTab:CreateDivider()
 
 saveTab:CreateDivider()
 
-saveTab:CreateParagraph({
-    Title = "Paint-Select Blocks",
-    Content = "Turn this on and hold left-click to paint over blocks. They glow cyan. Good for odd shapes the box misses, like a cone. Works in freecam."
-})
-
-local blockSelCountLabel = saveTab:CreateParagraph({
-    Title = "Selection",
-    Content = "0 blocks selected"
-})
-
 saveTab:CreateToggle({
     Name = "Block Brush",
+    Gear = {
+        { Type = "button", Name = "Clear Selection", OnClick = function()
+        clearBlockSelection()
+        notify("Cleared", "Selection cleared", 2)
+    end },
+        { Type = "button", Name = "Save Selected Blocks", OnClick = function()
+        task.spawn(function()
+            if blockSelCount == 0 then
+                notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
+                return
+            end
+            saveSelectedBrush()
+        end)
+    end },
+    },
     Tooltip = "Hold click and drag over blocks in the world to add them to the selection.",
     CurrentValue = false,
     Flag = "BlockBrush",
@@ -2673,7 +2698,7 @@ saveTab:CreateToggle({
                     else
                         highlightBlock(part)
                     end
-                    blockSelCountLabel:Set({ Title = "Selection", Content = blockSelCount .. " blocks selected" })
+                    -- count now shows on the watch overlay rather than a panel label
                 end
             end)
             blockSelConn = { Disconnect = function() downC:Disconnect() upC:Disconnect() paintC:Disconnect() end }
@@ -2683,28 +2708,6 @@ saveTab:CreateToggle({
             blockSelDown = false
             notify("Block Brush Off", blockSelCount .. " blocks still selected", 3)
         end
-    end
-})
-
-saveTab:CreateButton({
-    Name = "Clear Selection",
-    Callback = function()
-        clearBlockSelection()
-        blockSelCountLabel:Set({ Title = "Selection", Content = "0 blocks selected" })
-        notify("Cleared", "Selection cleared", 2)
-    end
-})
-
-saveTab:CreateButton({
-    Name = "Save Selected Blocks",
-    Callback = function()
-        task.spawn(function()
-            if blockSelCount == 0 then
-                notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
-                return
-            end
-            saveSelectedBrush()
-        end)
     end
 })
 
@@ -2775,65 +2778,7 @@ auto:CreateSection("Build Speed & Movement", { Collapsible = true })
 
 auto:CreateDivider()
 
-auto:CreateToggle({
-    Name = "Adaptive Rate",
-    CurrentValue = false,
-    Flag = "AdaptiveRate",
-    Tooltip = "Changes the build speed on its own. Slows down if blocks fail, speeds up when it's safe.",
-    Callback = function(v)
-        adaptiveRate = v
-    end
-})
-
-auto:CreateToggle({
-    Name = "Pipelined Placing",
-    CurrentValue = false,
-    Flag = "PipelineMode",
-    Tooltip = "Places many blocks at once instead of one at a time. Much faster, but a little riskier.",
-    Callback = function(v)
-        pipelineMode = v
-        if v then
-            notifyOK("Pipelined", "Faster placing is on", 4)
-        else
-            notify("Sequential", "One block at a time", 3, "info")
-        end
-    end
-})
-
-auto:CreateSlider({
-    Name = "Pipeline Depth",
-    Range = {2, 30},
-    Increment = 1,
-    CurrentValue = 8,
-    Suffix = "blk",
-    Flag = "PipelineDepth",
-    Callback = function(v)
-        pipelineDepth = v
-    end
-})
-
 auto:CreateDivider()
-
-auto:CreateToggle({
-    Name = "Move Before Placing",
-    CurrentValue = true,
-    Flag = "MoveNearBlock",
-    Tooltip = "Walk or fly close to each block before placing it. Slower, but far more reliable.",
-    Callback = function(v)
-        moveToBuildPosition = v
-    end
-})
-
-auto:CreateDropdown({
-    Name = "Movement Mode",
-    Options = {"Fly", "Float", "Teleport"},
-    CurrentOption = {"Fly"},
-    MultipleOptions = false,
-    Flag = "MoveMode",
-    Callback = function(option)
-        moveMode = (typeof(option) == "table") and option[1] or option
-    end
-})
 
 
 
@@ -2854,6 +2799,14 @@ previewTab:CreateToggle({
         { Type = "toggle", Name = "Low-Lag Preview", Default = false,
           Callback = function(v) previewMinimized = v end },
         -- popover sliders are integers, so transparency is a percentage
+        { Type = "button", Name = "Rotate 90", OnClick = function()
+        if not previewModel or not previewModel.Parent then
+            notify("No Preview", "Preview a build first", 3)
+            return
+        end
+        rotatePreview(90)
+        notify("Rotated", "Turned 90 degrees", 2)
+    end },
         { Type = "slider", Name = "Transparency %", Min = 0, Max = 90, Default = 50,
           Callback = function(v)
               previewTransparency = v / 100
@@ -2884,8 +2837,6 @@ previewTab:CreateToggle({
     end
 })
 
-previewTab:CreateDivider()
-
 previewTab:CreateToggle({
     Name = "Move Handles",
     Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
@@ -2896,17 +2847,7 @@ previewTab:CreateToggle({
     end
 })
 
-previewTab:CreateButton({
-    Name = "Rotate 90°",
-    Callback = function()
-        if not previewModel or not previewModel.Parent then
-            notify("No Preview", "Preview a build first", 3)
-            return
-        end
-        rotatePreview(90)
-        notify("Rotated", "Turned 90 degrees", 2)
-    end
-})
+previewTab:CreateDivider()
 
 -- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
@@ -2965,11 +2906,6 @@ previewTab:CreateButton({
 })
 
 previewTab:CreateDivider()
-
-previewTab:CreateParagraph({
-    Title = "Swap Block Types",
-    Content = "Swap one block type for another from your bag. Refresh, pick both, then Add."
-})
 
 local buildTypeMap = {}
 local invTypeMap = {}
@@ -10844,7 +10780,10 @@ Duvome:AddWatch("Building", function()
 end)
 Duvome:AddWatch("Preview", function() return isPreviewing end)
 Duvome:AddWatch("Move Handles", function() return dragModeOn end)
-Duvome:AddWatch("Block Brush", function() return blockSelMode end)
+Duvome:AddWatch("Block Brush", function()
+    if not blockSelMode then return false end
+    return blockSelCount > 0 and (blockSelCount .. " blocks") or true
+end)
 Duvome:AddWatch("File", function()
     return selectedFile and selectedFile:gsub("%.json$", "") or false
 end)
