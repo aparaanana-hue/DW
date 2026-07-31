@@ -3507,6 +3507,11 @@ structTab:CreateDropdown({
     end
 })
 
+structTab:CreateParagraph({
+    Title = "Shape Settings",
+    Content = "Size, shell, form and rotation live in the Shape panel. Turn it on below.",
+})
+
 structTab:CreateToggle({
     Name = "Shape Panel",
     CurrentValue = false,
@@ -3552,110 +3557,11 @@ structTab:CreateInput({
     end
 })
 
-structTab:CreateSlider({
-    Name = "Radius / Length",
-    Range = {3, 450},
-    Increment = 3,
-    CurrentValue = 30,
-    Flag = "StructRadius",
-    Callback = function(v) structRadius = v structHeightmap = nil structRefreshPreview() end
-})
-
-structTab:CreateSlider({
-    Name = "Width",
-    Range = {3, 450},
-    Increment = 3,
-    CurrentValue = 30,
-    Flag = "StructWidth",
-    Callback = function(v) structWidth = v structRefreshPreview() end
-})
-
-structTab:CreateSlider({
-    Name = "Height",
-    Range = {3, 450},
-    Increment = 3,
-    CurrentValue = 30,
-    Flag = "StructHeight",
-    Callback = function(v) structHeight = v structHeightmap = nil structRefreshPreview() end
-})
-
-structTab:CreateToggle({
-    Name = "Hollow",
-    CurrentValue = true,
-    Flag = "StructHollow",
-    Callback = function(v) structHollow = v structRefreshPreview() end
-})
-
-structTab:CreateToggle({
-    Name = "Fill Steps",
-    Tooltip = "Fill the vertical gaps between landscape height steps so walls are solid.",
-    CurrentValue = false,
-    Flag = "StructFillSteps",
-    Callback = function(v) structFillSteps = v structRefreshPreview() end
-})
-
-structTab:CreateSlider({
-    Name = "Thickness",
-    Range = {1, 10},
-    Suffix = "blk",
-    Increment = 1,
-    CurrentValue = 1,
-    Flag = "StructThickness",
-    Callback = function(v) structThickness = v structRefreshPreview() end
-})
-
-structTab:CreateSlider({
-    Name = "Spiral Turns",
-    Range = {0.25, 10},
-    Increment = 0.25,
-    CurrentValue = 2,
-    Flag = "StructTurns",
-    Callback = function(v) structTurns = v structRefreshPreview() end
-})
-
 structTab:CreateDivider()
-
-structTab:CreateSlider({
-    Name = "Smoothness",
-    Range = {5, 200},
-    Increment = 1,
-    CurrentValue = 25,
-    Flag = "StructSmooth",
-    Callback = function(v) structSmooth = v structHeightmap = nil structRefreshPreview() end
-})
-
-structTab:CreateSlider({
-    Name = "Seed",
-    Range = {1, 10000},
-    Increment = 1,
-    CurrentValue = 1,
-    Flag = "StructSeed",
-    Callback = function(v) structSeed = v structHeightmap = nil structRefreshPreview() end
-})
 
 structTab:CreateDivider()
 
 -- Three identical 0-360 axis sliders; only the target variable differs.
-for _, axis in ipairs({
-    { "Tilt (X)", "StructRX", function(v) structRX = v end },
-    { "Spin (Y)", "StructRY", function(v) structRY = v end },
-    { "Roll (Z)", "StructRZ", function(v) structRZ = v end },
-}) do
-    local name, flag, apply = axis[1], axis[2], axis[3]
-    structTab:CreateSlider({
-        Name = name,
-        Range = {0, 360},
-        Increment = 90,
-        CurrentValue = 0,
-        Suffix = "deg",
-        Flag = flag,
-        Callback = function(v)
-            apply(v)
-            structRefreshPreview()
-        end
-    })
-end
-
 local function structToBlocks()
     local pts = structGetPoints()
     local blocks = {}
@@ -6488,40 +6394,9 @@ B.armToggle = buildTab:CreateToggle({
 buildTab:CreateDivider()
 
 buildTab:CreateSlider({
-    Name = "Stack Count",
-    Range = { 1, 32 }, Increment = 1, CurrentValue = 3, Suffix = "x", Flag = "BldStack",
-    Callback = function(v) B.stackCount = v end
-})
-
-buildTab:CreateSlider({
-    Name = "Smear Length",
-    Range = { 1, 64 }, Increment = 1, CurrentValue = 8, Suffix = "blk", Flag = "BldSmear",
-    Callback = function(v) B.smearLen = v end
-})
-
-buildTab:CreateSlider({
     Name = "Erase Connected Limit",
     Range = { 16, 512 }, Increment = 16, CurrentValue = 128, Suffix = "blk", Flag = "BldEraseLim",
     Callback = function(v) B.eraseLimit = v end
-})
-
-buildTab:CreateButton({
-    Name = "Undo",
-    Tooltip = "Same as Ctrl+Z. Reverts the last builder operation.",
-    Gear = { { Type = "button", Name = "Redo", OnClick = function() doRedo() end } },
-    Callback = doUndo
-})
-
-buildTab:CreateButton({
-    Name = "Clear Selection",
-    Tooltip = "Drop the current corners and hologram.",
-    Callback = function()
-        B.a, B.b, B.clip = nil, nil, nil
-        B.off = { 0, 0, 0 } B.rotY = 0 B.flip = { false, false, false }
-        clearHolo()
-        setStatus(B.tool or "Builder", describeSelection())
-        notify("Cleared", "Selection dropped", 2, "info")
-    end
 })
 
 buildTab:CreateButton({
@@ -7482,23 +7357,10 @@ opsTab:CreateButton({
     Callback = function() O.chosen[3]() end
 })
 
-opsTab:CreateSlider({
-    Name = "Expand / Shrink By",
-    Range = { 1, 16 }, Increment = 1, CurrentValue = 1, Suffix = "blk", Flag = "OpsExpand",
-    Callback = function(v) O.expandBy = v end
-})
-
 opsTab:CreateDivider()
 
 O.maskNames = {}
 for _, e in ipairs(O.maskRules) do O.maskNames[#O.maskNames + 1] = e[1] end
-
-opsTab:CreateToggle({
-    Name = "Use Tool Mask",
-    CurrentValue = false,
-    Tooltip = "When on, Fill and Replace only touch blocks that pass the rule below.",
-    Callback = function(v) O.mask.on = v end
-})
 
 opsTab:CreateDropdown({
     Name = "Mask Rule",

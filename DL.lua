@@ -4737,7 +4737,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Main,
 					BorderSizePixel = 0,
 					Size = UDim2.new(0, width, 0, 340),
-					Position = UDim2.new(0.5, 320, 0.5, -170),
+					-- docked against the right edge; still draggable from there
+					Position = UDim2.new(1, -(width + 20), 0.5, -170),
 					Visible = false,
 					ZIndex = 90,
 					Parent = Duvome,
