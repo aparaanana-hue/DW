@@ -4723,116 +4723,150 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		end
 
 		-- ── Side Panel ──────────────────────────────────────────────────────
-		-- A free-floating panel docked beside the window, built from the same
-		-- element factory as a tab, so it can hold real toggles/sliders/etc.
-		-- Defined here because Duvome, Create and GetElements are all in scope.
+		-- Styled and positioned exactly like the Configs panel: same frame,
+		-- header, divider and stroke, and the same snap-to-window behaviour.
+		-- Built from the tab element factory so it can hold real controls.
 		if not DuvomeLibrary.MakeSidePanel then
 			function DuvomeLibrary:MakeSidePanel(cfg)
 				cfg = cfg or {}
-				local title = cfg.Name or "Panel"
-				local width = cfg.Width or 250
+				local title  = cfg.Name or "Panel"
+				local width  = cfg.Width or 175
+				local height = cfg.Height or 344
 
 				local Panel = Create("Frame", {
-					Name = "SidePanel",
-					BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Main,
-					BorderSizePixel = 0,
-					Size = UDim2.new(0, width, 0, 340),
-					-- docked against the right edge; still draggable from there
-					Position = UDim2.new(1, -(width + 20), 0.5, -170),
-					Visible = false,
-					ZIndex = 90,
-					Parent = Duvome,
+					Name                   = "SidePanel",
+					BackgroundColor3       = Color3.fromRGB(12, 4, 24),
+					BackgroundTransparency = 1,
+					BorderSizePixel        = 0,
+					Size                   = UDim2.new(0, width, 0, height),
+					Position               = UDim2.new(0, 0, 0, 0),
+					Visible                = false,
+					ZIndex                 = 100,
+					Parent                 = Duvome,
 				})
 				AddThemeObject(Panel, "Main")
-				Create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = Panel})
-				AddThemeObject(Create("UIStroke", {Thickness = 1.5, Parent = Panel}), "Stroke")
+				Create("UICorner", {CornerRadius = UDim.new(0, 12), Parent = Panel})
+				AddThemeObject(Create("UIStroke", {
+					Color = Color3.fromRGB(90, 30, 140), Thickness = 1.5, Parent = Panel,
+				}), "Stroke")
 
-				local Bar = Create("Frame", {
-					BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34),
-					ZIndex = 91, Parent = Panel,
-				})
 				AddThemeObject(Create("TextLabel", {
-					Text = title, Font = Enum.Font.GothamBold, TextSize = 14,
-					TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
-					BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
-					Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -44, 1, 0),
-					ZIndex = 92, Parent = Bar,
+					Text = title, Font = Enum.Font.GothamBlack, TextSize = 16,
+					TextColor3 = Color3.fromRGB(220, 180, 255), BackgroundTransparency = 1,
+					Size = UDim2.new(1, -16, 0, 24), Position = UDim2.new(0, 8, 0, 10),
+					TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 101, Parent = Panel,
 				}), "Text")
-				local CloseBtn = Create("TextButton", {
-					Text = "X", Font = Enum.Font.GothamBold, TextSize = 13,
-					TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].TextDark,
-					BackgroundTransparency = 1, Size = UDim2.new(0, 30, 1, 0),
-					Position = UDim2.new(1, -32, 0, 0), ZIndex = 92, Parent = Bar,
-				})
+				AddThemeObject(Create("Frame", {
+					BackgroundColor3 = Color3.fromRGB(80, 25, 130), BorderSizePixel = 0,
+					Size = UDim2.new(0.9, 0, 0, 1), Position = UDim2.new(0.05, 0, 0, 38),
+					ZIndex = 102, Parent = Panel,
+				}), "Stroke")
 
 				local Content = Create("ScrollingFrame", {
 					BackgroundTransparency = 1, BorderSizePixel = 0,
-					Position = UDim2.new(0, 10, 0, 38),
-					Size = UDim2.new(1, -20, 1, -48),
+					Position = UDim2.new(0, 8, 0, 48),
+					Size = UDim2.new(1, -16, 1, -58),
 					CanvasSize = UDim2.new(0, 0, 0, 0),
-					ScrollBarThickness = 3, ZIndex = 91, Parent = Panel,
+					ScrollBarThickness = 3, ZIndex = 101, Parent = Panel,
 				})
 
-				-- Two-column mode: side-by-side lists, each its own element set.
 				local LeftCol, RightCol
 				if cfg.Columns then
-					LeftCol = Create("Frame", {
-						BackgroundTransparency = 1, Size = UDim2.new(0.5, -5, 1, 0),
-						Position = UDim2.new(0, 0, 0, 0), ZIndex = 91, Parent = Content,
-					})
-					RightCol = Create("Frame", {
-						BackgroundTransparency = 1, Size = UDim2.new(0.5, -5, 1, 0),
-						Position = UDim2.new(0.5, 5, 0, 0), ZIndex = 91, Parent = Content,
-					})
-					local ll = Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = LeftCol})
-					local rl = Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = RightCol})
+					LeftCol = Create("Frame", {BackgroundTransparency = 1,
+						Size = UDim2.new(0.5, -4, 0, 0), Position = UDim2.new(0, 0, 0, 0),
+						ZIndex = 101, Parent = Content})
+					RightCol = Create("Frame", {BackgroundTransparency = 1,
+						Size = UDim2.new(0.5, -4, 0, 0), Position = UDim2.new(0.5, 4, 0, 0),
+						ZIndex = 101, Parent = Content})
+					local ll = Create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = LeftCol})
+					local rl = Create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = RightCol})
 					local function sync()
 						local h = math.max(ll.AbsoluteContentSize.Y, rl.AbsoluteContentSize.Y)
-						LeftCol.Size  = UDim2.new(0.5, -5, 0, h)
-						RightCol.Size = UDim2.new(0.5, -5, 0, h)
+						LeftCol.Size  = UDim2.new(0.5, -4, 0, h)
+						RightCol.Size = UDim2.new(0.5, -4, 0, h)
 						Content.CanvasSize = UDim2.new(0, 0, 0, h + 8)
 					end
 					AddConnection(ll:GetPropertyChangedSignal("AbsoluteContentSize"), sync)
 					AddConnection(rl:GetPropertyChangedSignal("AbsoluteContentSize"), sync)
 				else
-					local List = Create("UIListLayout", {
-						Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Content,
-					})
-					AddConnection(List:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-						Content.CanvasSize = UDim2.new(0, 0, 0, List.AbsoluteContentSize.Y + 8)
+					local list = Create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Content})
+					AddConnection(list:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+						Content.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 8)
 					end)
 				end
 
-				-- drag by the title bar
-				local dragging, dragStart, startPos = false, nil, nil
-				AddConnection(Bar.InputBegan, function(i)
-					if i.UserInputType == Enum.UserInputType.MouseButton1 then
+				-- Same docking as the Configs panel: glide to the side of the
+				-- window, drag it loose, snap to whichever side is nearer.
+				local isOpen, dragging = false, false
+				local side = cfg.Side or "right"
+				local dragStart, startPos
+
+				local function sideX(which)
+					local wp, ws = MainWindow.AbsolutePosition, MainWindow.AbsoluteSize
+					local pw = Panel.AbsoluteSize.X
+					return which == "left" and (wp.X - pw - 20) or (wp.X + ws.X + 20)
+				end
+				local function centreY()
+					local wp, ws = MainWindow.AbsolutePosition, MainWindow.AbsoluteSize
+					return wp.Y + (ws.Y - Panel.AbsoluteSize.Y) / 2
+				end
+
+				AddConnection(RunService.RenderStepped, function()
+					if isOpen and not dragging then
+						local tx, ty = sideX(side), centreY()
+						local cx, cy = Panel.Position.X.Offset, Panel.Position.Y.Offset
+						Panel.Position = UDim2.new(0, cx + (tx - cx) * 0.12, 0, cy + (ty - cy) * 0.12)
+					end
+				end)
+
+				AddConnection(Panel.InputBegan, function(i)
+					if i.UserInputType == Enum.UserInputType.MouseButton1
+						or i.UserInputType == Enum.UserInputType.Touch then
 						dragging = true dragStart = i.Position startPos = Panel.Position
 					end
 				end)
-				AddConnection(UserInputService.InputEnded, function(i)
-					if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-				end)
 				AddConnection(UserInputService.InputChanged, function(i)
-					if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+					if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement
+						or i.UserInputType == Enum.UserInputType.Touch) then
 						local d = i.Position - dragStart
-						Panel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-						                           startPos.Y.Scale, startPos.Y.Offset + d.Y)
+						Panel.Position = UDim2.new(0, startPos.X.Offset + d.X, 0, startPos.Y.Offset + d.Y)
+					end
+				end)
+				AddConnection(UserInputService.InputEnded, function(i)
+					if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1
+						or i.UserInputType == Enum.UserInputType.Touch) then
+						dragging = false
+						local x = Panel.Position.X.Offset
+						side = (math.abs(x - sideX("left")) < math.abs(x - sideX("right"))) and "left" or "right"
+						TweenService:Create(Panel,
+							TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+							{Position = UDim2.new(0, sideX(side), 0, centreY())}
+						):Play()
 					end
 				end)
 
 				local api = GetElements(cfg.Columns and LeftCol or Content)
 				if cfg.Columns then
-					local leftAPI, rightAPI = GetElements(LeftCol), GetElements(RightCol)
-					function api:Left() return leftAPI end
-					function api:Right() return rightAPI end
+					local l, r = GetElements(LeftCol), GetElements(RightCol)
+					function api:Left() return l end
+					function api:Right() return r end
 				end
-				function api:Show() Panel.Visible = true end
-				function api:Hide() Panel.Visible = false end
-				function api:Toggle() Panel.Visible = not Panel.Visible return Panel.Visible end
-				function api:IsOpen() return Panel.Visible end
-				function api:SetTitle(t) Bar:FindFirstChildWhichIsA("TextLabel").Text = t end
-				AddConnection(CloseBtn.MouseButton1Click, function() Panel.Visible = false end)
+
+				function api:Show()
+					isOpen = true
+					-- slide in from off-side, matching the Configs panel entrance
+					local landX = sideX(side)
+					Panel.Position = UDim2.new(0, side == "left" and (landX - width - 40) or (landX + width + 40), 0, centreY())
+					Panel.BackgroundTransparency = 1
+					Panel.Visible = true
+					TweenService:Create(Panel,
+						TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+						{BackgroundTransparency = 0, Position = UDim2.new(0, landX, 0, centreY())}
+					):Play()
+				end
+				function api:Hide() isOpen = false Panel.Visible = false end
+				function api:Toggle() if isOpen then api:Hide() else api:Show() end return isOpen end
+				function api:IsOpen() return isOpen end
 				return api
 			end
 		end
