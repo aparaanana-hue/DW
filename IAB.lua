@@ -6689,6 +6689,7 @@ local opsTab = tabEdit
 
 local O = {
     activeBlock = "stone",
+    palette = {},
     replaceFrom = "stone",
     filterBlock = "stone",
     expandBy = 1,
@@ -6699,6 +6700,7 @@ local O = {
     shadeLight = "snow",
     clip = nil,          -- clipboard: { cells = {{dx,dy,dz,type}}, sx, sy, sz }
     blueprintName = "MyBlueprint",
+    floodLimit = 512,
     presetName = "MyPreset",
 }
 
@@ -6740,6 +6742,21 @@ end
 -- A rule that each candidate block must satisfy before an operation touches it.
 -- Covers the useful subset of Axiom's mask rules; Invert gives the NOT case.
 O.mask = { on = false, rule = "Surface", block = "stone", invert = false, y = 0, radius = 2 }
+O.maskExpr = "y > 40"
+O.maskFn = nil
+
+-- Compiles a one-line Lua condition into a mask. Variables available:
+-- x, y, z (grid cell) and name (block type under the cell).
+function O.setMaskExpr(text)
+    local src = "return function(x, y, z, name) return (" .. tostring(text) .. ") and true or false end"
+    local chunk = loadstring(src)
+    if not chunk then return false, "could not compile" end
+    local ok, fn = pcall(chunk)
+    if not ok or type(fn) ~= "function" then return false, tostring(fn) end
+    O.maskFn = fn
+    O.maskExpr = text
+    return true
+end
 
 O.maskRules = {
     { "Surface",       "Only blocks with air on at least one side." },
@@ -6752,6 +6769,7 @@ O.maskRules = {
     { "Can See Sky",   "Only blocks with nothing above them." },
     { "Y Above",       "Only blocks above the mask Y level." },
     { "Y Below",       "Only blocks below the mask Y level." },
+    { "Lua Expression","Your own condition, e.g. y > 40 and name == \"stone\"." },
 }
 
 O.sides = { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }
@@ -6807,6 +6825,12 @@ function O.maskAllows(map, x, y, z)
         hit = y > m.y
     elseif m.rule == "Y Below" then
         hit = y < m.y
+    elseif m.rule == "Lua Expression" then
+        if O.maskFn then
+            local p = map[key3(x, y, z)]
+            local ok, res = pcall(O.maskFn, x, y, z, p and p.Name or "")
+            hit = ok and res == true
+        end
     end
 
     if m.invert then return not hit end
@@ -7036,6 +7060,83 @@ local function smoothSnow()
         if #caps == 0 then notifyWarn("Smoothsnow", "No surfaces found", 3) return end
         placeCells(caps, rec)
         notifyOK("Smoothsnow", #caps .. " surface blocks capped", 4)
+    end)
+end
+
+-- ── Palette Painter (the biome-painter analogue) ───────────────────────────
+-- Scatters the saved palette across the selection instead of one flat block.
+function O.palettePaint()
+    if not needSelection() then return end
+    if #O.palette == 0 then
+        notifyWarn("Palette Painter", "Save some blocks to the Palette first", 4)
+        return
+    end
+    runCommit("Palette Painter", function(rec)
+        local map = blockPartMap()
+        local want = {}
+        for _, c in ipairs(selCells()) do
+            if map[key3(c[1], c[2], c[3])] and O.maskAllows(map, c[1], c[2], c[3]) then
+                want[#want + 1] = { c[1], c[2], c[3], O.palette[math.random(1, #O.palette)] }
+            end
+        end
+        if #want == 0 then notifyWarn("Palette Painter", "Nothing matched", 3) return end
+        opsSet("Palette Painter", "Scattering " .. #want .. " blocks...")
+        eraseCells(want, rec)
+        placeCells(want, rec)
+        notifyOK("Palette Painter", #want .. " blocks from " .. #O.palette .. " types", 5)
+    end)
+end
+
+-- ── Floodfill ──────────────────────────────────────────────────────────────
+-- Recolours every connected block of the same type as the one under the cursor.
+function O.floodfill()
+    local part = targetPart()
+    if not part then
+        notifyWarn("Floodfill", "Point at a block first, then press Run", 4)
+        return
+    end
+    runCommit("Floodfill", function(rec)
+        local map = blockPartMap()
+        local sx, sy, sz = toCell(part.Position)
+        local wanted = part.Name
+        local queue, seen, cells = { { sx, sy, sz } }, { [key3(sx, sy, sz)] = true }, {}
+        while #queue > 0 and #cells < O.floodLimit do
+            local c = table.remove(queue)
+            local p = map[key3(c[1], c[2], c[3])]
+            if p and p.Name == wanted then
+                cells[#cells + 1] = { c[1], c[2], c[3], O.activeBlock }
+                for _, d in ipairs(O.sides) do
+                    local nk = key3(c[1] + d[1], c[2] + d[2], c[3] + d[3])
+                    if not seen[nk] then
+                        seen[nk] = true
+                        queue[#queue + 1] = { c[1] + d[1], c[2] + d[2], c[3] + d[3] }
+                    end
+                end
+            end
+        end
+        if #cells == 0 then notifyWarn("Floodfill", "Nothing connected", 3) return end
+        opsSet("Floodfill", "Recolouring " .. #cells .. " blocks...")
+        eraseCells(cells, rec)
+        placeCells(cells, rec)
+        notifyOK("Floodfill", #cells .. " x " .. wanted .. " -> " .. O.activeBlock, 5)
+    end)
+end
+
+-- ── Stamp ──────────────────────────────────────────────────────────────────
+-- Drops the clipboard on whatever block the cursor is on.
+function O.stampAtCursor()
+    if not O.clip then notifyWarn("Stamp", "Copy something or load a blueprint first", 4) return end
+    local part = targetPart()
+    if not part then notifyWarn("Stamp", "Point at a block first, then press Run", 4) return end
+    runCommit("Stamp", function(rec)
+        local ox, oy, oz = toCell(part.Position)
+        local want = {}
+        for _, c in ipairs(O.clip.cells) do
+            want[#want + 1] = { ox + c[1], oy + c[2] + 1, oz + c[3], c[4] }
+        end
+        opsSet("Stamp", "Placing " .. #want .. " blocks...")
+        placeCells(want, rec)
+        notifyOK("Stamp", #want .. " blocks stamped", 4)
     end)
 end
 
@@ -7379,6 +7480,9 @@ O.list = {
     { "Analyze",          "Count every block type inside the selection.",                       analyzeSelection },
     { "Expand Selection", "Grow the selection box outward on every axis.",                      function() growSelection(O.expandBy) end },
     { "Shrink Selection", "Pull the selection box inward on every axis.",                       function() growSelection(-O.expandBy) end },
+    { "Palette Painter",  "Scatter the saved Palette randomly across the selection.",            O.palettePaint },
+    { "Floodfill",        "Point at a block, then Run: recolour every connected block of that type.", O.floodfill },
+    { "Stamp",            "Point at a block, then Run: drop the clipboard on top of it.",         O.stampAtCursor },
 }
 
 O.names = {}
@@ -7452,6 +7556,20 @@ opsTab:CreateDropdown({
     Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
     Flag = "OpsMaskBlock",
     Callback = function(v) O.mask.block = (typeof(v) == "table") and v[1] or v end
+})
+
+opsTab:CreateInput({
+    Name = "Lua Condition",
+    Default = "y > 40",
+    Callback = function(t)
+        if not t or t == "" then return end
+        local ok, err = O.setMaskExpr(t)
+        if ok then
+            notifyOK("Mask", "Condition compiled", 3)
+        else
+            notifyErr("Mask", "Bad condition: " .. tostring(err), 5)
+        end
+    end
 })
 
 opsTab:CreateToggle({
@@ -8096,8 +8214,9 @@ local key3, toCell, targetPart = BA.key3, BA.toCell, BA.targetPart
 
 local S = {
     viewName = "MyView",
+    annText = "Note",
+    timeConn = nil,
     paletteName = "MyPalette",
-    palette = {},
     infoOn = false,
     infoConn = nil,
     lastInfo = 0,
@@ -8309,14 +8428,14 @@ tabEdit:CreateButton({
     Name = "Add Active Block to Palette",
     Tooltip = "Append the current Active Block to the working palette.",
     Callback = function()
-        for _, n in ipairs(S.palette) do
+        for _, n in ipairs(O.palette) do
             if n == O.activeBlock then
                 notifyWarn("Palette", O.activeBlock .. " is already in it", 3)
                 return
             end
         end
-        S.palette[#S.palette + 1] = O.activeBlock
-        notifyOK("Palette", O.activeBlock .. " added (" .. #S.palette .. " total)", 3)
+        O.palette[#O.palette + 1] = O.activeBlock
+        notifyOK("Palette", O.activeBlock .. " added (" .. #O.palette .. " total)", 3)
     end
 })
 
@@ -8324,7 +8443,7 @@ tabEdit:CreateButton({
     Name = "Clear Palette",
     Tooltip = "Empty the working palette.",
     Callback = function()
-        S.palette = {}
+        O.palette = {}
         notify("Palette", "Emptied", 2, "info")
     end
 })
@@ -8339,16 +8458,16 @@ tabEdit:CreateButton({
     Name = "Save Palette",
     Tooltip = "Write the working palette to autoBuilder/palettes.",
     Callback = function()
-        if #S.palette == 0 then notifyWarn("Palette", "Add some blocks first", 3) return end
+        if #O.palette == 0 then notifyWarn("Palette", "Add some blocks first", 3) return end
         local name = S.paletteName
         if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
         ensurePalDir()
         local ok, err = pcall(function()
-            writefile(PAL_DIR .. "/" .. name, HttpService:JSONEncode({ blocks = S.palette }))
+            writefile(PAL_DIR .. "/" .. name, HttpService:JSONEncode({ blocks = O.palette }))
         end)
         if not ok then notifyErr("Palette", tostring(err), 5) return end
         pcall(function() paletteDropdown:Refresh(palFiles()) end)
-        notifyOK("Palette Saved", name .. " (" .. #S.palette .. " blocks)", 4)
+        notifyOK("Palette Saved", name .. " (" .. #O.palette .. " blocks)", 4)
     end
 })
 
@@ -8365,10 +8484,185 @@ paletteDropdown = tabEdit:CreateDropdown({
             notifyErr("Palette", "Could not read " .. tostring(name), 5)
             return
         end
-        S.palette = data.blocks
+        O.palette = data.blocks
         -- first entry becomes the active block so it is usable immediately
-        if S.palette[1] then O.activeBlock = S.palette[1] end
-        notifyOK("Palette Loaded", #S.palette .. " blocks, active = " .. tostring(S.palette[1]), 5)
+        if O.palette[1] then O.activeBlock = O.palette[1] end
+        notifyOK("Palette Loaded", #O.palette .. " blocks, active = " .. tostring(O.palette[1]), 5)
+    end
+})
+
+-- ── World & View ───────────────────────────────────────────────────────────
+-- Islands has no gamerules a client can set, but the render-side equivalents of
+-- Axiom's time / brightness / fluid opacity settings are all client-side.
+local Lighting = game:GetService("Lighting")
+
+tabEdit:CreateSection("World & View", { Collapsible = true })
+
+tabEdit:CreateParagraph({
+    Title = "World & View",
+    Content = "Local render settings. These change how the world looks for you only.",
+})
+
+tabEdit:CreateSlider({
+    Name = "Time of Day",
+    Range = { 0, 24 }, Increment = 1, CurrentValue = 14, Suffix = "h", Flag = "WVTime",
+    Callback = function(v) pcall(function() Lighting.ClockTime = v end) end
+})
+
+tabEdit:CreateToggle({
+    Name = "Freeze Time",
+    CurrentValue = false,
+    Tooltip = "Stop the day/night cycle moving while you build.",
+    Callback = function(on)
+        if S.timeConn then S.timeConn:Disconnect() S.timeConn = nil end
+        if not on then return end
+        local held = Lighting.ClockTime
+        S.timeConn = RunService.Heartbeat:Connect(function()
+            if Lighting.ClockTime ~= held then
+                pcall(function() Lighting.ClockTime = held end)
+            end
+        end)
+    end
+})
+
+tabEdit:CreateSlider({
+    Name = "Min Brightness",
+    Range = { 0, 100 }, Increment = 5, CurrentValue = 0, Suffix = "%", Flag = "WVBright",
+    Callback = function(v)
+        pcall(function()
+            -- lifting Ambient floors how dark shadowed faces can get
+            local a = math.floor(v / 100 * 255)
+            Lighting.Ambient = Color3.fromRGB(a, a, a)
+            Lighting.OutdoorAmbient = Color3.fromRGB(a, a, a)
+        end)
+    end
+})
+
+tabEdit:CreateSlider({
+    Name = "Fog Distance",
+    Range = { 100, 5000 }, Increment = 100, CurrentValue = 5000, Suffix = "st", Flag = "WVFog",
+    Callback = function(v) pcall(function() Lighting.FogEnd = v end) end
+})
+
+tabEdit:CreateSlider({
+    Name = "Water Opacity",
+    Range = { 0, 100 }, Increment = 10, CurrentValue = 100, Suffix = "%", Flag = "WVWater",
+    Callback = function(v)
+        pcall(function() Workspace.Terrain.WaterTransparency = 1 - (v / 100) end)
+    end
+})
+
+tabEdit:CreateToggle({
+    Name = "Reveal Invisible Parts",
+    CurrentValue = false,
+    Tooltip = "Show fully transparent blocks, the equivalent of Axiom's collision mesh view.",
+    Callback = function(on)
+        task.spawn(function()
+            local folder = getBlocksFolder()
+            if not folder then notifyWarn("Reveal", "No island found", 3) return end
+            local n = 0
+            for _, part in ipairs(folder:GetChildren()) do
+                if part:IsA("BasePart") then
+                    if on and part.Transparency >= 1 then
+                        part:SetAttribute("IABHidden", true)
+                        part.Transparency = 0.6
+                        n = n + 1
+                    elseif not on and part:GetAttribute("IABHidden") then
+                        part.Transparency = 1
+                        part:SetAttribute("IABHidden", nil)
+                        n = n + 1
+                    end
+                end
+            end
+            notifyOK("Reveal", n .. " parts updated", 4)
+        end)
+    end
+})
+
+-- ── Annotations ────────────────────────────────────────────────────────────
+-- Floating labels you can leave around a build as notes.
+tabEdit:CreateSection("Annotations", { Collapsible = true })
+
+local function annFolder()
+    local f = Workspace:FindFirstChild("IABAnnotations")
+    if not f then
+        f = Instance.new("Folder")
+        f.Name = "IABAnnotations"
+        f.Parent = Workspace
+    end
+    return f
+end
+
+local annDropdown
+
+local function annList()
+    local out = {}
+    for _, a in ipairs(annFolder():GetChildren()) do out[#out + 1] = a.Name end
+    if #out == 0 then out = { "(none placed)" } end
+    return out
+end
+
+tabEdit:CreateInput({
+    Name = "Annotation Text",
+    Default = "Note",
+    Callback = function(t) if t and t ~= "" then S.annText = t end end
+})
+
+tabEdit:CreateButton({
+    Name = "Place Annotation at Cursor",
+    Tooltip = "Drop a floating label on the block under your cursor.",
+    Callback = function()
+        local part = targetPart()
+        if not part then notifyWarn("Annotation", "Point at a block first", 3) return end
+        local anchor2 = Instance.new("Part")
+        anchor2.Name = S.annText or "Note"
+        anchor2.Anchored = true anchor2.CanCollide = false anchor2.CanQuery = false
+        anchor2.Transparency = 1
+        anchor2.Size = Vector3.new(1, 1, 1)
+        anchor2.Position = part.Position + Vector3.new(0, 4, 0)
+        anchor2.Parent = annFolder()
+        local bb = Instance.new("BillboardGui")
+        bb.Size = UDim2.new(0, 200, 0, 40)
+        bb.AlwaysOnTop = true
+        bb.Adornee = anchor2
+        bb.Parent = anchor2
+        local lbl = Instance.new("TextLabel")
+        lbl.BackgroundTransparency = 0.4
+        lbl.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        lbl.Size = UDim2.new(1, 0, 1, 0)
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 14
+        lbl.TextColor3 = Color3.fromRGB(255, 230, 120)
+        lbl.Text = S.annText or "Note"
+        lbl.Parent = bb
+        pcall(function() annDropdown:Refresh(annList()) end)
+        notifyOK("Annotation", "Placed: " .. (S.annText or "Note"), 3)
+    end
+})
+
+annDropdown = tabEdit:CreateDropdown({
+    Name = "Go To Annotation",
+    Options = annList(), CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        if not name or name == "(none placed)" then return end
+        local a = annFolder():FindFirstChild(name)
+        if not a then return end
+        local _, _, hrp = getCharacterParts()
+        if hrp then
+            hrp.CFrame = CFrame.new(a.Position + Vector3.new(0, 3, 0)) * hrp.CFrame.Rotation
+            notifyOK("Annotation", "Teleported to " .. name, 3)
+        end
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Clear All Annotations",
+    Tooltip = "Remove every floating label.",
+    Callback = function()
+        annFolder():ClearAllChildren()
+        pcall(function() annDropdown:Refresh(annList()) end)
+        notify("Annotations", "Cleared", 2, "info")
     end
 })
 
