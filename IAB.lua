@@ -6736,12 +6736,90 @@ local function selCells()
     return out
 end
 
+-- ── Tool Masks ─────────────────────────────────────────────────────────────
+-- A rule that each candidate block must satisfy before an operation touches it.
+-- Covers the useful subset of Axiom's mask rules; Invert gives the NOT case.
+O.mask = { on = false, rule = "Surface", block = "stone", invert = false, y = 0, radius = 2 }
+
+O.maskRules = {
+    { "Surface",       "Only blocks with air on at least one side." },
+    { "Block Is",      "Only blocks matching the mask block." },
+    { "Above Is",      "Only blocks with the mask block directly above." },
+    { "Below Is",      "Only blocks with the mask block directly below." },
+    { "Neighbour Is",  "Only blocks with the mask block on any of the six sides." },
+    { "Adjacent Is",   "Only blocks with the mask block horizontally beside them." },
+    { "Near Is",       "Only blocks with the mask block inside the mask radius." },
+    { "Can See Sky",   "Only blocks with nothing above them." },
+    { "Y Above",       "Only blocks above the mask Y level." },
+    { "Y Below",       "Only blocks below the mask Y level." },
+}
+
+O.sides = { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }
+O.flat  = { {1,0,0},{-1,0,0},{0,0,1},{0,0,-1} }
+
+-- Returns true when the block at this cell passes the active mask.
+function O.maskAllows(map, x, y, z)
+    if not O.mask.on then return true end
+    local m = O.mask
+    local hit = false
+
+    if m.rule == "Surface" then
+        for _, d in ipairs(O.sides) do
+            if not map[key3(x + d[1], y + d[2], z + d[3])] then hit = true break end
+        end
+    elseif m.rule == "Block Is" then
+        local p = map[key3(x, y, z)]
+        hit = p ~= nil and p.Name == m.block
+    elseif m.rule == "Above Is" then
+        local p = map[key3(x, y + 1, z)]
+        hit = p ~= nil and p.Name == m.block
+    elseif m.rule == "Below Is" then
+        local p = map[key3(x, y - 1, z)]
+        hit = p ~= nil and p.Name == m.block
+    elseif m.rule == "Neighbour Is" then
+        for _, d in ipairs(O.sides) do
+            local p = map[key3(x + d[1], y + d[2], z + d[3])]
+            if p and p.Name == m.block then hit = true break end
+        end
+    elseif m.rule == "Adjacent Is" then
+        for _, d in ipairs(O.flat) do
+            local p = map[key3(x + d[1], y + d[2], z + d[3])]
+            if p and p.Name == m.block then hit = true break end
+        end
+    elseif m.rule == "Near Is" then
+        local r = m.radius
+        for ox = -r, r do
+            for oy = -r, r do
+                for oz = -r, r do
+                    local p = map[key3(x + ox, y + oy, z + oz)]
+                    if p and p.Name == m.block then hit = true break end
+                end
+                if hit then break end
+            end
+            if hit then break end
+        end
+    elseif m.rule == "Can See Sky" then
+        hit = true
+        for up = y + 1, y + 40 do
+            if map[key3(x, up, z)] then hit = false break end
+        end
+    elseif m.rule == "Y Above" then
+        hit = y > m.y
+    elseif m.rule == "Y Below" then
+        hit = y < m.y
+    end
+
+    if m.invert then return not hit end
+    return hit
+end
+
 -- ── Fill family ────────────────────────────────────────────────────────────
 -- mode picks which shell of the cuboid gets written.
 local function fillMode(mode)
     if not needSelection() then return end
     runCommit("Fill", function(rec)
         local minX, maxX, minY, maxY, minZ, maxZ = selBounds()
+        O.fillMap = blockPartMap()
         local want = {}
         for x = minX, maxX do
             for y = minY, maxY do
@@ -6763,7 +6841,9 @@ local function fillMode(mode)
                     elseif mode == "Bottom" then
                         take = (y == minY)
                     end
-                    if take then want[#want + 1] = { x, y, z, O.activeBlock } end
+                    if take and O.maskAllows(O.fillMap, x, y, z) then
+                        want[#want + 1] = { x, y, z, O.activeBlock }
+                    end
                 end
             end
         end
@@ -6810,7 +6890,7 @@ local function replaceBlocks()
         local hits = {}
         for _, c in ipairs(selCells()) do
             local part = map[key3(c[1], c[2], c[3])]
-            if part and part.Name == O.replaceFrom then
+            if part and part.Name == O.replaceFrom and O.maskAllows(map, c[1], c[2], c[3]) then
                 hits[#hits + 1] = { c[1], c[2], c[3], O.activeBlock }
             end
         end
@@ -7336,6 +7416,49 @@ opsTab:CreateSlider({
     Name = "Expand / Shrink By",
     Range = { 1, 16 }, Increment = 1, CurrentValue = 1, Suffix = "blk", Flag = "OpsExpand",
     Callback = function(v) O.expandBy = v end
+})
+
+opsTab:CreateSection("Tool Mask", { Collapsible = true, Column = "right" })
+
+O.maskNames = {}
+for _, e in ipairs(O.maskRules) do O.maskNames[#O.maskNames + 1] = e[1] end
+
+opsTab:CreateToggle({
+    Name = "Use Tool Mask",
+    CurrentValue = false,
+    Tooltip = "When on, Fill and Replace only touch blocks that pass the rule below.",
+    Callback = function(v) O.mask.on = v end
+})
+
+opsTab:CreateDropdown({
+    Name = "Mask Rule",
+    Options = O.maskNames, CurrentOption = { "Surface" }, MultipleOptions = false,
+    Flag = "OpsMaskRule",
+    Callback = function(v)
+        O.mask.rule = (typeof(v) == "table") and v[1] or v
+        for _, e in ipairs(O.maskRules) do
+            if e[1] == O.mask.rule then
+                pcall(function() O.maskDesc:Set({ Title = e[1], Content = e[2] }) end)
+                break
+            end
+        end
+    end
+})
+
+O.maskDesc = opsTab:CreateParagraph({ Title = O.maskRules[1][1], Content = O.maskRules[1][2] })
+
+opsTab:CreateDropdown({
+    Name = "Mask Block",
+    Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
+    Flag = "OpsMaskBlock",
+    Callback = function(v) O.mask.block = (typeof(v) == "table") and v[1] or v end
+})
+
+opsTab:CreateToggle({
+    Name = "Invert Mask",
+    CurrentValue = false,
+    Tooltip = "Flips the rule, so it matches everything that would normally fail.",
+    Callback = function(v) O.mask.invert = v end
 })
 
 opsTab:CreateSection("Autoshade Palette", { Collapsible = true, Column = "right" })
@@ -7956,6 +8079,318 @@ colTab:CreateButton({ Name = "Refresh Presets", Tooltip = "Rescan the presets fo
 end })
 
 
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SESSION WINDOWS — History, Target Info, Views, Palette, Theme
+--
+-- The Axiom Editor's supporting windows. All collapsed by default so they add
+-- headers, not clutter. Own scope to stay inside the 200-local limit.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BA = BuilderAPI
+local B, O = BA.B, BA.O
+local key3, toCell, targetPart = BA.key3, BA.toCell, BA.targetPart
+
+local S = {
+    viewName = "MyView",
+    paletteName = "MyPalette",
+    palette = {},
+    infoOn = false,
+    infoConn = nil,
+    lastInfo = 0,
+}
+
+local histPara2, infoPara, viewDropdown, paletteDropdown
+
+-- ── History ────────────────────────────────────────────────────────────────
+local function refreshHistoryList()
+    local lines = {}
+    for i = #B.undo, math.max(1, #B.undo - 11), -1 do
+        local rec = B.undo[i]
+        local placed = rec.placed and #rec.placed or 0
+        local removed = rec.removed and #rec.removed or 0
+        lines[#lines + 1] = string.format("%d. %s  (+%d / -%d)", i, rec.label, placed, removed)
+    end
+    if #lines == 0 then lines[1] = "Nothing yet. Run a builder tool or operation." end
+    if #B.redo > 0 then lines[#lines + 1] = "-- " .. #B.redo .. " undone, redoable --" end
+    pcall(function()
+        histPara2:Set({ Title = "History", Content = table.concat(lines, "\n") })
+    end)
+end
+
+tabEdit:CreateSection("History", { Collapsible = true })
+
+histPara2 = tabEdit:CreateParagraph({
+    Title = "History",
+    Content = "Nothing yet. Run a builder tool or operation.",
+})
+
+tabEdit:CreateButton({
+    Name = "Refresh History",
+    Tooltip = "List recent operations with how many blocks each placed and removed.",
+    Callback = refreshHistoryList
+})
+
+tabEdit:CreateButton({
+    Name = "Clear History",
+    Tooltip = "Drop the undo and redo stacks. Does not change the world.",
+    Callback = function()
+        B.undo = {}
+        B.redo = {}
+        refreshHistoryList()
+        notify("History", "Cleared", 2, "info")
+    end
+})
+
+-- ── Target Info ────────────────────────────────────────────────────────────
+tabEdit:CreateSection("Target Info", { Collapsible = true })
+
+infoPara = tabEdit:CreateParagraph({
+    Title = "Target Info",
+    Content = "Turn on to inspect whatever block is under your cursor.",
+})
+
+tabEdit:CreateToggle({
+    Name = "Show Target Info",
+    CurrentValue = false,
+    Tooltip = "Continuously report the block under the cursor: name, grid cell and distance.",
+    Callback = function(on)
+        S.infoOn = on
+        if S.infoConn then S.infoConn:Disconnect() S.infoConn = nil end
+        if not on then
+            pcall(function()
+                infoPara:Set({ Title = "Target Info", Content = "Off." })
+            end)
+            return
+        end
+        S.infoConn = RunService.RenderStepped:Connect(function()
+            -- throttled: this runs every frame otherwise
+            local now = tick()
+            if now - S.lastInfo < 0.2 then return end
+            S.lastInfo = now
+            local part = targetPart()
+            if not part then
+                pcall(function()
+                    infoPara:Set({ Title = "Target Info", Content = "No block under cursor." })
+                end)
+                return
+            end
+            local x, y, z = toCell(part.Position)
+            local _, _, hrp = getCharacterParts()
+            local dist = hrp and math.floor((part.Position - hrp.Position).Magnitude) or 0
+            pcall(function()
+                infoPara:Set({
+                    Title = "Target Info",
+                    Content = string.format("Block: %s\nCell: %d, %d, %d\nWorld: %d, %d, %d\nDistance: %d studs",
+                        part.Name, x, y, z,
+                        math.floor(part.Position.X), math.floor(part.Position.Y), math.floor(part.Position.Z),
+                        dist),
+                })
+            end)
+        end)
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Pick Block to Active",
+    Tooltip = "Copy the block under your cursor into the Active Block used by operations.",
+    Callback = function()
+        local part = targetPart()
+        if not part then notifyWarn("Pick Block", "Point at a block first", 3) return end
+        O.activeBlock = part.Name
+        notifyOK("Active Block", part.Name, 3)
+    end
+})
+
+-- ── Views ──────────────────────────────────────────────────────────────────
+local VIEW_DIR = "autoBuilder/views"
+
+local function ensureViewDir()
+    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+    if not isfolder(VIEW_DIR) then makefolder(VIEW_DIR) end
+end
+
+local function viewFiles()
+    local out = {}
+    pcall(function()
+        ensureViewDir()
+        for _, f in ipairs(listfiles(VIEW_DIR)) do
+            if f:lower():sub(-5) == ".json" then out[#out + 1] = f:match("[^/\\]+$") end
+        end
+    end)
+    if #out == 0 then out = { "(none saved)" } end
+    return out
+end
+
+tabEdit:CreateSection("Views", { Collapsible = true })
+
+tabEdit:CreateParagraph({
+    Title = "Views",
+    Content = "Save spots you keep coming back to, then jump straight to them.",
+})
+
+tabEdit:CreateInput({
+    Name = "View Name",
+    Default = "MyView",
+    Callback = function(t) if t and t ~= "" then S.viewName = t end end
+})
+
+tabEdit:CreateButton({
+    Name = "Save Current Position",
+    Tooltip = "Store where you are standing under the view name above.",
+    Callback = function()
+        local _, _, hrp = getCharacterParts()
+        if not hrp then notifyWarn("Views", "No character found", 3) return end
+        local name = S.viewName
+        if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+        ensureViewDir()
+        local p = hrp.Position
+        local ok, err = pcall(function()
+            writefile(VIEW_DIR .. "/" .. name,
+                HttpService:JSONEncode({ x = p.X, y = p.Y, z = p.Z }))
+        end)
+        if not ok then notifyErr("Views", tostring(err), 5) return end
+        pcall(function() viewDropdown:Refresh(viewFiles()) end)
+        notifyOK("View Saved", name, 4)
+    end
+})
+
+viewDropdown = tabEdit:CreateDropdown({
+    Name = "Go To View",
+    Options = viewFiles(), CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        if not name or name == "(none saved)" then return end
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(readfile(VIEW_DIR .. "/" .. name))
+        end)
+        if not ok or type(data) ~= "table" or not data.x then
+            notifyErr("Views", "Could not read " .. tostring(name), 5)
+            return
+        end
+        local _, _, hrp = getCharacterParts()
+        if not hrp then notifyWarn("Views", "No character found", 3) return end
+        hrp.CFrame = CFrame.new(data.x, data.y, data.z) * hrp.CFrame.Rotation
+        notifyOK("View", "Teleported to " .. name, 3)
+    end
+})
+
+-- ── Palette ────────────────────────────────────────────────────────────────
+local PAL_DIR = "autoBuilder/palettes"
+
+local function ensurePalDir()
+    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+    if not isfolder(PAL_DIR) then makefolder(PAL_DIR) end
+end
+
+local function palFiles()
+    local out = {}
+    pcall(function()
+        ensurePalDir()
+        for _, f in ipairs(listfiles(PAL_DIR)) do
+            if f:lower():sub(-5) == ".json" then out[#out + 1] = f:match("[^/\\]+$") end
+        end
+    end)
+    if #out == 0 then out = { "(none saved)" } end
+    return out
+end
+
+tabEdit:CreateSection("Palette", { Collapsible = true })
+
+tabEdit:CreateParagraph({
+    Title = "Palette",
+    Content = "Collect blocks you use together, save the group, and reload it later.",
+})
+
+tabEdit:CreateButton({
+    Name = "Add Active Block to Palette",
+    Tooltip = "Append the current Active Block to the working palette.",
+    Callback = function()
+        for _, n in ipairs(S.palette) do
+            if n == O.activeBlock then
+                notifyWarn("Palette", O.activeBlock .. " is already in it", 3)
+                return
+            end
+        end
+        S.palette[#S.palette + 1] = O.activeBlock
+        notifyOK("Palette", O.activeBlock .. " added (" .. #S.palette .. " total)", 3)
+    end
+})
+
+tabEdit:CreateButton({
+    Name = "Clear Palette",
+    Tooltip = "Empty the working palette.",
+    Callback = function()
+        S.palette = {}
+        notify("Palette", "Emptied", 2, "info")
+    end
+})
+
+tabEdit:CreateInput({
+    Name = "Palette Name",
+    Default = "MyPalette",
+    Callback = function(t) if t and t ~= "" then S.paletteName = t end end
+})
+
+tabEdit:CreateButton({
+    Name = "Save Palette",
+    Tooltip = "Write the working palette to autoBuilder/palettes.",
+    Callback = function()
+        if #S.palette == 0 then notifyWarn("Palette", "Add some blocks first", 3) return end
+        local name = S.paletteName
+        if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+        ensurePalDir()
+        local ok, err = pcall(function()
+            writefile(PAL_DIR .. "/" .. name, HttpService:JSONEncode({ blocks = S.palette }))
+        end)
+        if not ok then notifyErr("Palette", tostring(err), 5) return end
+        pcall(function() paletteDropdown:Refresh(palFiles()) end)
+        notifyOK("Palette Saved", name .. " (" .. #S.palette .. " blocks)", 4)
+    end
+})
+
+paletteDropdown = tabEdit:CreateDropdown({
+    Name = "Load Palette",
+    Options = palFiles(), CurrentOption = {}, MultipleOptions = false,
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        if not name or name == "(none saved)" then return end
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(readfile(PAL_DIR .. "/" .. name))
+        end)
+        if not ok or type(data) ~= "table" or not data.blocks then
+            notifyErr("Palette", "Could not read " .. tostring(name), 5)
+            return
+        end
+        S.palette = data.blocks
+        -- first entry becomes the active block so it is usable immediately
+        if S.palette[1] then O.activeBlock = S.palette[1] end
+        notifyOK("Palette Loaded", #S.palette .. " blocks, active = " .. tostring(S.palette[1]), 5)
+    end
+})
+
+-- ── Theme ──────────────────────────────────────────────────────────────────
+tabEdit:CreateSection("Theme", { Collapsible = true })
+
+tabEdit:CreateDropdown({
+    Name = "UI Theme",
+    Options = Duvome:GetThemes(), CurrentOption = { "Default" }, MultipleOptions = false,
+    Flag = "UITheme",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        Duvome:SetTheme(name)
+        notifyOK("Theme", name, 3)
+    end
+})
+
+tabEdit:CreateColorpicker({
+    Name = "Accent Colour",
+    Default = Color3.fromRGB(120, 80, 255),
+    Callback = function(c) Duvome:SetAccent(c) end
+})
 
 end
 
