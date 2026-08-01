@@ -417,6 +417,7 @@ local function arrayToCFrame(a)
 end
 
 local blockReplacements = {}
+local requiredMinCount = 1
 local function effectiveType(blockType)
     return blockReplacements[blockType] or blockType
 end
@@ -2111,23 +2112,43 @@ local function getRequiredBlocksText(blocks)
 
     local have = scanInventoryCounts()
 
+    -- reverse map so an entry knows the type it was replaced from
+    local swappedFrom = {}
+    for from, to in pairs(blockReplacements) do swappedFrom[to] = from end
+
     local list = {}
     for _, t in ipairs(order) do
-        table.insert(list, { name = resolveBlockDisplayName(t), have = have[t] or 0, need = needed[t] })
+        table.insert(list, {
+            name = resolveBlockDisplayName(t),
+            have = have[t] or 0,
+            need = needed[t],
+            from = swappedFrom[t],
+        })
     end
     table.sort(list, function(a, b) return a.need > b.need end)
 
     local lines = {}
+    local hidden = 0
     for _, e in ipairs(list) do
-        local line = e.name .. " " .. e.have .. "/" .. e.need
-        if e.have < e.need then
-            line = '<font color="rgb(255,80,80)">' .. line .. "</font>"
+        if e.need < requiredMinCount then
+            hidden = hidden + 1
+        else
+            -- show the swap inline when this type is being replaced
+            local label = e.name
+            if e.from then
+                label = resolveBlockDisplayName(e.from) .. " -> " .. e.name
+            end
+            local line = label .. "  " .. e.have .. "/" .. e.need
+            if e.have < e.need then
+                line = '<font color="rgb(255,80,80)">' .. line .. "</font>"
+            end
+            table.insert(lines, line)
         end
-        table.insert(lines, line)
     end
 
     table.insert(lines, "")
-    table.insert(lines, "Types: " .. #list)
+    table.insert(lines, "Types: " .. (#list - hidden)
+        .. (hidden > 0 and ("  (" .. hidden .. " under " .. requiredMinCount .. " hidden)") or ""))
 
     return table.concat(lines, "\n")
 end
@@ -2622,8 +2643,14 @@ local function showSelBox()
         if not startSize then return end
         local normal = Vector3.FromNormalId(face)
         local axisAbs = Vector3.new(math.abs(normal.X), math.abs(normal.Y), math.abs(normal.Z))
-        local newSize = startSize + axisAbs * distance
-        newSize = Vector3.new(math.max(4, newSize.X), math.max(4, newSize.Y), math.max(4, newSize.Z))
+        -- Snap to whole blocks. Raw handle distance is continuous, which let the
+        -- box land on half a block and made the saved region ambiguous.
+        local snapped = math.floor(distance / 3 + 0.5) * 3
+        local newSize = startSize + axisAbs * snapped
+        newSize = Vector3.new(
+            math.max(3, math.floor(newSize.X / 3 + 0.5) * 3),
+            math.max(3, math.floor(newSize.Y / 3 + 0.5) * 3),
+            math.max(3, math.floor(newSize.Z / 3 + 0.5) * 3))
         local applied = newSize - startSize
         local worldNormal = startCF:VectorToWorldSpace(normal)
         selBoxPart.Size = newSize
@@ -2719,11 +2746,6 @@ BuilderAPI.toggles.brush = saveTab:CreateToggle({
 })
 
 
-saveTab:CreateParagraph({
-    Title = "Split / Mirror Save",
-    Content = "Full saves it all. Half saves one side and mirrors it. Quarter saves one corner and mirrors it 4 ways. Great for even builds."
-})
-
 saveTab:CreateDropdown({
     Name = "Save Mode",
     Options = { "Full", "Half (mirror)", "Quarter (4x)" },
@@ -2787,11 +2809,6 @@ end
 
 previewTab:CreateSection("Preview", { Collapsible = true, Column = "right" })
 
-previewTab:CreateParagraph({
-    Title = "Schematic Preview",
-    Content = "Shows your build as see-through blocks in front of you. Each block type has its own color."
-})
-
 BuilderAPI.toggles.preview = previewTab:CreateToggle({
     Name = "Preview Build",
     CurrentValue = false,
@@ -2854,6 +2871,8 @@ BuilderAPI.toggles.handles = previewTab:CreateToggle({
 -- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
 
+-- declared before use: the required-blocks scan refreshes these
+local buildTypeDropdown, invBlockDropdown
 local requiredBlocksParagraph = previewTab:CreateParagraph({
     Title = "Required Blocks",
     Content = "Tap 'Show Required Blocks' to see what you need."
@@ -2874,6 +2893,10 @@ end)
 
 previewTab:CreateButton({
     Name = "Show Required Blocks",
+    Gear = {
+        { Type = "slider", Name = "Hide under", Min = 1, Max = 64, Default = 1,
+          Callback = function(v) requiredMinCount = v end },
+    },
     Callback = function()
         local blocks = lastPreviewBlocks
         if not blocks then
@@ -2901,6 +2924,11 @@ previewTab:CreateButton({
                 Title = "Required Blocks (Missing)",
                 Content = getRequiredBlocksText(missing)
             })
+            -- fill the replace pickers now, so Refresh is not a separate step
+            pcall(function()
+                buildTypeDropdown:Refresh(getBuildTypeOptions())
+                invBlockDropdown:Refresh(getInventoryOptions())
+            end)
             notify("Done", "Still need " .. #missing .. " block(s)", 4)
         end)
     end
@@ -2911,7 +2939,9 @@ local buildTypeMap = {}
 local invTypeMap = {}
 local replaceFromType = nil
 local replaceToType = nil
-local buildTypeDropdown, invBlockDropdown, replaceListParagraph
+-- replacements now show inline in the required list; this stub keeps the
+-- existing :Set calls harmless
+local replaceListParagraph = { Set = function() end }
 
 local function getBuildTypeOptions()
     buildTypeMap = {}
@@ -2999,11 +3029,6 @@ invBlockDropdown = previewTab:CreateDropdown({
         local disp = (typeof(option) == "table") and option[1] or option
         replaceToType = invTypeMap[disp]
     end
-})
-
-replaceListParagraph = previewTab:CreateParagraph({
-    Title = "Current Replacements",
-    Content = "No replacements set."
 })
 
 previewTab:CreateButton({
