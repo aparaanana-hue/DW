@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 15:18"
+local IAB_BUILD = "Aug 01 16:19"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -167,6 +167,7 @@ local function wrapTab(container)
             Search = true,
             Gear = cfg.Gear,
             GearAction = cfg.GearAction,
+            Actions = cfg.Actions,
             Flag = cfg.Flag,
             Save = cfg.Flag ~= nil,
             Callback = function(v)
@@ -2239,14 +2240,14 @@ fileDropdown = auto:CreateDropdown({
             end
         end,
     },
-    -- Refresh and Delete live in this dropdown's gear rather than as two more
-    -- buttons in the panel.
-    Gear = {
-        { Type = "button", Name = "Refresh File List", OnClick = function()
+    -- Refresh and Delete sit in the dropdown list itself; a gear for two
+    -- actions was more chrome than they deserve.
+    Actions = {
+        { Text = "Refresh", OnClick = function()
             pcall(function() fileDropdown:Refresh(getFiles()) end)
             notify("Files", "List refreshed", 2, "info")
         end },
-        { Type = "button", Name = "Delete Selected File", OnClick = function()
+        { Text = "Delete", OnClick = function()
             if not selectedFile or selectedFile == "" then
                 notifyWarn("No File", "Pick a build file first", 3)
                 return
@@ -2300,7 +2301,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
           Callback = function(v) pipelineMode = v end },
         { Type = "slider", Name = "Pipeline Depth", Min = 2, Max = 30, Default = 8,
           Callback = function(v) pipelineDepth = v end },
-        { Type = "toggle", Name = "Walk To Each Block", Default = true,
+        { Type = "toggle", Name = "Walk To Block", Default = true,
           Callback = function(v) moveToBuildPosition = v end },
     },
     Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
@@ -2458,7 +2459,20 @@ blockSelDown = false
 selectedBlocks = {}
 blockSelCount = 0
 
+-- A block in this game can be a Model of several parts (grass has its surface,
+-- a tree has trunk and branches). Clicking one part used to grab that part
+-- alone, so you could pick a branch off a tree. Resolve to the whole thing.
+function resolveBlockRoot(part)
+    local folder = getBlocksFolder()
+    local node = part
+    while node and node.Parent and node.Parent ~= folder and node.Parent ~= Workspace do
+        node = node.Parent
+    end
+    return node or part
+end
+
 function highlightBlock(part)
+    part = resolveBlockRoot(part)
     if selectedBlocks[part] then return end
     local h = Instance.new("SelectionBox")
     h.Adornee = part
@@ -2472,6 +2486,7 @@ function highlightBlock(part)
 end
 
 function unhighlightBlock(part)
+    part = resolveBlockRoot(part)
     local h = selectedBlocks[part]
     if h then h:Destroy() selectedBlocks[part] = nil blockSelCount = blockSelCount - 1 end
 end
@@ -2708,7 +2723,19 @@ local function showSelBox()
         local applied = newSize - startSize
         local worldNormal = startCF:VectorToWorldSpace(normal)
         selBoxPart.Size = newSize
-        selBoxPart.CFrame = startCF + worldNormal * (applied:Dot(axisAbs) / 2)
+        local moved = startCF + worldNormal * (applied:Dot(axisAbs) / 2)
+        -- Align the box to the block lattice. Snapping size alone still let the
+        -- box sit between blocks, so edges never lined up with real blocks.
+        local pos = moved.Position
+        local function snapAxis(v, size)
+            -- even block counts sit on boundaries, odd ones on centres
+            local half = (math.floor(size / 3 + 0.5) % 2 == 0) and 0 or 1.5
+            return math.floor((v - half) / 3 + 0.5) * 3 + half
+        end
+        selBoxPart.CFrame = CFrame.new(
+            snapAxis(pos.X, newSize.X),
+            snapAxis(pos.Y, newSize.Y),
+            snapAxis(pos.Z, newSize.Z))
     end)
     selHandles.MouseButton1Up:Connect(function()
         startSize = nil
@@ -11154,7 +11181,8 @@ Duvome:AddWatch("File", function()
     return selectedFile and selectedFile:gsub("%.json$", "") or false
 end)
 
-pcall(function() Duvome:SetWatchVisible(true) end)
+-- watch list stays hidden until asked for
+pcall(function() Duvome:SetWatchVisible(false) end)
 
 notifyOK("Islands Auto Builder", "Build " .. IAB_BUILD, 6)
 Duvome:AddWatch("Build", function() return IAB_BUILD end)

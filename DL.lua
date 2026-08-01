@@ -78,8 +78,8 @@ local DuvomeLibrary = {
 	Flags = {},
 	Themes = {
 		Default = {
-			Main    = Color3.fromRGB(14, 14, 14),
-			Second  = Color3.fromRGB(28, 28, 28),
+			Main    = Color3.fromRGB(0, 0, 0),
+			Second  = Color3.fromRGB(20, 20, 20),
 			Stroke  = Color3.fromRGB(95, 95, 95),
 			Divider = Color3.fromRGB(70, 70, 70),
 			Text    = Color3.fromRGB(245, 245, 245),
@@ -577,7 +577,7 @@ function DuvomeLibrary:MakeNotification(NotificationConfig)
 				Size      = UDim2.new(1, -30, 0, 20),
 				Position  = UDim2.new(0, 26, 0, 0),
 				Font      = Enum.Font.GothamBold,
-				TextColor3 = Color3.fromRGB(220, 180, 255),
+				TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
 				Name      = "Title"
 			}),
 			SetProps(MakeElement("Label", NotificationConfig.Content, 13), {
@@ -586,12 +586,12 @@ function DuvomeLibrary:MakeNotification(NotificationConfig)
 				Font          = Enum.Font.GothamSemibold,
 				Name          = "Content",
 				AutomaticSize = Enum.AutomaticSize.Y,
-				TextColor3    = Color3.fromRGB(170, 130, 210),
+				TextColor3    = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].TextDark,
 				TextWrapped   = true
 			})
 		}
 
-		local NotificationFrame = SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(12, 4, 24), 0, 10), {
+		local NotificationFrame = SetChildren(SetProps(MakeElement("RoundFrame", DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Main, 0, 10), {
 			Parent              = NotificationParent,
 			Size                = UDim2.new(1, 0, 0, 0),
 			Position            = UDim2.new(1, -55, 0, 0),
@@ -4221,6 +4221,28 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				
+				-- Custom actions live in the list itself rather than behind a gear.
+				if DropdownConfig.Actions then
+					local actRow = Create("Frame", {BackgroundTransparency = 1,
+						Size = UDim2.new(1, -4, 0, 24), LayoutOrder = -2, Parent = DropdownContainer})
+					local n = #DropdownConfig.Actions
+					for idx, act in ipairs(DropdownConfig.Actions) do
+						local b = Create("TextButton", {
+							Text = act.Text or "Action", Font = Enum.Font.GothamBold, TextSize = 11,
+							TextColor3 = Color3.fromRGB(235,235,240),
+							BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Main,
+							BorderSizePixel = 0,
+							Size = UDim2.new(1 / n, -2, 1, 0),
+							Position = UDim2.new((idx - 1) / n, 0, 0, 0),
+							Parent = actRow})
+						AddThemeObject(b, "Main")
+						Create("UICorner", {CornerRadius = UDim.new(0,4), Parent = b})
+						AddThemeObject(Create("UIStroke", {Thickness = 1, Parent = b}), "Stroke")
+						b.MouseButton1Click:Connect(function()
+							if act.OnClick then pcall(act.OnClick) end
+						end)
+					end
+				end
 				if DropdownConfig.SelectAll and DropdownConfig.MultiSelect then
 					local btnRow = Create("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, -4, 0, 24), LayoutOrder = -1, Parent = DropdownContainer})
 					local function mkBtn(txt, xoff, w, cb)
@@ -4321,6 +4343,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					local _extra = 0
 					if SearchBox then _extra = _extra + 30 end
 					if DropdownConfig.SelectAll and DropdownConfig.MultiSelect then _extra = _extra + 28 end
+					if DropdownConfig.Actions then _extra = _extra + 28 end
 					if #Dropdown.Options > MaxElements then
 						local _ddSize = Dropdown.Toggled and UDim2.new(1,0,0,38+_extra+(MaxElements*28)) or UDim2.new(1,0,0,38)
 						TweenService:Create(DropdownFrame,TweenInfo.new(.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=_ddSize}):Play()
@@ -5941,13 +5964,20 @@ function DuvomeLibrary:AddWatch(name, stateFn, keyCode, setFn)
 		BackgroundTransparency = 1, Size = UDim2.new(0,40,1,0), Position = UDim2.new(1,-40,0,0),
 		TextXAlignment = Enum.TextXAlignment.Right, Parent = row})
 	if setFn then
-		row.MouseEnter:Connect(function()
-			nameLbl.TextColor3 = Color3.fromRGB(235, 210, 255)
+		-- Click target is the ON/OFF text only. Making the whole row clickable
+		-- meant brushing the label lit it up and invited a misclick.
+		local hit = Create("TextButton", {
+			Text = "", AutoButtonColor = false, BackgroundTransparency = 1,
+			BorderSizePixel = 0, Size = UDim2.new(0, 40, 1, 0),
+			Position = UDim2.new(1, -40, 0, 0), ZIndex = 3, Parent = row
+		})
+		hit.MouseEnter:Connect(function()
+			stateLbl.TextTransparency = 0.35
 		end)
-		row.MouseLeave:Connect(function()
-			nameLbl.TextColor3 = Color3.fromRGB(210, 210, 220)
+		hit.MouseLeave:Connect(function()
+			stateLbl.TextTransparency = 0
 		end)
-		row.MouseButton1Click:Connect(function()
+		hit.MouseButton1Click:Connect(function()
 			local cur = stateFn()
 			pcall(setFn, not (cur and cur ~= false))
 		end)
