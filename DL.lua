@@ -78,6 +78,14 @@ local DuvomeLibrary = {
 	Flags = {},
 	Themes = {
 		Default = {
+			Main    = Color3.fromRGB(14, 14, 14),
+			Second  = Color3.fromRGB(28, 28, 28),
+			Stroke  = Color3.fromRGB(95, 95, 95),
+			Divider = Color3.fromRGB(70, 70, 70),
+			Text    = Color3.fromRGB(245, 245, 245),
+			TextDark = Color3.fromRGB(155, 155, 155)
+		},
+		Purple = {
 			Main    = Color3.fromRGB(10, 4, 20),
 			Second  = Color3.fromRGB(20, 8, 36),
 			Stroke  = Color3.fromRGB(60, 20, 100),
@@ -119,6 +127,7 @@ local DuvomeLibrary = {
 		},
 	},
 	SelectedTheme = "Default",
+	Glass = 0.16,
 	Folder = nil,
 	SaveCfg = false
 }
@@ -294,6 +303,15 @@ local function AddThemeObject(Object, Type)
 	end
 	table.insert(DuvomeLibrary.ThemeObjects[Type], Object)
 	Object[ReturnProperty(Object)] = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme][Type]
+	-- Surfaces become glass: the game shows through, tinted by the theme colour.
+	-- Only fully opaque objects are touched, so elements that were deliberately
+	-- semi-transparent keep their own value.
+	if (Type == "Main" or Type == "Second") and Object:IsA("GuiObject") then
+		if Object.BackgroundTransparency == 0 then
+			Object:SetAttribute("DuvomeGlass", true)
+			Object.BackgroundTransparency = DuvomeLibrary.Glass
+		end
+	end
 	return Object
 end
 
@@ -5860,6 +5878,19 @@ function DuvomeLibrary:SetTheme(themeName)
 	SetTheme()  
 	return true
 end
+function DuvomeLibrary:SetGlass(amount)
+	DuvomeLibrary.Glass = math.clamp(tonumber(amount) or 0, 0, 0.9)
+	for _, Type in pairs({ "Main", "Second" }) do
+		for _, Object in pairs(DuvomeLibrary.ThemeObjects[Type] or {}) do
+			pcall(function()
+				if Object:GetAttribute("DuvomeGlass") then
+					Object.BackgroundTransparency = DuvomeLibrary.Glass
+				end
+			end)
+		end
+	end
+end
+
 function DuvomeLibrary:GetThemes()
 	local names = {}
 	for name in pairs(DuvomeLibrary.Themes) do table.insert(names, name) end

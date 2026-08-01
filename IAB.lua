@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 15:07"
+local IAB_BUILD = "Aug 01 15:18"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -8486,6 +8486,15 @@ tabEdit:CreateDropdown({
         local name = (typeof(v) == "table") and v[1] or v
         Duvome:SetTheme(name)
         notifyOK("Theme", name, 3)
+    end
+})
+
+tabEdit:CreateSlider({
+    Name = "Glass",
+    Range = { 0, 80 }, Increment = 2, CurrentValue = 16, Suffix = "%",
+    Flag = "UIGlass",
+    Callback = function(v)
+        pcall(function() Duvome:SetGlass(v / 100) end)
     end
 })
 
