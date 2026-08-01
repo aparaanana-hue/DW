@@ -2098,6 +2098,58 @@ local function resolveBlockDisplayName(blockType)
     return result
 end
 
+
+-- ── Block list ─────────────────────────────────────────────────────────────
+-- One source for every block picker. Filters out tools and anything without
+-- geometry (the raw folder contains axes and the like), and presents display
+-- names while callers keep working in internal names.
+local blockListCache, blockByDisplay = nil, {}
+
+local function isPlaceableBlock(inst)
+    if inst:IsA("Tool") then return false end
+    if inst:FindFirstChild("Handle") then return false end
+    local low = inst.Name:lower()
+    for _, bad in ipairs({ "axe", "pickaxe", "sword", "shovel", "hoe", "bow",
+                           "rod", "tool", "bucket", "hammer", "scythe" }) do
+        if low:find(bad) then return false end
+    end
+    if inst:IsA("BasePart") then return true end
+    return inst:FindFirstChildWhichIsA("BasePart", true) ~= nil
+end
+
+local function blockDisplayList()
+    if blockListCache then return blockListCache end
+    local out = {}
+    blockByDisplay = {}
+    local folder = ReplicatedStorage:FindFirstChild("blocks")
+    if folder then
+        for _, v in ipairs(folder:GetChildren()) do
+            if isPlaceableBlock(v) then
+                local d = resolveBlockDisplayName(v.Name)
+                if not blockByDisplay[d] then
+                    blockByDisplay[d] = v.Name
+                    out[#out + 1] = d
+                end
+            end
+        end
+    end
+    table.sort(out)
+    if #out == 0 then out = { "Stone", "Grass" } blockByDisplay = { Stone = "stone", Grass = "grass" } end
+    blockListCache = out
+    return out
+end
+
+-- display name back to the internal id the placement code needs
+local function blockIdFor(display)
+    if not display then return nil end
+    blockDisplayList()
+    return blockByDisplay[display] or display
+end
+
+local function blockDisplayFor(id)
+    return resolveBlockDisplayName(id)
+end
+
 local function getRequiredBlocksText(blocks)
     local needed = {}
     local order = {}
@@ -3523,18 +3575,25 @@ structTab:CreateDropdown({
     Flag = "StructMode",
     Callback = function(v)
         structMode = (typeof(v) == "table") and v[1] or v
+        -- keep an open panel in step with the chosen shape
+        if BuilderAPI.shapePanelSync then BuilderAPI.shapePanelSync() end
         structRefreshPreview()
     end
 })
 
-structTab:CreateToggle({
+structTab:CreateButton({
     Name = "Shape Panel",
-    CurrentValue = false,
-    Tooltip = "Floating two-column panel with every shape parameter. Drag it by its title bar.",
-    Callback = function(on)
+    Tooltip = "Opens a panel with the settings that matter for the shape you picked.",
+    Callback = function()
         local sp = BuilderAPI.shapePanel
         if not sp then return end
-        if on then sp:Show() else sp:Hide() end
+        -- a button, but it behaves as a switch
+        if sp:IsOpen() then
+            sp:Hide()
+        else
+            sp:Show()
+            if BuilderAPI.shapePanelSync then BuilderAPI.shapePanelSync() end
+        end
     end
 })
 
@@ -3550,7 +3609,7 @@ local structBlockDropdown = structTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "StructBlock",
     Callback = function(v)
-        structSelectedBlock = (typeof(v) == "table") and v[1] or v
+        structSelectedBlock = blockIdFor((typeof(v) == "table") and v[1] or v)
         structRefreshPreview()
     end
 })
@@ -3917,16 +3976,7 @@ local cityYardBlock  = "grass"
 local cityGrassBlock = "grass"
 
 local function cityBlockOptions()
-    local seen, b = {}, {}
-    local f = ReplicatedStorage:FindFirstChild("blocks")
-    if f then
-        for _, v in ipairs(f:GetChildren()) do
-            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
-        end
-    end
-    table.sort(b)
-    if #b == 0 then b = { "stone", "grass" } end
-    return b
+    return blockDisplayList()
 end
 
 local function cityRand(a, b, salt)
@@ -4195,10 +4245,11 @@ cityTab:CreateDropdown({
 
 cityTab:CreateDropdown({
     Name = "Set Material To",
-    Options = cityOpts, CurrentOption = { "stone" }, MultipleOptions = false,
+    Options = cityOpts, CurrentOption = { blockDisplayFor("stone") }, MultipleOptions = false,
     Flag = "CitySlotVal",
     Callback = function(v)
         local blk = (typeof(v) == "table") and v[1] or v
+        blk = blockIdFor(blk)
         cityBlockSlots.pick[3](blk)
         cityBlockSlots.current[cityBlockSlots.pick[1]] = blk
         cityBlockSlots.refresh()
@@ -4317,16 +4368,7 @@ local function platRand(x, y, salt)
 end
 
 local function platBlockOptions()
-    local seen, b = {}, {}
-    local f = ReplicatedStorage:FindFirstChild("blocks")
-    if f then
-        for _, v in ipairs(f:GetChildren()) do
-            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
-        end
-    end
-    table.sort(b)
-    if #b == 0 then b = { "whiteBlock", "stone" } end
-    return b
+    return blockDisplayList()
 end
 
 local function platQuadCell(qx, qy, half)
@@ -4446,9 +4488,9 @@ platTab:CreateDivider()
 local platOpts = platBlockOptions()
 
 platTab:CreateDropdown({
-    Name = "Pattern Block", Options = platOpts, CurrentOption = { "whiteBlock" },
+    Name = "Pattern Block", Options = platOpts, CurrentOption = { blockDisplayFor("whiteBlock") },
     MultipleOptions = false, Flag = "PlatFill",
-    Callback = function(v) platFillBlock = (typeof(v) == "table") and v[1] or v end
+    Callback = function(v) platFillBlock = blockIdFor((typeof(v) == "table") and v[1] or v) end
 })
 
 -- Declared up front so the toggle below can show/hide it.
@@ -4469,9 +4511,9 @@ platTab:CreateToggle({
 })
 
 platBaseDropdown = platTab:CreateDropdown({
-    Name = "Background Block", Options = platOpts, CurrentOption = { "stone" },
+    Name = "Background Block", Options = platOpts, CurrentOption = { blockDisplayFor("stone") },
     MultipleOptions = false, Flag = "PlatBase",
-    Callback = function(v) platBaseBlock = (typeof(v) == "table") and v[1] or v end
+    Callback = function(v) platBaseBlock = blockIdFor((typeof(v) == "table") and v[1] or v) end
 })
 
 platTab:CreateDivider()
@@ -4932,37 +4974,28 @@ toolTab:CreateDivider()
 -- cityBlockOptions lives inside a closed do-block, so the tools tab builds its
 -- own list of placeable block names from ReplicatedStorage.
 local function toolBlockOptions()
-    local seen, b = {}, {}
-    local f = ReplicatedStorage:FindFirstChild("blocks")
-    if f then
-        for _, v in ipairs(f:GetChildren()) do
-            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
-        end
-    end
-    table.sort(b)
-    if #b == 0 then b = { "stone", "grass" } end
-    return b
+    return blockDisplayList()
 end
 
 local blockOpts = toolBlockOptions()
 
 toolTab:CreateDropdown({
     Name = "Primary Block",
-    Options = blockOpts, CurrentOption = { "grass" }, MultipleOptions = false,
+    Options = blockOpts, CurrentOption = { blockDisplayFor("grass") }, MultipleOptions = false,
     Flag = "ToolBlockA",
-    Callback = function(v) T.paintBlock = (typeof(v) == "table") and v[1] or v end
+    Callback = function(v) T.paintBlock = blockIdFor((typeof(v) == "table") and v[1] or v) end
 })
 
 toolTab:CreateDropdown({
     Name = "Secondary Block",
-    Options = blockOpts, CurrentOption = { "stone" }, MultipleOptions = false,
+    Options = blockOpts, CurrentOption = { blockDisplayFor("stone") }, MultipleOptions = false,
     Flag = "ToolBlockB",
     Callback = function(v) T.paintBlockB = (typeof(v) == "table") and v[1] or v end
 })
 
 toolTab:CreateDropdown({
     Name = "Replace This Block",
-    Options = blockOpts, CurrentOption = { "stone" }, MultipleOptions = false,
+    Options = blockOpts, CurrentOption = { blockDisplayFor("stone") }, MultipleOptions = false,
     Flag = "ToolBlockFrom",
     Callback = function(v) T.fromBlock = (typeof(v) == "table") and v[1] or v end
 })
@@ -7236,16 +7269,7 @@ opsStatus = opsTab:CreateParagraph({
 
 -- Own copy: the Tools tab's helper lives in a different, closed scope.
 local function opsBlockOptions()
-    local seen, b = {}, {}
-    local f = ReplicatedStorage:FindFirstChild("blocks")
-    if f then
-        for _, v in ipairs(f:GetChildren()) do
-            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
-        end
-    end
-    table.sort(b)
-    if #b == 0 then b = { "stone", "grass" } end
-    return b
+    return blockDisplayList()
 end
 
 local opsBlocks = opsBlockOptions()
@@ -7289,10 +7313,11 @@ opsTab:CreateDropdown({
 
 opsTab:CreateDropdown({
     Name = "Set Slot To",
-    Options = opsBlocks, CurrentOption = { "stone" }, MultipleOptions = false,
+    Options = opsBlocks, CurrentOption = { blockDisplayFor("stone") }, MultipleOptions = false,
     Flag = "OpsSlotVal",
     Callback = function(v)
         local blk = (typeof(v) == "table") and v[1] or v
+        blk = blockIdFor(blk)
         O.slotPick[3](blk)
         O.refreshSlots()
         notify("Blocks", O.slotPick[1] .. " = " .. blk, 2, "info")
@@ -10755,62 +10780,93 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 do
 
-local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 190, Height = 420, Side = "right" })
+local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 200, Height = 420, Side = "right" })
 BuilderAPI.shapePanel = shapePanel
 
-for _, sl in ipairs({
-    { "Radius / Length", 3, 450, 3, 30, function(v) structRadius = v end },
-    { "Width",           3, 450, 3, 30, function(v) structWidth  = v end },
-    { "Height",          3, 450, 3, 30, function(v) structHeight = v end },
-    { "Thickness",       1,  10, 1,  1, function(v) structThickness = v end },
-}) do
-    shapePanel:AddSlider({
-        Name = sl[1], Min = sl[2], Max = sl[3], Increment = sl[4], Default = sl[5],
-        ValueName = "blk",
-        Callback = function(v)
-            sl[6](v)
-            structHeightmap = nil
-            BuilderAPI.structRefresh()
-        end
-    })
+-- Which controls matter per shape. Anything not listed is hidden for that
+-- shape, so the panel only ever shows what actually affects the result.
+local SHAPE_FIELDS = {
+    ["Sphere"]         = { "radius", "hollow", "thickness", "rot" },
+    ["Dome"]           = { "radius", "hollow", "thickness", "rot" },
+    ["Cylinder"]       = { "radius", "height", "hollow", "thickness", "rot" },
+    ["Tube / Wall"]    = { "radius", "height", "thickness", "rot" },
+    ["Cone"]           = { "radius", "height", "hollow", "rot" },
+    ["Pyramid"]        = { "radius", "height", "hollow", "rot" },
+    ["Torus (Ring)"]   = { "radius", "thickness", "rot" },
+    ["Box"]            = { "radius", "width", "height", "hollow", "thickness", "rot" },
+    ["Octahedron"]     = { "radius", "hollow", "rot" },
+    ["Spiral Stairs"]  = { "radius", "height", "turns", "width", "rot" },
+    ["Landscape"]      = { "radius", "width", "height", "smooth", "seed", "fill", "rot" },
+    ["Square Floor"]   = { "radius", "width", "rot" },
+    ["Circle"]         = { "radius", "thickness", "rot" },
+}
+
+local shapeCtl = {}
+
+local function addShapeControls()
+    shapeCtl.radius = shapePanel:AddSlider({
+        Name = "Radius / Length", Min = 3, Max = 450, Increment = 3, Default = 30, ValueName = "blk",
+        Callback = function(v) structRadius = v structHeightmap = nil BuilderAPI.structRefresh() end })
+    shapeCtl.width = shapePanel:AddSlider({
+        Name = "Width", Min = 3, Max = 450, Increment = 3, Default = 30, ValueName = "blk",
+        Callback = function(v) structWidth = v structHeightmap = nil BuilderAPI.structRefresh() end })
+    shapeCtl.height = shapePanel:AddSlider({
+        Name = "Height", Min = 3, Max = 450, Increment = 3, Default = 30, ValueName = "blk",
+        Callback = function(v) structHeight = v structHeightmap = nil BuilderAPI.structRefresh() end })
+    shapeCtl.thickness = shapePanel:AddSlider({
+        Name = "Thickness", Min = 1, Max = 10, Increment = 1, Default = 1, ValueName = "blk",
+        Callback = function(v) structThickness = v BuilderAPI.structRefresh() end })
+    shapeCtl.turns = shapePanel:AddSlider({
+        Name = "Spiral Turns", Min = 1, Max = 40, Increment = 1, Default = 4,
+        Callback = function(v) structTurns = v / 4 BuilderAPI.structRefresh() end })
+    shapeCtl.smooth = shapePanel:AddSlider({
+        Name = "Smoothness", Min = 5, Max = 200, Increment = 1, Default = 25,
+        Callback = function(v) structSmooth = v structHeightmap = nil BuilderAPI.structRefresh() end })
+    shapeCtl.seed = shapePanel:AddSlider({
+        Name = "Seed", Min = 1, Max = 10000, Increment = 1, Default = 1,
+        Callback = function(v) structSeed = v structHeightmap = nil BuilderAPI.structRefresh() end })
+    shapeCtl.hollow = shapePanel:AddToggle({
+        Name = "Hollow", Default = true,
+        Callback = function(v) structHollow = v BuilderAPI.structRefresh() end })
+    shapeCtl.fill = shapePanel:AddToggle({
+        Name = "Fill Steps", Default = false,
+        Callback = function(v) structFillSteps = v BuilderAPI.structRefresh() end })
+    shapeCtl.rotX = shapePanel:AddSlider({
+        Name = "Tilt (X)", Min = 0, Max = 360, Increment = 90, Default = 0, ValueName = "deg",
+        Callback = function(v) structRX = v BuilderAPI.structRefresh() end })
+    shapeCtl.rotY = shapePanel:AddSlider({
+        Name = "Spin (Y)", Min = 0, Max = 360, Increment = 90, Default = 0, ValueName = "deg",
+        Callback = function(v) structRY = v BuilderAPI.structRefresh() end })
+    shapeCtl.rotZ = shapePanel:AddSlider({
+        Name = "Roll (Z)", Min = 0, Max = 360, Increment = 90, Default = 0, ValueName = "deg",
+        Callback = function(v) structRZ = v BuilderAPI.structRefresh() end })
 end
+addShapeControls()
 
-shapePanel:AddToggle({
-    Name = "Hollow", Default = true,
-    Callback = function(v) structHollow = v BuilderAPI.structRefresh() end
-})
-shapePanel:AddToggle({
-    Name = "Fill Steps", Default = false,
-    Callback = function(v) structFillSteps = v BuilderAPI.structRefresh() end
-})
-
-shapePanel:AddSlider({
-    Name = "Spiral Turns", Min = 1, Max = 40, Increment = 1, Default = 4,
-    Callback = function(v)
-        -- panel sliders are whole numbers; the shape steps in 0.25
-        structTurns = v / 4
-        BuilderAPI.structRefresh()
+-- Show only the fields the current shape uses, and retitle the panel.
+function BuilderAPI.shapePanelSync()
+    local fields = SHAPE_FIELDS[structMode] or { "radius", "height", "hollow", "rot" }
+    local want = {}
+    for _, f in ipairs(fields) do want[f] = true end
+    local map = {
+        radius = shapeCtl.radius, width = shapeCtl.width, height = shapeCtl.height,
+        thickness = shapeCtl.thickness, turns = shapeCtl.turns, smooth = shapeCtl.smooth,
+        seed = shapeCtl.seed, hollow = shapeCtl.hollow, fill = shapeCtl.fill,
+    }
+    for key, ctl in pairs(map) do
+        if ctl and ctl.SetVisible then pcall(function() ctl:SetVisible(want[key] == true) end) end
     end
-})
-shapePanel:AddSlider({
-    Name = "Smoothness", Min = 5, Max = 200, Increment = 1, Default = 25,
-    Callback = function(v) structSmooth = v structHeightmap = nil BuilderAPI.structRefresh() end
-})
-shapePanel:AddSlider({
-    Name = "Seed", Min = 1, Max = 10000, Increment = 1, Default = 1,
-    Callback = function(v) structSeed = v structHeightmap = nil BuilderAPI.structRefresh() end
-})
-
-for _, ax in ipairs({
-    { "Tilt (X)", function(v) structRX = v end },
-    { "Spin (Y)", function(v) structRY = v end },
-    { "Roll (Z)", function(v) structRZ = v end },
-}) do
-    shapePanel:AddSlider({
-        Name = ax[1], Min = 0, Max = 360, Increment = 90, Default = 0, ValueName = "deg",
-        Callback = function(v) ax[2](v) BuilderAPI.structRefresh() end
-    })
+    for _, ctl in ipairs({ shapeCtl.rotX, shapeCtl.rotY, shapeCtl.rotZ }) do
+        if ctl and ctl.SetVisible then pcall(function() ctl:SetVisible(want.rot == true) end) end
+    end
+    pcall(function() shapePanel:SetTitle(structMode) end)
 end
+BuilderAPI.shapePanelSync()
+
+end
+
+do
+
 
 end
 

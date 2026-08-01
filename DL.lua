@@ -4355,6 +4355,10 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						Size = UDim2.new(1,0,1,0), ZIndex = 8, Parent = dotBtn,
 					}), "TextDark")
 					Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=dotBtn})
+					-- The Selected label runs to the right edge, so shorten it to
+					-- make room; otherwise the gear covers the chosen value.
+					local selLbl = (DropdownFrame:FindFirstChild("F") or DropdownFrame):FindFirstChild("Selected")
+					if selLbl then selLbl.Size = UDim2.new(0.5, -72, 1, 0) end
 					local _pop, showP, hideP, isOpen, setOpen = MakePopover(dotBtn, DropdownConfig.Gear)
 					dotBtn.MouseButton1Click:Connect(function()
 						if isOpen() then hideP() setOpen(false) else showP() setOpen(true) end
@@ -4927,6 +4931,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				function api:Show()
+					-- Right-hand space holds one panel. Close any other side panel
+					-- first so they replace each other instead of stacking.
+					DuvomeLibrary._sidePanels = DuvomeLibrary._sidePanels or {}
+					for _, other in ipairs(DuvomeLibrary._sidePanels) do
+						if other ~= api and other.IsOpen and other:IsOpen() then
+							other:Hide()
+						end
+					end
 					isOpen = true
 					liftZ()
 					-- Step aside if the Configs or avatar panel already holds this
@@ -4967,6 +4979,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 				function api:Toggle() if isOpen then api:Hide() else api:Show() end return isOpen end
 				function api:IsOpen() return isOpen end
+				function api:SetTitle(t)
+					local lbl = Panel:FindFirstChildWhichIsA("TextLabel")
+					if lbl then lbl.Text = tostring(t) end
+				end
+				DuvomeLibrary._sidePanels = DuvomeLibrary._sidePanels or {}
+				table.insert(DuvomeLibrary._sidePanels, api)
 				return api
 			end
 		end
