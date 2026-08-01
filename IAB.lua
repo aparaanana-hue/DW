@@ -162,6 +162,7 @@ local function wrapTab(container)
             SelectAll = cfg.MultipleOptions or false,
             Search = true,
             Gear = cfg.Gear,
+            GearAction = cfg.GearAction,
             Flag = cfg.Flag,
             Save = cfg.Flag ~= nil,
             Callback = function(v)
@@ -3565,6 +3566,21 @@ structTab:CreateSection("Structures")
 
 structTab:CreateDropdown({
     Name = "Shape Mode",
+    -- The gear slot opens the panel for whichever shape is selected, rather
+    -- than a settings popover.
+    GearAction = {
+        Icon = "fingerprint",
+        OnClick = function()
+            local sp = BuilderAPI.shapePanel
+            if not sp then return end
+            if sp:IsOpen() then
+                sp:Hide()
+            else
+                sp:Show()
+                if BuilderAPI.shapePanelSync then BuilderAPI.shapePanelSync() end
+            end
+        end,
+    },
     Options = {
         "Sphere", "Dome", "Cylinder", "Tube / Wall", "Cone", "Pyramid",
         "Torus (Ring)", "Box", "Octahedron", "Spiral Stairs",
@@ -3578,22 +3594,6 @@ structTab:CreateDropdown({
         -- keep an open panel in step with the chosen shape
         if BuilderAPI.shapePanelSync then BuilderAPI.shapePanelSync() end
         structRefreshPreview()
-    end
-})
-
-structTab:CreateButton({
-    Name = "Shape Panel",
-    Tooltip = "Opens a panel with the settings that matter for the shape you picked.",
-    Callback = function()
-        local sp = BuilderAPI.shapePanel
-        if not sp then return end
-        -- a button, but it behaves as a switch
-        if sp:IsOpen() then
-            sp:Hide()
-        else
-            sp:Show()
-            if BuilderAPI.shapePanelSync then BuilderAPI.shapePanelSync() end
-        end
     end
 })
 

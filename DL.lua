@@ -4341,6 +4341,32 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				if DropdownConfig.Flag then DuvomeLibrary.Flags[DropdownConfig.Flag] = Dropdown end
 				-- Gear popover, same idea as toggles. Uses the key "Gear" because
 				-- a dropdown's "Options" is already its list of choices.
+				-- Same gear slot, but the button runs an action instead of opening
+				-- a popover. Used where the "setting" is really a panel.
+				if DropdownConfig.GearAction then
+					local actBtn = Create("TextButton", {
+						Text = "", BackgroundColor3 = Color3.fromRGB(30, 10, 55),
+						BorderSizePixel = 0, Size = UDim2.new(0, 24, 0, 24),
+						Position = UDim2.new(1, -56, 0, 7), ZIndex = 7,
+						Parent = DropdownFrame:FindFirstChild("F") or DropdownFrame
+					})
+					AddThemeObject(actBtn, "Second")
+					AddThemeObject(Create("TextLabel", {
+						Text = DropdownConfig.GearAction.Icon or "layout-fluid",
+						FontFace = MakeBIconFont(), TextSize = 13,
+						TextColor3 = Color3.fromRGB(140, 80, 200), BackgroundTransparency = 1,
+						Size = UDim2.new(1,0,1,0), ZIndex = 8, Parent = actBtn,
+					}), "TextDark")
+					Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=actBtn})
+					local selLbl2 = (DropdownFrame:FindFirstChild("F") or DropdownFrame):FindFirstChild("Selected")
+					if selLbl2 then selLbl2.Size = UDim2.new(0.5, -72, 1, 0) end
+					actBtn.MouseButton1Click:Connect(function()
+						if DropdownConfig.GearAction.OnClick then
+							pcall(DropdownConfig.GearAction.OnClick)
+						end
+					end)
+				end
+
 				if DropdownConfig.Gear then
 					local dotBtn = Create("TextButton", {
 						Text = "", BackgroundColor3 = Color3.fromRGB(30, 10, 55),
