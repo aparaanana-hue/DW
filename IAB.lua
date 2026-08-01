@@ -2321,10 +2321,10 @@ auto:CreateToggle({
 -- The Objects controls are identical on every tab that can stamp geometry, so
 -- they are built from one place instead of being copy-pasted per tab. Each tab
 -- keeps its own scene name, matching the previous behaviour.
-local function addObjectsSection(tab, stampLabel, getBlocks)
+local function addObjectsSection(tab, stampLabel, getBlocks, opts)
     local sceneName = "MyScene"
 
-    tab:CreateSection("Objects", { Collapsible = true })
+    tab:CreateSection("Objects", { Collapsible = true, Column = opts and opts.Column or nil })
 
     tab:CreateButton({
         Name = stampLabel,
@@ -2389,7 +2389,7 @@ local function selectedFileBlocks()
     return data.blocks, label
 end
 
-addObjectsSection(auto, "Stamp File as Object", selectedFileBlocks)
+addObjectsSection(auto, "Stamp File as Object", selectedFileBlocks, { Column = "left" })
 
 do
 local saveFileName = "MyBuild"
@@ -2661,152 +2661,6 @@ local function showSelBox()
     end)
 end
 
-saveTab:CreateSection("Save", { Collapsible = true, Column = "left" })
-
-saveTab:CreateInput({
-    Name = "Save As",
-    PlaceholderText = "MyBuild",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(text)
-        if text and text ~= "" then
-            saveFileName = text
-        end
-    end
-})
-
-saveTab:CreateToggle({
-    Name = "Show Selection Box",
-    CurrentValue = false,
-    Flag = "ShowSelBox",
-    Tooltip = "Shows the box and limits Save Island Build to what is inside it.",
-    Callback = function(v)
-        selBoxOnly = v
-        if v then
-            showSelBox()
-            notify("Box Shown", "Drag the face handles to resize it", 3)
-        else
-            hideSelBox()
-        end
-    end
-})
-
-
-
-BuilderAPI.toggles.brush = saveTab:CreateToggle({
-    Name = "Block Brush",
-    Gear = {
-        { Type = "button", Name = "Clear Selection", OnClick = function()
-        clearBlockSelection()
-        notify("Cleared", "Selection cleared", 2)
-    end },
-        { Type = "button", Name = "Save Selected Blocks", OnClick = function()
-        task.spawn(function()
-            if blockSelCount == 0 then
-                notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
-                return
-            end
-            saveSelectedBrush()
-        end)
-    end },
-    },
-    Tooltip = "Hold click and drag over blocks in the world to add them to the selection.",
-    CurrentValue = false,
-    Flag = "BlockBrush",
-    Callback = function(v)
-        blockSelMode = v
-        if v then
-            if blockSelConn then blockSelConn.Disconnect() end
-            local downC = UserInputService.InputBegan:Connect(function(input, gp)
-                if gp then return end
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = true end
-            end)
-            local upC = UserInputService.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = false end
-            end)
-            local paintC = RunService.Heartbeat:Connect(function()
-                if not blockSelMode or not blockSelDown then return end
-                local part = blockUnderCursor()
-                if part then
-                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-                        unhighlightBlock(part)
-                    else
-                        highlightBlock(part)
-                    end
-                    -- count now shows on the watch overlay rather than a panel label
-                end
-            end)
-            blockSelConn = { Disconnect = function() downC:Disconnect() upC:Disconnect() paintC:Disconnect() end }
-            notify("Block Brush On", "Hold left-click to select, hold Shift to erase", 6)
-        else
-            if blockSelConn then blockSelConn.Disconnect() blockSelConn = nil end
-            blockSelDown = false
-            notify("Block Brush Off", blockSelCount .. " blocks still selected", 3)
-        end
-    end
-})
-
-
-saveTab:CreateDropdown({
-    Name = "Save Mode",
-    Options = { "Full", "Half (mirror)", "Quarter (4x)" },
-    CurrentOption = { "Full" },
-    MultipleOptions = false,
-    Flag = "SaveSplitMode",
-    Callback = function(v)
-        saveSplitMode = (typeof(v) == "table") and v[1] or v
-    end
-})
-
-local function saveIslandBuild()
-    local island = getNearestIsland()
-    if not island then
-        notify("Save Failed", "No island found near you", 4)
-        return
-    end
-    local blocksFolder = island:FindFirstChild("Blocks")
-    if not blocksFolder then
-        notify("Save Failed", "Island has no Blocks folder", 4)
-        return
-    end
-
-    updateGridPhase(true)
-
-    local blocks = {}
-    local children = blocksFolder:GetChildren()
-    for i, part in ipairs(children) do
-        if part:IsA("BasePart") and part.Name ~= "bedrock" and part.Name ~= "portalToSpawn" then
-            local include = true
-            if selBoxOnly then
-                include = inSelectionBox(part.Position)
-            end
-            if include then
-                blocks[#blocks + 1] = partToBlockEntry(part)
-            end
-        end
-        if i % 3000 == 0 then task.wait() end
-    end
-
-    finishSaveBlocks(blocks)
-end
-
-saveTab:CreateButton({
-    Name = "Save Island Build",
-    Callback = function()
-        task.spawn(function()
-            notify("Saving", "Scanning island blocks...", 3)
-            saveIslandBuild()
-        end)
-    end
-})
-
-end
-
-
-
-
-
-
-
 previewTab:CreateSection("Preview", { Collapsible = true, Column = "right" })
 
 BuilderAPI.toggles.preview = previewTab:CreateToggle({
@@ -3058,6 +2912,152 @@ previewTab:CreateButton({
         notify("Replacement Added", resolveBlockDisplayName(replaceFromType) .. " -> " .. resolveBlockDisplayName(replaceToType), 4)
     end
 })
+
+
+saveTab:CreateSection("Save", { Collapsible = true, Column = "right" })
+
+saveTab:CreateInput({
+    Name = "Save As",
+    PlaceholderText = "MyBuild",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        if text and text ~= "" then
+            saveFileName = text
+        end
+    end
+})
+
+saveTab:CreateToggle({
+    Name = "Show Selection Box",
+    CurrentValue = false,
+    Flag = "ShowSelBox",
+    Tooltip = "Shows the box and limits Save Island Build to what is inside it.",
+    Callback = function(v)
+        selBoxOnly = v
+        if v then
+            showSelBox()
+            notify("Box Shown", "Drag the face handles to resize it", 3)
+        else
+            hideSelBox()
+        end
+    end
+})
+
+
+
+BuilderAPI.toggles.brush = saveTab:CreateToggle({
+    Name = "Block Brush",
+    Gear = {
+        { Type = "button", Name = "Clear Selection", OnClick = function()
+        clearBlockSelection()
+        notify("Cleared", "Selection cleared", 2)
+    end },
+        { Type = "button", Name = "Save Selected Blocks", OnClick = function()
+        task.spawn(function()
+            if blockSelCount == 0 then
+                notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
+                return
+            end
+            saveSelectedBrush()
+        end)
+    end },
+    },
+    Tooltip = "Hold click and drag over blocks in the world to add them to the selection.",
+    CurrentValue = false,
+    Flag = "BlockBrush",
+    Callback = function(v)
+        blockSelMode = v
+        if v then
+            if blockSelConn then blockSelConn.Disconnect() end
+            local downC = UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = true end
+            end)
+            local upC = UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = false end
+            end)
+            local paintC = RunService.Heartbeat:Connect(function()
+                if not blockSelMode or not blockSelDown then return end
+                local part = blockUnderCursor()
+                if part then
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                        unhighlightBlock(part)
+                    else
+                        highlightBlock(part)
+                    end
+                    -- count now shows on the watch overlay rather than a panel label
+                end
+            end)
+            blockSelConn = { Disconnect = function() downC:Disconnect() upC:Disconnect() paintC:Disconnect() end }
+            notify("Block Brush On", "Hold left-click to select, hold Shift to erase", 6)
+        else
+            if blockSelConn then blockSelConn.Disconnect() blockSelConn = nil end
+            blockSelDown = false
+            notify("Block Brush Off", blockSelCount .. " blocks still selected", 3)
+        end
+    end
+})
+
+
+saveTab:CreateDropdown({
+    Name = "Save Mode",
+    Options = { "Full", "Half (mirror)", "Quarter (4x)" },
+    CurrentOption = { "Full" },
+    MultipleOptions = false,
+    Flag = "SaveSplitMode",
+    Callback = function(v)
+        saveSplitMode = (typeof(v) == "table") and v[1] or v
+    end
+})
+
+local function saveIslandBuild()
+    local island = getNearestIsland()
+    if not island then
+        notify("Save Failed", "No island found near you", 4)
+        return
+    end
+    local blocksFolder = island:FindFirstChild("Blocks")
+    if not blocksFolder then
+        notify("Save Failed", "Island has no Blocks folder", 4)
+        return
+    end
+
+    updateGridPhase(true)
+
+    local blocks = {}
+    local children = blocksFolder:GetChildren()
+    for i, part in ipairs(children) do
+        if part:IsA("BasePart") and part.Name ~= "bedrock" and part.Name ~= "portalToSpawn" then
+            local include = true
+            if selBoxOnly then
+                include = inSelectionBox(part.Position)
+            end
+            if include then
+                blocks[#blocks + 1] = partToBlockEntry(part)
+            end
+        end
+        if i % 3000 == 0 then task.wait() end
+    end
+
+    finishSaveBlocks(blocks)
+end
+
+saveTab:CreateButton({
+    Name = "Save Island Build",
+    Callback = function()
+        task.spawn(function()
+            notify("Saving", "Scanning island blocks...", 3)
+            saveIslandBuild()
+        end)
+    end
+})
+
+end
+
+
+
+
+
 
 
 do
