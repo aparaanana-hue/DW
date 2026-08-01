@@ -12,6 +12,10 @@ local LocalPlayer = Players.LocalPlayer
 Duvome:Init()
 
 
+-- Bumped on every push. If the notification on load does not match the
+-- newest commit, the script came from a cache, not from GitHub.
+local IAB_BUILD = "Aug 01 14:54"
+
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
     IntroText    = "Priz's Islands Hub",
@@ -11091,3 +11095,6 @@ Duvome:AddWatch("File", function()
 end)
 
 pcall(function() Duvome:SetWatchVisible(true) end)
+
+notifyOK("Islands Auto Builder", "Build " .. IAB_BUILD, 6)
+Duvome:AddWatch("Build", function() return IAB_BUILD end)
