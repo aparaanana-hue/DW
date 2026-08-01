@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 15:03"
+local IAB_BUILD = "Aug 01 15:07"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -10964,6 +10964,37 @@ local function clearWorld()
     T.count = 0
 end
 
+-- Clone the real model for a block type, stripped of anything a viewport
+-- cannot use. Cached, because cloning per block would be brutal.
+local templateCache = {}
+local function templateFor(name)
+    local hit = templateCache[name]
+    if hit ~= nil then return hit or nil end
+    local folder = ReplicatedStorage:FindFirstChild("blocks")
+    local src = folder and folder:FindFirstChild(name)
+    if not src then templateCache[name] = false return nil end
+
+    local ok, clone = pcall(function() return src:Clone() end)
+    if not ok or not clone then templateCache[name] = false return nil end
+
+    for _, d in ipairs(clone:GetDescendants()) do
+        if d:IsA("BasePart") then
+            d.Anchored = true
+            d.CanCollide = false
+            d.CanQuery = false
+            d.CanTouch = false
+        elseif d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript")
+            or d:IsA("Sound") or d:IsA("ParticleEmitter") or d:IsA("Fire") then
+            d:Destroy()
+        end
+    end
+    if clone:IsA("BasePart") then
+        clone.Anchored = true clone.CanCollide = false
+    end
+    templateCache[name] = clone
+    return clone
+end
+
 local function render()
     local data = loadSelectedBuild()
     if not data or not data.blocks or #data.blocks == 0 then
@@ -10975,58 +11006,51 @@ local function render()
     clearWorld()
     local blocks = data.blocks
     local total = #blocks
-
-    -- occupancy set, so interior blocks can be culled
-    local filled = {}
-    for _, b in ipairs(blocks) do
-        local cf = b.cframe
-        if cf and cf[1] then
-            filled[math.floor(cf[1] / BS + 0.5) .. "," ..
-                   math.floor(cf[2] / BS + 0.5) .. "," ..
-                   math.floor(cf[3] / BS + 0.5)] = true
-        end
+    if total > 15000 then
+        notifyWarn("Thumbnail", total .. " blocks - this may take a moment", 5)
     end
-    local function exposed(gx, gy, gz)
-        return not (filled[(gx+1)..","..gy..","..gz] and filled[(gx-1)..","..gy..","..gz]
-                and filled[gx..","..(gy+1)..","..gz] and filled[gx..","..(gy-1)..","..gz]
-                and filled[gx..","..gy..","..(gz+1)] and filled[gx..","..gy..","..(gz-1)])
-    end
+    infoLabel.Text = "Rendering " .. total .. " blocks..."
 
     local minX, minY, minZ = math.huge, math.huge, math.huge
     local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-    local made, buried = 0, 0
+    local made = 0
 
+    -- every block, using its real model so textures and shape come through
     for i = 1, total do
         local b = blocks[i]
         local cf = b.cframe
         if cf and cf[1] then
             local x, y, z = cf[1], cf[2], cf[3]
-            local gx = math.floor(x / BS + 0.5)
-            local gy = math.floor(y / BS + 0.5)
-            local gz = math.floor(z / BS + 0.5)
-            -- bounds come from every block, visible or not
+            local tpl = templateFor(b.blockType)
+            local inst
+            if tpl then
+                inst = tpl:Clone()
+                if inst:IsA("BasePart") then
+                    inst.CFrame = CFrame.new(x, y, z)
+                else
+                    pcall(function() inst:PivotTo(CFrame.new(x, y, z)) end)
+                end
+            else
+                -- only when the game has no model for that id
+                inst = Instance.new("Part")
+                inst.Anchored = true
+                inst.CanCollide = false
+                inst.Size = Vector3.new(BS, BS, BS)
+                inst.CFrame = CFrame.new(x, y, z)
+                inst.Color = colourFor(b.blockType)
+                inst.Material = Enum.Material.SmoothPlastic
+            end
+            inst.Parent = world
+            made = made + 1
+
             if x < minX then minX = x end
             if x > maxX then maxX = x end
             if y < minY then minY = y end
             if y > maxY then maxY = y end
             if z < minZ then minZ = z end
             if z > maxZ then maxZ = z end
-
-            if not exposed(gx, gy, gz) then
-                buried = buried + 1
-            elseif made < MAX_PARTS then
-                local p = Instance.new("Part")
-                p.Anchored = true
-                p.CanCollide = false
-                p.Size = Vector3.new(BS, BS, BS)
-                p.CFrame = CFrame.new(x, y, z)
-                p.Color = colourFor(b.blockType)
-                p.Material = Enum.Material.SmoothPlastic
-                p.Parent = world
-                made = made + 1
-            end
         end
-        if i % 500 == 0 then task.wait() end
+        if i % 250 == 0 then task.wait() end
     end
 
     if made == 0 then
@@ -11039,17 +11063,19 @@ local function render()
     local centre = Vector3.new((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2)
     local span = math.max(maxX - minX, maxY - minY, maxZ - minZ, BS)
 
-    -- park the model at the origin so the camera can orbit a fixed point
-    for _, p in ipairs(world:GetChildren()) do
-        if p:IsA("BasePart") then p.CFrame = p.CFrame - centre end
+    -- park on the origin so the camera can orbit a fixed point
+    for _, inst in ipairs(world:GetChildren()) do
+        if inst:IsA("BasePart") then
+            inst.CFrame = inst.CFrame - centre
+        else
+            pcall(function() inst:PivotTo(inst:GetPivot() - centre) end)
+        end
     end
 
     T.radius = span * 1.5 + 10
     T.height = span * 0.55 + 5
-
-    infoLabel.Text = T.name .. "\n" .. total .. " blocks"
-        .. (buried > 0 and ("  ·  " .. buried .. " hidden inside") or "")
-    notifyOK("Thumbnail", T.name .. " rendered", 3)
+    infoLabel.Text = T.name .. "\n" .. made .. " blocks"
+    notifyOK("Thumbnail", T.name .. " - " .. made .. " blocks", 3)
 end
 
 -- ── spin ───────────────────────────────────────────────────────────────────
