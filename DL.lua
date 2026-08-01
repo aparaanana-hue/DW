@@ -4368,10 +4368,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				if DropdownConfig.Gear then
+					-- shift left when a GearAction already occupies the first slot
+					local slotX = DropdownConfig.GearAction and -84 or -56
 					local dotBtn = Create("TextButton", {
 						Text = "", BackgroundColor3 = Color3.fromRGB(30, 10, 55),
 						BorderSizePixel = 0, Size = UDim2.new(0, 24, 0, 24),
-						Position = UDim2.new(1, -56, 0, 7), ZIndex = 7,
+						Position = UDim2.new(1, slotX, 0, 7), ZIndex = 7,
 						Parent = DropdownFrame:FindFirstChild("F") or DropdownFrame
 					})
 					AddThemeObject(dotBtn, "Second")
@@ -4384,7 +4386,9 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					-- The Selected label runs to the right edge, so shorten it to
 					-- make room; otherwise the gear covers the chosen value.
 					local selLbl = (DropdownFrame:FindFirstChild("F") or DropdownFrame):FindFirstChild("Selected")
-					if selLbl then selLbl.Size = UDim2.new(0.5, -72, 1, 0) end
+					if selLbl then
+						selLbl.Size = UDim2.new(0.5, DropdownConfig.GearAction and -100 or -72, 1, 0)
+					end
 					local _pop, showP, hideP, isOpen, setOpen = MakePopover(dotBtn, DropdownConfig.Gear)
 					dotBtn.MouseButton1Click:Connect(function()
 						if isOpen() then hideP() setOpen(false) else showP() setOpen(true) end
