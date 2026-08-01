@@ -5822,7 +5822,9 @@ function DuvomeLibrary:AddWatch(name, stateFn, keyCode, setFn)
 		local wl = Create("Frame", {
 			Name = "WatchList", BackgroundColor3 = Color3.fromRGB(12,4,24), BackgroundTransparency = 0.25,
 			BorderSizePixel = 0, Size = UDim2.new(0, 190, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-			Position = UDim2.new(0, 16, 0, 16), Parent = Duvome
+			-- anchored to the right edge so it grows leftward, not off-screen
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -16, 0, 16), Parent = Duvome
 		})
 		Create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = wl})
 		AddThemeObject(Create("UIStroke", {Thickness = 1, Parent = wl}), "Stroke")

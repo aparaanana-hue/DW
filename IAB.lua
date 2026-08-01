@@ -2198,7 +2198,6 @@ fileDropdown = auto:CreateDropdown({
     end
 })
 
-auto:CreateDivider()
 
 BuilderAPI.toggles.build = auto:CreateToggle({
     Name = "Start Build",
@@ -2771,9 +2770,7 @@ end
 
 
 
-auto:CreateDivider()
 
-auto:CreateDivider()
 
 
 
@@ -2842,11 +2839,9 @@ BuilderAPI.toggles.handles = previewTab:CreateToggle({
     end
 })
 
-previewTab:CreateDivider()
 
 -- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
-previewTab:CreateDivider()
 
 local requiredBlocksParagraph = previewTab:CreateParagraph({
     Title = "Required Blocks",
@@ -2900,7 +2895,6 @@ previewTab:CreateButton({
     end
 })
 
-previewTab:CreateDivider()
 
 local buildTypeMap = {}
 local invTypeMap = {}
