@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 17:21"
+local IAB_BUILD = "Aug 01 17:28"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2452,6 +2452,12 @@ local function addObjectsSection(tab, stampLabel, getBlocks, opts)
         Tooltip = "Place the current blocks into the world as a movable object.",
         Callback = function()
             task.spawn(function()
+                -- stamping is only meaningful while a ghost is on screen,
+                -- otherwise there is nothing to place it against
+                if not (isPreviewing or structShowPreview) then
+                    notifyWarn("No Preview", "Turn a preview on first", 4)
+                    return
+                end
                 local blocks, label = getBlocks()
                 if blocks and #blocks > 0 then
                     objStamp(blocks, label)
@@ -3644,7 +3650,7 @@ structTab:CreateToggle({
     end
 })
 
-structTab:CreateSection("Structures")
+structTab:CreateSection("Structures", { Column = "left" })
 
 structTab:CreateDropdown({
     Name = "Shape Mode",
@@ -3728,22 +3734,6 @@ local function structToBlocks()
     return blocks
 end
 
-
-structTab:CreateParagraph({
-    Title = "Sculpt the Terrain",
-    Content = "Make a Landscape with Live Preview on, then use these to shape it. Raise hills, dig holes, and add water. Or turn on Cursor Sculpt to paint with your mouse."
-})
-
-structTab:CreateDropdown({
-    Name = "Brush Mode",
-    Options = {"Raise", "Lower", "Flatten", "Smooth"},
-    CurrentOption = {"Raise"},
-    MultipleOptions = false,
-    Flag = "TerraMode",
-    Callback = function(v)
-        terraMode = (typeof(v) == "table") and v[1] or v
-    end
-})
 
 structTab:CreateSlider({
     Name = "Brush Size",
@@ -3932,123 +3922,6 @@ local structStatsParagraph = structTab:CreateParagraph({
     Content = "Tap 'Check Size' to count the blocks for the current settings."
 })
 
-structTab:CreateButton({
-    Name = "Check Size",
-    Callback = function()
-        task.spawn(function()
-            local pts = structGetPoints()
-            if #pts == 0 then
-                structStatsParagraph:Set({ Title = "Shape Stats", Content = "No blocks for these settings." })
-                return
-            end
-            local minv = Vector3.new(math.huge, math.huge, math.huge)
-            local maxv = Vector3.new(-math.huge, -math.huge, -math.huge)
-            for _, p in ipairs(pts) do
-                minv = Vector3.new(math.min(minv.X, p.X), math.min(minv.Y, p.Y), math.min(minv.Z, p.Z))
-                maxv = Vector3.new(math.max(maxv.X, p.X), math.max(maxv.Y, p.Y), math.max(maxv.Z, p.Z))
-            end
-            local size = maxv - minv
-            structStatsParagraph:Set({
-                Title = "Shape Stats",
-                Content = structMode .. (structHollow and " (hollow)" or " (solid)")
-                    .. "\nBlocks needed: " .. #pts
-                    .. "\nSize: " .. math.floor(size.X + 3) .. " x " .. math.floor(size.Y + 3) .. " x " .. math.floor(size.Z + 3) .. " studs"
-                    .. "\nBlock: " .. structSelectedBlock
-            })
-        end)
-    end
-})
-
-structTab:CreateSection("Save", { Collapsible = true })
-
--- One name box for the whole tab; the picker decides which generator it names.
-local genSaveTarget = "Structure"
-structTab:CreateDropdown({
-    Name = "Save Target",
-    Options = { "Structure", "City", "Platform" },
-    CurrentOption = { "Structure" }, MultipleOptions = false,
-    Callback = function(v) genSaveTarget = (typeof(v) == "table") and v[1] or v end
-})
-structTab:CreateInput({
-    Name = "Save As",
-    Default = "MyBuild",
-    Callback = function(t)
-        if not t or t == "" then return end
-        if genSaveTarget == "City" then cityFileName = t
-        elseif genSaveTarget == "Platform" then platFileName = t
-        else structFileName = t end
-    end
-})
-
-structTab:CreateButton({
-    Name = "Generate Build File",
-    Callback = function()
-        task.spawn(function()
-            notify("Generating", "Building " .. structMode .. " shape...", 3)
-            local blocks = structToBlocks()
-            if #blocks == 0 then
-                notify("Nothing Generated", "No points for this shape/settings", 4)
-                return
-            end
-
-            if not isfolder("autoBuilder") then
-                makefolder("autoBuilder")
-            end
-
-            local name = structFileName
-            if not (name:lower():sub(-5) == ".json" or name:lower():sub(-4) == ".txt") then
-                name = name .. ".json"
-            end
-
-            local ok, err = pcall(function()
-                writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
-            end)
-
-            if not ok then
-                notify("Save Failed", "Could not write file: " .. tostring(err), 5)
-                return
-            end
-
-            selectedFile = name
-            savedPreviewTransform = nil
-            pcall(function()
-                fileDropdown:Refresh(getFiles())
-                fileDropdown:Set({ name })
-            end)
-
-            notify("Structure Ready", #blocks .. " blocks -> " .. name .. " (selected)", 6)
-        end)
-    end
-})
-
-structTab:CreateButton({
-    Name = "Clear Preview / Origin",
-    Callback = function()
-        structShowPreview = false
-        structClearPreview()
-        if structHandles then structHandles:Destroy() structHandles = nil end
-        if structOrigin then structOrigin:Destroy() structOrigin = nil end
-        notify("Cleared", "Live preview removed", 2)
-    end
-})
-
--- The full Objects controls live once on the Build tab. Generate only needs a
--- way to push the current shape into them.
-structTab:CreateButton({
-    Name = "Stamp Shape as Object",
-    Tooltip = "Drop the current shape into the world as a movable object. Manage it from the Build tab's Objects section.",
-    Callback = function()
-        task.spawn(function()
-            local blocks = structToBlocks()
-            if #blocks == 0 then
-                notifyWarn("Nothing To Stamp", "Set up a shape first", 3)
-                return
-            end
-            objStamp(blocks, structMode)
-        end)
-    end
-})
-
 end
 
 do
@@ -4230,67 +4103,15 @@ local function cityGenerate()
     return cellsToBlocks(all), lotFiles
 end
 
-cityTab:CreateSection("City", { Collapsible = true })
-
-cityTab:CreateParagraph({
-    Title = "City Generator",
-    Content = "Makes roads and drops a house on each lot. The same seed makes the same city. Then preview and build it."
-})
+cityTab:CreateSection("City", { Collapsible = true, Column = "left" })
 
 cityTab:CreateDivider()
-
-for _, s in ipairs({
-    { "Lots Across",  1,  8, 1, 3,  "CityLotsX", function(v) cityLotsX = v end },
-    { "Lots Deep",    1,  8, 1, 3,  "CityLotsZ", function(v) cityLotsZ = v end },
-    { "Lot Width",    7, 25, 1, 13, "CityLotW",  function(v) cityLotW  = v end },
-    { "Lot Depth",    7, 25, 1, 13, "CityLotD",  function(v) cityLotD  = v end },
-    { "Road Width",   1,  8, 1, 3,  "CityRoadW", function(v) cityRoadW = v end },
-}) do
-    local name, lo, hi, step, default, flag, apply = s[1], s[2], s[3], s[4], s[5], s[6], s[7]
-    cityTab:CreateSlider({
-        Name = name,
-        Range = { lo, hi }, Increment = step, CurrentValue = default,
-        Suffix = "blk", Flag = flag,
-        Callback = apply
-    })
-end
 
 cityTab:CreateDivider()
 
 -- Was two separate Min/Max sliders; a single two-handle range slider makes the
 -- relationship obvious and can't be set inside-out.
-cityTab:CreateRangeSlider({
-    Name = "House Height",
-    Range = { 3, 30 }, Increment = 1,
-    DefaultMin = 5, DefaultMax = 11,
-    Suffix = "blk", Flag = "CityHeight",
-    Callback = function(mn, mx)
-        cityMinH = mn
-        cityMaxH = mx
-    end
-})
-
-cityTab:CreateSlider({
-    Name = "City Seed",
-    Range = {1, 10000}, Increment = 1, CurrentValue = 1, Flag = "CitySeed",
-    Callback = function(v) citySeed = v end
-})
-
 cityTab:CreateDivider()
-
-cityTab:CreateToggle({
-    Name = "Generate on Landscape",
-    CurrentValue = false,
-    Flag = "CityLandscape",
-    Tooltip = "Lay the city over generated terrain instead of a flat plane.",
-    Callback = function(v) cityLandscape = v end
-})
-
-cityTab:CreateSlider({
-    Name = "Terrain Height",
-    Range = {3, 60}, Increment = 3, CurrentValue = 12, Suffix = "blk", Flag = "CityTerrainH",
-    Callback = function(v) cityTerrainH = v end
-})
 
 cityTab:CreateDivider()
 
@@ -4326,6 +4147,16 @@ cityBlockSlots.refresh = function()
         cityBlockSlots.para:Set({ Title = "City Materials", Content = table.concat(lines, "\n") })
     end)
 end
+
+cityTab:CreateButton({
+    Name = "City Panel",
+    Tooltip = "Opens the city generator settings as a panel.",
+    Callback = function()
+        local cp = BuilderAPI.cityPanel
+        if not cp then return end
+        if cp:IsOpen() then cp:Hide() else cp:Show() end
+    end
+})
 
 cityTab:CreateDropdown({
     Name = "Material Slot",
@@ -4530,46 +4361,23 @@ local function platGenerate()
     return out
 end
 
-platTab:CreateSection("Platforms", { Collapsible = true })
-
-platTab:CreateParagraph({
-    Title = "Platform Designer",
-    Content = "Makes fancy floor patterns. Pick a style, change the seed and density, preview it, then generate a file."
-})
+platTab:CreateSection("Platforms", { Collapsible = true, Column = "right" })
 
 platTab:CreateDropdown({
     Name = "Style",
+    GearAction = {
+        Icon = "layout-fluid",
+        OnClick = function()
+            local pp = BuilderAPI.platPanel
+            if not pp then return end
+            if pp:IsOpen() then pp:Hide() else pp:Show() end
+        end,
+    },
     Options = { "Mandala", "Ornament", "Rings", "Snowflake", "Maze" },
     CurrentOption = { "Mandala" },
     MultipleOptions = false,
     Flag = "PlatStyle",
     Callback = function(v) platStyle = (typeof(v) == "table") and v[1] or v end
-})
-
-platTab:CreateSlider({
-    Name = "Tile Size",
-    Range = { 11, 121 }, Increment = 2, CurrentValue = 41, Suffix = "blk", Flag = "PlatSize",
-    Callback = function(v) platSize = v end
-})
-
-platTab:CreateSlider({
-    Name = "Seed",
-    Range = { 1, 10000 }, Increment = 1, CurrentValue = 1, Flag = "PlatSeed",
-    Callback = function(v) platSeed = v end
-})
-
-platTab:CreateSlider({
-    Name = "Density",
-    Range = { 10, 90 }, Increment = 5, CurrentValue = 50, Suffix = "%", Flag = "PlatDensity",
-    Callback = function(v) platDensity = v / 100 end
-})
-
-platTab:CreateToggle({
-    Name = "Diagonal Symmetry",
-    CurrentValue = true,
-    Flag = "PlatDiag",
-    Tooltip = "Mirrors the pattern across the diagonals. Mostly affects the Mandala style.",
-    Callback = function(v) platMirrorDiag = v end
 })
 
 platTab:CreateDivider()
@@ -4621,19 +4429,6 @@ platTab:CreateButton({
 })
 
 platTab:CreateButton({
-    Name = "Preview Pattern",
-    Callback = function()
-        task.spawn(function()
-            notify("Generating", "Building " .. platStyle .. " pattern...", 3)
-            local blocks = platGenerate()
-            if #blocks == 0 then notify("Empty", "Nothing generated", 3) return end
-            platStats:Set({ Title = "Pattern Stats", Content = platStyle .. " · " .. platSize .. "x" .. platSize .. " · " .. #blocks .. " blocks" })
-            showThumbnail(blocks, platStyle .. " Platform")
-        end)
-    end
-})
-
-platTab:CreateButton({
     Name = "Generate Build File",
     Callback = function()
         task.spawn(function()
@@ -4662,6 +4457,124 @@ platTab:CreateButton({
 platTab:CreateParagraph({
     Title = "Next Steps",
     Content = "1. Pick a Style, tap Randomize Seed, set Density\n2. Preview Pattern (3D)\n3. Generate Build File\n4. Preview tab: Preview Build\n5. Auto Build tab: Build Selected File"
+})
+
+structTab:CreateSection("Save", { Collapsible = true, Column = "right" })
+
+structTab:CreateButton({
+    Name = "Check Size",
+    Callback = function()
+        task.spawn(function()
+            local pts = structGetPoints()
+            if #pts == 0 then
+                structStatsParagraph:Set({ Title = "Shape Stats", Content = "No blocks for these settings." })
+                return
+            end
+            local minv = Vector3.new(math.huge, math.huge, math.huge)
+            local maxv = Vector3.new(-math.huge, -math.huge, -math.huge)
+            for _, p in ipairs(pts) do
+                minv = Vector3.new(math.min(minv.X, p.X), math.min(minv.Y, p.Y), math.min(minv.Z, p.Z))
+                maxv = Vector3.new(math.max(maxv.X, p.X), math.max(maxv.Y, p.Y), math.max(maxv.Z, p.Z))
+            end
+            local size = maxv - minv
+            structStatsParagraph:Set({
+                Title = "Shape Stats",
+                Content = structMode .. (structHollow and " (hollow)" or " (solid)")
+                    .. "\nBlocks needed: " .. #pts
+                    .. "\nSize: " .. math.floor(size.X + 3) .. " x " .. math.floor(size.Y + 3) .. " x " .. math.floor(size.Z + 3) .. " studs"
+                    .. "\nBlock: " .. structSelectedBlock
+            })
+        end)
+    end
+})
+
+
+-- One name box for the whole tab; the picker decides which generator it names.
+local genSaveTarget = "Structure"
+structTab:CreateDropdown({
+    Name = "Save Target",
+    Options = { "Structure", "City", "Platform" },
+    CurrentOption = { "Structure" }, MultipleOptions = false,
+    Callback = function(v) genSaveTarget = (typeof(v) == "table") and v[1] or v end
+})
+structTab:CreateInput({
+    Name = "Save As",
+    Default = "MyBuild",
+    Callback = function(t)
+        if not t or t == "" then return end
+        if genSaveTarget == "City" then cityFileName = t
+        elseif genSaveTarget == "Platform" then platFileName = t
+        else structFileName = t end
+    end
+})
+
+structTab:CreateButton({
+    Name = "Generate Build File",
+    Callback = function()
+        task.spawn(function()
+            notify("Generating", "Building " .. structMode .. " shape...", 3)
+            local blocks = structToBlocks()
+            if #blocks == 0 then
+                notify("Nothing Generated", "No points for this shape/settings", 4)
+                return
+            end
+
+            if not isfolder("autoBuilder") then
+                makefolder("autoBuilder")
+            end
+
+            local name = structFileName
+            if not (name:lower():sub(-5) == ".json" or name:lower():sub(-4) == ".txt") then
+                name = name .. ".json"
+            end
+
+            local ok, err = pcall(function()
+                writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
+            end)
+
+            if not ok then
+                notify("Save Failed", "Could not write file: " .. tostring(err), 5)
+                return
+            end
+
+            selectedFile = name
+            savedPreviewTransform = nil
+            pcall(function()
+                fileDropdown:Refresh(getFiles())
+                fileDropdown:Set({ name })
+            end)
+
+            notify("Structure Ready", #blocks .. " blocks -> " .. name .. " (selected)", 6)
+        end)
+    end
+})
+
+structTab:CreateButton({
+    Name = "Clear Preview / Origin",
+    Callback = function()
+        structShowPreview = false
+        structClearPreview()
+        if structHandles then structHandles:Destroy() structHandles = nil end
+        if structOrigin then structOrigin:Destroy() structOrigin = nil end
+        notify("Cleared", "Live preview removed", 2)
+    end
+})
+
+-- The full Objects controls live once on the Build tab. Generate only needs a
+-- way to push the current shape into them.
+structTab:CreateButton({
+    Name = "Stamp Shape as Object",
+    Tooltip = "Drop the current shape into the world as a movable object. Manage it from the Build tab's Objects section.",
+    Callback = function()
+        task.spawn(function()
+            local blocks = structToBlocks()
+            if #blocks == 0 then
+                notifyWarn("Nothing To Stamp", "Set up a shape first", 3)
+                return
+            end
+            objStamp(blocks, structMode)
+        end)
+    end
 })
 
 end
@@ -10895,7 +10808,7 @@ local SHAPE_FIELDS = {
     ["Box"]            = { "radius", "width", "height", "hollow", "thickness", "rot" },
     ["Octahedron"]     = { "radius", "hollow", "rot" },
     ["Spiral Stairs"]  = { "radius", "height", "turns", "width", "rot" },
-    ["Landscape"]      = { "radius", "width", "height", "smooth", "seed", "fill", "rot" },
+    ["Landscape"]      = { "radius", "width", "height", "smooth", "seed", "fill", "brush", "rot" },
     ["Square Floor"]   = { "radius", "width", "rot" },
     ["Circle"]         = { "radius", "thickness", "rot" },
 }
@@ -10906,6 +10819,14 @@ local shapeCtl = {}
 local function addShapeControls()
     -- Block choice lives on the panel too, so each shape can be textured
     -- without leaving it.
+    shapeCtl.brush = shapePanel:AddDropdown({
+        Name = "Brush Mode",
+        Options = { "Raise", "Lower", "Smooth", "Flatten" },
+        Default = "Raise",
+        Callback = function(v)
+        terraMode = (typeof(v) == "table") and v[1] or v
+    end
+    })
     shapeCtl.block = shapePanel:AddDropdown({
         Name = "Block",
         Options = blockDisplayList(), Default = blockDisplayFor("grass"), Search = true,
@@ -10960,6 +10881,7 @@ function BuilderAPI.shapePanelSync()
         radius = shapeCtl.radius, width = shapeCtl.width, height = shapeCtl.height,
         thickness = shapeCtl.thickness, turns = shapeCtl.turns, smooth = shapeCtl.smooth,
         seed = shapeCtl.seed, hollow = shapeCtl.hollow, fill = shapeCtl.fill,
+        brush = shapeCtl.brush,
     }
     for key, ctl in pairs(map) do
         if ctl and ctl.SetVisible then pcall(function() ctl:SetVisible(want[key] == true) end) end
@@ -11230,6 +11152,67 @@ function BuilderAPI.thumbOpen(on)
         stopSpin()
     end
 end
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CITY AND PLATFORM PANELS
+-- The generators carry a lot of knobs; these move them off the tab.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local cityPanel = Duvome:MakeSidePanel({ Name = "City", Width = 200, Height = 420, Side = "right" })
+BuilderAPI.cityPanel = cityPanel
+
+cityPanel:AddLabel("Layout")
+for _, sl in ipairs({
+    { "Lots Across", 1, 8, 1, 3, function(v) cityLotsX = v end },
+    { "Lots Deep",   1, 8, 1, 3, function(v) cityLotsZ = v end },
+    { "Lot Width",   7, 25, 1, 13, function(v) cityLotW = v end },
+    { "Lot Depth",   7, 25, 1, 13, function(v) cityLotD = v end },
+    { "Road Width",  1, 8, 1, 3, function(v) cityRoadW = v end },
+}) do
+    cityPanel:AddSlider({ Name = sl[1], Min = sl[2], Max = sl[3], Increment = sl[4],
+        Default = sl[5], ValueName = "blk", Callback = sl[6] })
+end
+
+cityPanel:AddDivider()
+cityPanel:AddLabel("Houses")
+cityPanel:AddSlider({ Name = "Min Height", Min = 3, Max = 30, Increment = 1, Default = 5,
+    ValueName = "blk", Callback = function(v) cityMinH = v end })
+cityPanel:AddSlider({ Name = "Max Height", Min = 3, Max = 30, Increment = 1, Default = 11,
+    ValueName = "blk", Callback = function(v) cityMaxH = v end })
+cityPanel:AddSlider({ Name = "City Seed", Min = 1, Max = 10000, Increment = 1, Default = 1,
+    Callback = function(v) citySeed = v end })
+
+cityPanel:AddDivider()
+cityPanel:AddLabel("Terrain")
+cityPanel:AddToggle({ Name = "On Landscape", Default = false,
+    Callback = function(v) cityLandscape = v end })
+cityPanel:AddSlider({ Name = "Terrain Height", Min = 3, Max = 60, Increment = 3, Default = 12,
+    ValueName = "blk", Callback = function(v) cityTerrainH = v end })
+
+local platPanel = Duvome:MakeSidePanel({ Name = "Platform", Width = 200, Height = 300, Side = "right" })
+BuilderAPI.platPanel = platPanel
+
+platPanel:AddSlider({ Name = "Tile Size", Min = 11, Max = 121, Increment = 2, Default = 41,
+    ValueName = "blk", Callback = function(v) platSize = v end })
+platPanel:AddSlider({ Name = "Seed", Min = 1, Max = 10000, Increment = 1, Default = 1,
+    Callback = function(v) platSeed = v end })
+platPanel:AddSlider({ Name = "Density", Min = 10, Max = 90, Increment = 5, Default = 50,
+    ValueName = "%%", Callback = function(v) platDensity = v / 100 end })
+platPanel:AddToggle({ Name = "Diagonal Symmetry", Default = true,
+    Callback = function(v) platMirrorDiag = v end })
+platPanel:AddDivider()
+platPanel:AddButton({ Name = "Preview Pattern", Callback = function()
+        task.spawn(function()
+            notify("Generating", "Building " .. platStyle .. " pattern...", 3)
+            local blocks = platGenerate()
+            if #blocks == 0 then notify("Empty", "Nothing generated", 3) return end
+            platStats:Set({ Title = "Pattern Stats", Content = platStyle .. " · " .. platSize .. "x" .. platSize .. " · " .. #blocks .. " blocks" })
+            showThumbnail(blocks, platStyle .. " Platform")
+        end)
+    end })
 
 end
 
