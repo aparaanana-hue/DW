@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 16:39"
+local IAB_BUILD = "Aug 01 17:21"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1080,6 +1080,59 @@ local function filterBlocksByInventory(blocks)
         if i % 5000 == 0 then task.wait() end
     end
     return out, skipped
+end
+
+-- ── Turbo print ────────────────────────────────────────────────────────────
+-- Ported from the reference hub's block printer. No verification, no retries,
+-- no pathfinding: hop above each block, fire the place remote, move on. The
+-- remote call yields on its own, which is what paces it.
+turboTeleport = true
+turboDelay = 0
+turboAbort = false
+
+local function turboPrint(blocks)
+    if isBuilding then
+        notifyWarn("Busy", "A build is already running", 3)
+        return
+    end
+    isBuilding = true
+    turboAbort = false
+    progressTotal = #blocks
+    progressPlaced = 0
+    progressStart = tick()
+    refreshProgress(true)
+
+    local placed = 0
+    for _, b in ipairs(blocks) do
+        if turboAbort or not isBuilding then break end
+        local cf = arrayToCFrame(b.cframe)
+
+        if turboTeleport then
+            local _, _, hrp = getCharacterParts()
+            if hrp then
+                hrp.CFrame = CFrame.new(cf.Position + Vector3.new(0, 8, 0))
+                -- close enough is good enough; do not wait for exact arrival
+                local deadline = tick() + 0.3
+                while tick() < deadline do
+                    local _, _, r = getCharacterParts()
+                    if not r then break end
+                    if (r.Position - cf.Position).Magnitude < 30 then break end
+                    task.wait(0.05)
+                end
+            end
+        end
+
+        placeRawBlock(b.blockType, cf, b.upperBlock == true)
+        placed = placed + 1
+        progressPlaced = placed
+        refreshProgress(false)
+        if turboDelay > 0 then task.wait(turboDelay) end
+    end
+
+    isBuilding = false
+    refreshProgress(true)
+    local secs = math.floor((tick() - progressStart) * 10) / 10
+    notifyOK("Turbo Print", placed .. " blocks in " .. secs .. "s", 6)
 end
 
 local function runBuild(blocks, missingOnly)
@@ -2220,7 +2273,7 @@ progressParagraph = auto:CreateParagraph({
 
 auto:CreateDropdown({
     Name = "Build Style",
-    Options = {"Around Preview", "Expand from Middle", "Batch (verify)"},
+    Options = {"Around Preview", "Expand from Middle", "Batch (verify)", "Turbo Print"},
     CurrentOption = {"Around Preview"},
     MultipleOptions = false,
     Flag = "BuildMode",
@@ -2301,6 +2354,10 @@ BuilderAPI.toggles.build = auto:CreateToggle({
           Callback = function(v) pipelineMode = v end },
         { Type = "slider", Name = "Pipeline Depth", Min = 2, Max = 30, Default = 8,
           Callback = function(v) pipelineDepth = v end },
+        { Type = "toggle", Name = "Turbo Hop", Default = true,
+          Callback = function(v) turboTeleport = v end },
+        { Type = "slider", Name = "Turbo Delay (ms)", Min = 0, Max = 200, Default = 0,
+          Callback = function(v) turboDelay = v / 1000 end },
         { Type = "toggle", Name = "Walk To Block", Default = true,
           Callback = function(v) moveToBuildPosition = v end },
     },
@@ -2325,13 +2382,22 @@ BuilderAPI.toggles.build = auto:CreateToggle({
                 task.spawn(function()
                     notify("Building", "Building where the ghost sits", 3, "info")
                     local transformed = transformBlocks(src, previewTransform)
-                    runBuild(transformed, missingOnly)
+                    if buildMode == "Turbo Print" then
+                        turboPrint(transformed)
+                    else
+                        runBuild(transformed, missingOnly)
+                    end
                 end)
             else
-                runBuild(data.blocks, missingOnly)
+                if buildMode == "Turbo Print" then
+                    task.spawn(function() turboPrint(data.blocks) end)
+                else
+                    runBuild(data.blocks, missingOnly)
+                end
             end
         else
             isBuilding = false
+            turboAbort = true
             releaseShift()
             notifyWarn("Stopped", "Build stopped", 3)
         end
@@ -8513,11 +8579,19 @@ tabEdit:CreateSlider({
     end
 })
 
+-- Colorpicker:Set runs while the UI is built and fires this callback, so the
+-- default purple was calling SetAccent immediately - which builds a Custom
+-- theme and switches to it, replacing the black Default before you ever see it.
+S.accentReady = false
 tabEdit:CreateColorpicker({
     Name = "Accent Colour",
     Default = Color3.fromRGB(120, 80, 255),
-    Callback = function(c) Duvome:SetAccent(c) end
+    Callback = function(c)
+        if not S.accentReady then return end
+        Duvome:SetAccent(c)
+    end
 })
+task.defer(function() S.accentReady = true end)
 
 end
 
