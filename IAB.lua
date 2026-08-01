@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 16:19"
+local IAB_BUILD = "Aug 01 16:35"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3631,7 +3631,8 @@ structTab:CreateDropdown({
 
 local structBlockDropdown = structTab:CreateDropdown({
     Name = "Select Block",
-    Gear = { { Type = "button", Name = "Refresh Blocks", OnClick = function()
+    -- action lives in the list rather than behind a gear
+    Actions = { { Text = "Refresh", OnClick = function()
         local list = structFetchBlocks()
         structBlockDropdown:Refresh(list)
         notify("Refreshed", #list .. " blocks found", 3)

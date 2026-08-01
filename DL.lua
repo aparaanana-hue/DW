@@ -1795,9 +1795,9 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			Parent                 = MainWindow
 		})
 
-		local MAX_STARS = 24
+		local MAX_STARS = 40
 		-- Three sizes so the field has depth rather than one uniform sparkle.
-		local TIERS = { 9, 15, 23 }
+		local TIERS = { 12, 20, 30 }
 
 		-- A star is drawn, not typed: Roblox fonts have no star glyph, which is
 		-- why a text character rendered as a box. Two tapered bars crossed over
@@ -1871,7 +1871,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		-- Fade up, hold, fade out, reappear elsewhere at a new size.
 		local function twinkle(holder, st)
 			local size  = TIERS[math.random(1, #TIERS)]
-			local peak  = 0.25 + math.random() * 0.35     -- stays soft, never solid
+			local peak  = 0.05 + math.random() * 0.25     -- bright enough to read through the glass
 			local up    = 0.6 + math.random() * 0.9
 			local hold  = 0.25 + math.random() * 1.1
 			local down  = 0.7 + math.random() * 1.0
@@ -1881,7 +1881,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			for _, f in ipairs(st.parts) do f.BackgroundTransparency = 1 end
 			st.glow.BackgroundTransparency = 1
 
-			fade(st, peak, math.min(peak + 0.35, 1), up, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+			fade(st, peak, math.min(peak + 0.15, 1), up, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
 			task.delay(up + hold, function()
 				if not (holder and holder.Parent) then return end
