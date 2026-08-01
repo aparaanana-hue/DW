@@ -2227,6 +2227,14 @@ auto:CreateDropdown({
 
 fileDropdown = auto:CreateDropdown({
     Name = "Select Build File",
+    GearAction = {
+        Icon = "eye",
+        OnClick = function()
+            if BuilderAPI.thumbOpen then
+                BuilderAPI.thumbOpen(not (BuilderAPI.thumbPanel and BuilderAPI.thumbPanel:IsOpen()))
+            end
+        end,
+    },
     -- Refresh and Delete live in this dropdown's gear rather than as two more
     -- buttons in the panel.
     Gear = {
@@ -2272,17 +2280,6 @@ fileDropdown = auto:CreateDropdown({
     end
 })
 
-auto:CreateToggle({
-    Name = "Thumbnail",
-    CurrentValue = false,
-    Tooltip = "Opens a panel showing a spinning 3D preview of the selected build file.",
-    Callback = function(on)
-        local tp = BuilderAPI.thumbPanel
-        if not tp then return end
-        BuilderAPI.thumbOpen(on)
-    end
-})
-
 
 BuilderAPI.toggles.build = auto:CreateToggle({
     Name = "Start Build",
@@ -2299,7 +2296,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
           Callback = function(v) pipelineMode = v end },
         { Type = "slider", Name = "Pipeline Depth", Min = 2, Max = 30, Default = 8,
           Callback = function(v) pipelineDepth = v end },
-        { Type = "toggle", Name = "Move Before Placing", Default = true,
+        { Type = "toggle", Name = "Walk To Each Block", Default = true,
           Callback = function(v) moveToBuildPosition = v end },
     },
     Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
@@ -3520,23 +3517,9 @@ structTab:CreateToggle({
     Name = "Live Preview",
     CurrentValue = false,
     Flag = "StructLivePreview",
-    Callback = function(v)
-        structShowPreview = v
-        if v then
-            structEnsureOrigin()
-            structRenderPreview()
-        else
-            structClearPreview()
-        end
-    end
-})
-
-structTab:CreateToggle({
-    Name = "Move Handles",
-    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
-    CurrentValue = false,
-    Flag = "StructHandles",
-    Callback = function(v)
+    Gear = {
+        { Type = "toggle", Name = "Move Handles", Default = false,
+          Callback = function(v)
         if v then
             structEnsureOrigin()
             if structHandles then structHandles:Destroy() end
@@ -3558,6 +3541,21 @@ structTab:CreateToggle({
             end)
         else
             if structHandles then structHandles:Destroy() structHandles = nil end
+        end
+    end },
+    },
+    Callback = function(v)
+        structShowPreview = v
+        if v then
+            structEnsureOrigin()
+            structRenderPreview()
+        else
+            structClearPreview()
+            -- the origin marker and its handles belong to the preview; leaving
+            -- them behind is why a red block stayed in the world after turning
+            -- Live Preview off
+            if structHandles then structHandles:Destroy() structHandles = nil end
+            if structOrigin then structOrigin:Destroy() structOrigin = nil end
         end
     end
 })
@@ -3591,7 +3589,8 @@ structTab:CreateDropdown({
     Flag = "StructMode",
     Callback = function(v)
         structMode = (typeof(v) == "table") and v[1] or v
-        -- keep an open panel in step with the chosen shape
+        -- the panel lives in another scope and cannot see this local
+        BuilderAPI.structMode = structMode
         if BuilderAPI.shapePanelSync then BuilderAPI.shapePanelSync() end
         structRefreshPreview()
     end
@@ -3875,12 +3874,24 @@ structTab:CreateButton({
     end
 })
 
+structTab:CreateSection("Save", { Collapsible = true })
+
+-- One name box for the whole tab; the picker decides which generator it names.
+local genSaveTarget = "Structure"
+structTab:CreateDropdown({
+    Name = "Save Target",
+    Options = { "Structure", "City", "Platform" },
+    CurrentOption = { "Structure" }, MultipleOptions = false,
+    Callback = function(v) genSaveTarget = (typeof(v) == "table") and v[1] or v end
+})
 structTab:CreateInput({
     Name = "Save As",
-    PlaceholderText = "MyStructure",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(text)
-        if text and text ~= "" then structFileName = text end
+    Default = "MyBuild",
+    Callback = function(t)
+        if not t or t == "" then return end
+        if genSaveTarget == "City" then cityFileName = t
+        elseif genSaveTarget == "Platform" then platFileName = t
+        else structFileName = t end
     end
 })
 
@@ -4266,13 +4277,6 @@ local cityStats = cityTab:CreateParagraph({
     Content = "Tap Preview City (3D) or Generate to see the size."
 })
 
-cityTab:CreateInput({
-    Name = "Save As",
-    PlaceholderText = "MyCity",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then cityFileName = t end end
-})
-
 cityTab:CreateToggle({
     Name = "One File Per Lot",
     Tooltip = "Write each lot to its own build file so you can build the city piece by piece.",
@@ -4542,13 +4546,6 @@ platTab:CreateButton({
             showThumbnail(blocks, platStyle .. " Platform")
         end)
     end
-})
-
-platTab:CreateInput({
-    Name = "Save As",
-    PlaceholderText = "MyPlatform",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then platFileName = t end end
 })
 
 platTab:CreateButton({
@@ -10801,9 +10798,17 @@ local SHAPE_FIELDS = {
     ["Circle"]         = { "radius", "thickness", "rot" },
 }
 
+BuilderAPI.structMode = BuilderAPI.structMode or "Sphere"
 local shapeCtl = {}
 
 local function addShapeControls()
+    -- Block choice lives on the panel too, so each shape can be textured
+    -- without leaving it.
+    shapeCtl.block = shapePanel:AddDropdown({
+        Name = "Block",
+        Options = blockDisplayList(), Default = blockDisplayFor("grass"), Search = true,
+        Callback = function(v) structSelectedBlock = blockIdFor(v) end
+    })
     shapeCtl.radius = shapePanel:AddSlider({
         Name = "Radius / Length", Min = 3, Max = 450, Increment = 3, Default = 30, ValueName = "blk",
         Callback = function(v) structRadius = v structHeightmap = nil BuilderAPI.structRefresh() end })
@@ -10845,7 +10850,8 @@ addShapeControls()
 
 -- Show only the fields the current shape uses, and retitle the panel.
 function BuilderAPI.shapePanelSync()
-    local fields = SHAPE_FIELDS[structMode] or { "radius", "height", "hollow", "rot" }
+    local mode = BuilderAPI.structMode or "Sphere"
+    local fields = SHAPE_FIELDS[mode] or { "radius", "height", "hollow", "rot" }
     local want = {}
     for _, f in ipairs(fields) do want[f] = true end
     local map = {
@@ -10859,7 +10865,7 @@ function BuilderAPI.shapePanelSync()
     for _, ctl in ipairs({ shapeCtl.rotX, shapeCtl.rotY, shapeCtl.rotZ }) do
         if ctl and ctl.SetVisible then pcall(function() ctl:SetVisible(want.rot == true) end) end
     end
-    pcall(function() shapePanel:SetTitle(structMode) end)
+    pcall(function() shapePanel:SetTitle(mode) end)
 end
 BuilderAPI.shapePanelSync()
 
@@ -10879,7 +10885,7 @@ end
 do
 
 local BS = 3
-local MAX_PARTS = 2500          -- keeps a huge file from stalling the client
+local MAX_PARTS = 20000         -- render everything up to this; beyond it, sample
 
 local thumbPanel = Duvome:MakeSidePanel({ Name = "Thumbnail", Width = 220, Height = 300, Side = "right" })
 BuilderAPI.thumbPanel = thumbPanel
@@ -10890,7 +10896,7 @@ local viewport = Instance.new("ViewportFrame")
 viewport.BackgroundColor3 = Color3.fromRGB(8, 3, 16)
 viewport.BackgroundTransparency = 0.15
 viewport.BorderSizePixel = 0
-viewport.Size = UDim2.new(1, 0, 0, 190)
+viewport.Size = UDim2.new(1, 0, 0, 250)
 viewport.LayoutOrder = 1
 viewport.Parent = host
 Instance.new("UICorner").Parent = viewport
@@ -10904,7 +10910,7 @@ local world = Instance.new("Model")
 world.Parent = viewport
 
 local T = { spin = 0, radius = 30, height = 12, conn = nil, count = 0, name = nil,
-            open = false, speed = 0.6 }
+            open = false, speed = 0.4 }
 
 local infoLabel = Instance.new("TextLabel")
 infoLabel.BackgroundTransparency = 1
@@ -11054,19 +11060,6 @@ function BuilderAPI.thumbOpen(on)
         stopSpin()
     end
 end
-
-thumbPanel:AddButton({
-    Name = "Render Selected File",
-    Callback = function() task.spawn(render) end
-})
-
-thumbPanel:AddSlider({
-    Name = "Spin Speed", Min = 0, Max = 10, Increment = 1, Default = 6,
-    Callback = function(v)
-        T.speed = v / 10
-        applySpin()
-    end
-})
 
 end
 

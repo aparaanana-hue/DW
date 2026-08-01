@@ -2304,7 +2304,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	end)
 
 	
-	local watchShown = true
+	local watchShown = false
 	local WLRow = Create("Frame", {
 		BackgroundColor3       = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second,
 		BorderSizePixel        = 0,
