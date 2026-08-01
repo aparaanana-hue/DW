@@ -3663,7 +3663,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
 							BackgroundTransparency = 1,
 							BorderSizePixel = 0, AutoButtonColor = false,
-							TextXAlignment = Enum.TextXAlignment.Left,
+							TextXAlignment = Enum.TextXAlignment.Center,
 							Size = UDim2.new(1,0,1,0), ZIndex = 63, Parent = row,
 						})
 						AddThemeObject(btn, "Text")
@@ -5817,7 +5817,7 @@ end
 
 
 
-function DuvomeLibrary:AddWatch(name, stateFn, keyCode)
+function DuvomeLibrary:AddWatch(name, stateFn, keyCode, setFn)
 	if not DuvomeLibrary._watchGui then
 		local wl = Create("Frame", {
 			Name = "WatchList", BackgroundColor3 = Color3.fromRGB(12,4,24), BackgroundTransparency = 0.25,
@@ -5835,7 +5835,17 @@ function DuvomeLibrary:AddWatch(name, stateFn, keyCode)
 		DuvomeLibrary._watchItems = {}
 	end
 	local wl = DuvomeLibrary._watchGui
-	local row = Create("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1,0,0,16), LayoutOrder = #DuvomeLibrary._watchItems + 1, Parent = wl})
+	-- A plain Frame unless a setter is supplied, in which case the whole row
+	-- is a button so the ON/OFF text can be clicked to flip the feature.
+	local row
+	if setFn then
+		row = Create("TextButton", {Text = "", AutoButtonColor = false,
+			BackgroundTransparency = 1, BorderSizePixel = 0,
+			Size = UDim2.new(1,0,0,16), LayoutOrder = #DuvomeLibrary._watchItems + 1, Parent = wl})
+	else
+		row = Create("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1,0,0,16),
+			LayoutOrder = #DuvomeLibrary._watchItems + 1, Parent = wl})
+	end
 	local nameLbl = AddThemeObject(Create("TextLabel", {
 		Text = name .. (keyCode and (" ["..(keyCode.Name or tostring(keyCode)).."]") or ""),
 		Font = Enum.Font.GothamSemibold, TextSize = 12, TextColor3 = Color3.fromRGB(210,210,220),
@@ -5844,6 +5854,18 @@ function DuvomeLibrary:AddWatch(name, stateFn, keyCode)
 		Text = "OFF", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.fromRGB(120,120,130),
 		BackgroundTransparency = 1, Size = UDim2.new(0,40,1,0), Position = UDim2.new(1,-40,0,0),
 		TextXAlignment = Enum.TextXAlignment.Right, Parent = row})
+	if setFn then
+		row.MouseEnter:Connect(function()
+			nameLbl.TextColor3 = Color3.fromRGB(235, 210, 255)
+		end)
+		row.MouseLeave:Connect(function()
+			nameLbl.TextColor3 = Color3.fromRGB(210, 210, 220)
+		end)
+		row.MouseButton1Click:Connect(function()
+			local cur = stateFn()
+			pcall(setFn, not (cur and cur ~= false))
+		end)
+	end
 	table.insert(DuvomeLibrary._watchItems, {stateFn = stateFn, stateLbl = stateLbl})
 	
 	if not DuvomeLibrary._watchLoop then

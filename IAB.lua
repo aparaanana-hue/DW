@@ -234,6 +234,8 @@ local platTab     = tabGenerate
 local BuilderAPI = {}
 -- Every saved-file kind registers here; one UI drives them all.
 BuilderAPI.fileKinds = {}
+-- Toggle handles, so the watch list rows can flip them.
+BuilderAPI.toggles = {}
 
 local net = ReplicatedStorage
     :WaitForChild("rbxts_include")
@@ -2198,7 +2200,7 @@ fileDropdown = auto:CreateDropdown({
 
 auto:CreateDivider()
 
-auto:CreateToggle({
+BuilderAPI.toggles.build = auto:CreateToggle({
     Name = "Start Build",
     CurrentValue = false,
     Flag = "BuildToggle",
@@ -2213,6 +2215,8 @@ auto:CreateToggle({
           Callback = function(v) pipelineMode = v end },
         { Type = "slider", Name = "Pipeline Depth", Min = 2, Max = 30, Default = 8,
           Callback = function(v) pipelineDepth = v end },
+        { Type = "toggle", Name = "Move Before Placing", Default = true,
+          Callback = function(v) moveToBuildPosition = v end },
     },
     Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
     Callback = function(v)
@@ -2245,16 +2249,6 @@ auto:CreateToggle({
             releaseShift()
             notifyWarn("Stopped", "Build stopped", 3)
         end
-    end
-})
-
-auto:CreateToggle({
-    Name = "Move Before Placing",
-    CurrentValue = true,
-    Flag = "MoveNearBlock",
-    Tooltip = "Walk or fly close to each block before placing it. Slower, but far more reliable.",
-    Callback = function(v)
-        moveToBuildPosition = v
     end
 })
 
@@ -2630,7 +2624,7 @@ local function showSelBox()
     end)
 end
 
-saveTab:CreateSection("Save", { Collapsible = true })
+saveTab:CreateSection("Save", { Collapsible = true, Column = "left" })
 
 saveTab:CreateInput({
     Name = "Save As",
@@ -2659,11 +2653,9 @@ saveTab:CreateToggle({
     end
 })
 
-saveTab:CreateDivider()
 
-saveTab:CreateDivider()
 
-saveTab:CreateToggle({
+BuilderAPI.toggles.brush = saveTab:CreateToggle({
     Name = "Block Brush",
     Gear = {
         { Type = "button", Name = "Clear Selection", OnClick = function()
@@ -2716,7 +2708,6 @@ saveTab:CreateToggle({
     end
 })
 
-saveTab:CreateDivider()
 
 saveTab:CreateParagraph({
     Title = "Split / Mirror Save",
@@ -2778,7 +2769,6 @@ saveTab:CreateButton({
 
 end
 
-auto:CreateSection("Build Speed & Movement", { Collapsible = true })
 
 
 auto:CreateDivider()
@@ -2787,14 +2777,14 @@ auto:CreateDivider()
 
 
 
-previewTab:CreateSection("Preview", { Collapsible = true })
+previewTab:CreateSection("Preview", { Collapsible = true, Column = "right" })
 
 previewTab:CreateParagraph({
     Title = "Schematic Preview",
     Content = "Shows your build as see-through blocks in front of you. Each block type has its own color."
 })
 
-previewTab:CreateToggle({
+BuilderAPI.toggles.preview = previewTab:CreateToggle({
     Name = "Preview Build",
     CurrentValue = false,
     Flag = "PreviewToggle",
@@ -2842,7 +2832,7 @@ previewTab:CreateToggle({
     end
 })
 
-previewTab:CreateToggle({
+BuilderAPI.toggles.handles = previewTab:CreateToggle({
     Name = "Move Handles",
     Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
     CurrentValue = false,
@@ -3507,11 +3497,6 @@ structTab:CreateDropdown({
     end
 })
 
-structTab:CreateParagraph({
-    Title = "Shape Settings",
-    Content = "Size, shell, form and rotation live in the Shape panel. Turn it on below.",
-})
-
 structTab:CreateToggle({
     Name = "Shape Panel",
     CurrentValue = false,
@@ -3525,6 +3510,11 @@ structTab:CreateToggle({
 
 local structBlockDropdown = structTab:CreateDropdown({
     Name = "Select Block",
+    Gear = { { Type = "button", Name = "Refresh Blocks", OnClick = function()
+        local list = structFetchBlocks()
+        structBlockDropdown:Refresh(list)
+        notify("Refreshed", #list .. " blocks found", 3)
+    end } },
     Options = structFetchBlocks(),
     CurrentOption = {"grass"},
     MultipleOptions = false,
@@ -3532,15 +3522,6 @@ local structBlockDropdown = structTab:CreateDropdown({
     Callback = function(v)
         structSelectedBlock = (typeof(v) == "table") and v[1] or v
         structRefreshPreview()
-    end
-})
-
-structTab:CreateButton({
-    Name = "Refresh Blocks",
-    Callback = function()
-        local list = structFetchBlocks()
-        structBlockDropdown:Refresh(list)
-        notify("Refreshed", #list .. " blocks found", 3)
     end
 })
 
@@ -3557,9 +3538,7 @@ structTab:CreateInput({
     end
 })
 
-structTab:CreateDivider()
 
-structTab:CreateDivider()
 
 -- Three identical 0-360 axis sliders; only the target variable differs.
 local function structToBlocks()
@@ -3576,7 +3555,6 @@ local function structToBlocks()
     return blocks
 end
 
-structTab:CreateDivider()
 
 structTab:CreateParagraph({
     Title = "Sculpt the Terrain",
@@ -3775,7 +3753,6 @@ structTab:CreateToggle({
     end
 })
 
-structTab:CreateDivider()
 
 local structStatsParagraph = structTab:CreateParagraph({
     Title = "Shape Stats",
@@ -8018,7 +7995,7 @@ local function refreshHistoryList()
     end)
 end
 
-tabEdit:CreateSection("Session Info", { Collapsible = true })
+tabEdit:CreateSection("Session", { Collapsible = true })
 
 histPara2 = tabEdit:CreateParagraph({
     Title = "History",
@@ -8802,7 +8779,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Noise & Scripting", { Collapsible = true })
+tabEdit:CreateSection("Advanced Tools", { Collapsible = true })
 
 NP.names = {}
 for _, e in ipairs(NOISE_KINDS) do NP.names[#NP.names + 1] = e[1] end
@@ -9268,7 +9245,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Shape, Path & Modify", { Collapsible = true })
+tabEdit:CreateDivider()
 
 SP.shapeNames = {}
 for _, e in ipairs(SHAPES) do SP.shapeNames[#SP.shapeNames + 1] = e[1] end
@@ -9747,7 +9724,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Sculpting", { Collapsible = true })
+tabEdit:CreateDivider()
 
 fluidPara = tabEdit:CreateParagraph({
     Title = "Fluid Blocks",
@@ -10451,7 +10428,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateSection("Image", { Collapsible = true })
+tabEdit:CreateDivider()
 
 imgPara = tabEdit:CreateParagraph({
     Title = "Image",
@@ -10571,7 +10548,7 @@ local function refreshList()
     end)
 end
 
-tabEdit:CreateSection("Saved Files", { Collapsible = true })
+tabEdit:CreateDivider()
 
 filePara = tabEdit:CreateParagraph({
     Title = "Saved Files",
@@ -10751,7 +10728,6 @@ do
 local shapePanel = Duvome:MakeSidePanel({ Name = "Shape", Width = 190, Height = 420, Side = "right" })
 BuilderAPI.shapePanel = shapePanel
 
-shapePanel:AddLabel("Size")
 for _, sl in ipairs({
     { "Radius / Length", 3, 450, 3, 30, function(v) structRadius = v end },
     { "Width",           3, 450, 3, 30, function(v) structWidth  = v end },
@@ -10769,8 +10745,6 @@ for _, sl in ipairs({
     })
 end
 
-shapePanel:AddDivider()
-shapePanel:AddLabel("Shell")
 shapePanel:AddToggle({
     Name = "Hollow", Default = true,
     Callback = function(v) structHollow = v BuilderAPI.structRefresh() end
@@ -10780,8 +10754,6 @@ shapePanel:AddToggle({
     Callback = function(v) structFillSteps = v BuilderAPI.structRefresh() end
 })
 
-shapePanel:AddDivider()
-shapePanel:AddLabel("Form")
 shapePanel:AddSlider({
     Name = "Spiral Turns", Min = 1, Max = 40, Increment = 1, Default = 4,
     Callback = function(v)
@@ -10799,8 +10771,6 @@ shapePanel:AddSlider({
     Callback = function(v) structSeed = v structHeightmap = nil BuilderAPI.structRefresh() end
 })
 
-shapePanel:AddDivider()
-shapePanel:AddLabel("Rotation")
 for _, ax in ipairs({
     { "Tilt (X)", function(v) structRX = v end },
     { "Spin (Y)", function(v) structRY = v end },
@@ -10822,12 +10792,20 @@ Duvome:AddWatch("Building", function()
         return progressPlaced .. "/" .. progressTotal
     end
     return true
+end, nil, function(v)
+    pcall(function() BuilderAPI.toggles.build:Set(v) end)
 end)
-Duvome:AddWatch("Preview", function() return isPreviewing end)
-Duvome:AddWatch("Move Handles", function() return dragModeOn end)
+Duvome:AddWatch("Preview", function() return isPreviewing end, nil, function(v)
+    pcall(function() BuilderAPI.toggles.preview:Set(v) end)
+end)
+Duvome:AddWatch("Move Handles", function() return dragModeOn end, nil, function(v)
+    pcall(function() BuilderAPI.toggles.handles:Set(v) end)
+end)
 Duvome:AddWatch("Block Brush", function()
     if not blockSelMode then return false end
     return blockSelCount > 0 and (blockSelCount .. " blocks") or true
+end, nil, function(v)
+    pcall(function() BuilderAPI.toggles.brush:Set(v) end)
 end)
 Duvome:AddWatch("File", function()
     return selectedFile and selectedFile:gsub("%.json$", "") or false
