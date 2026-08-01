@@ -2198,6 +2198,17 @@ fileDropdown = auto:CreateDropdown({
     end
 })
 
+auto:CreateToggle({
+    Name = "Thumbnail",
+    CurrentValue = false,
+    Tooltip = "Opens a panel showing a spinning 3D preview of the selected build file.",
+    Callback = function(on)
+        local tp = BuilderAPI.thumbPanel
+        if not tp then return end
+        BuilderAPI.thumbOpen(on)
+    end
+})
+
 
 BuilderAPI.toggles.build = auto:CreateToggle({
     Name = "Start Build",
@@ -10775,6 +10786,206 @@ for _, ax in ipairs({
         Callback = function(v) ax[2](v) BuilderAPI.structRefresh() end
     })
 end
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BUILD THUMBNAIL — spinning 3D preview of the selected build file
+--
+-- Renders the file's blocks into a ViewportFrame on a side panel, so you can
+-- see what a file is before building it. Nothing is placed in the world.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local BS = 3
+local MAX_PARTS = 2500          -- keeps a huge file from stalling the client
+
+local thumbPanel = Duvome:MakeSidePanel({ Name = "Thumbnail", Width = 220, Height = 300, Side = "right" })
+BuilderAPI.thumbPanel = thumbPanel
+
+local host = thumbPanel:Container()
+
+local viewport = Instance.new("ViewportFrame")
+viewport.BackgroundColor3 = Color3.fromRGB(8, 3, 16)
+viewport.BackgroundTransparency = 0.15
+viewport.BorderSizePixel = 0
+viewport.Size = UDim2.new(1, 0, 0, 190)
+viewport.LayoutOrder = 1
+viewport.Parent = host
+Instance.new("UICorner").Parent = viewport
+
+local cam = Instance.new("Camera")
+cam.FieldOfView = 45
+viewport.CurrentCamera = cam
+cam.Parent = viewport
+
+local world = Instance.new("Model")
+world.Parent = viewport
+
+local T = { spin = 0, radius = 30, height = 12, conn = nil, count = 0, name = nil,
+            open = false, speed = 0.6 }
+
+local infoLabel = Instance.new("TextLabel")
+infoLabel.BackgroundTransparency = 1
+infoLabel.Size = UDim2.new(1, 0, 0, 30)
+infoLabel.LayoutOrder = 2
+infoLabel.Font = Enum.Font.GothamSemibold
+infoLabel.TextSize = 11
+infoLabel.TextColor3 = Color3.fromRGB(210, 175, 255)
+infoLabel.TextWrapped = true
+infoLabel.Text = "Pick a build file, then press Render."
+infoLabel.Parent = host
+
+-- ── block colours ──────────────────────────────────────────────────────────
+local colourCache = {}
+local function colourFor(name)
+    local hit = colourCache[name]
+    if hit then return hit end
+    local col = Color3.fromRGB(160, 160, 165)
+    local folder = ReplicatedStorage:FindFirstChild("blocks")
+    local model = folder and folder:FindFirstChild(name)
+    if model then
+        if model:IsA("BasePart") then
+            col = model.Color
+        else
+            -- area-weighted average, same approach as the Colour tab
+            local r, g, b, w = 0, 0, 0, 0
+            for _, d in ipairs(model:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local sz = d.Size
+                    local a = math.max(sz.X * sz.Y + sz.Y * sz.Z + sz.X * sz.Z, 0.001)
+                    r, g, b, w = r + d.Color.R * a, g + d.Color.G * a, b + d.Color.B * a, w + a
+                end
+            end
+            if w > 0 then col = Color3.new(r / w, g / w, b / w) end
+        end
+    end
+    colourCache[name] = col
+    return col
+end
+
+-- ── render ─────────────────────────────────────────────────────────────────
+local function clearWorld()
+    world:ClearAllChildren()
+    T.count = 0
+end
+
+local function render()
+    local data = loadSelectedBuild()
+    if not data or not data.blocks or #data.blocks == 0 then
+        notifyWarn("Thumbnail", "Pick a build file first", 3)
+        infoLabel.Text = "No file selected."
+        return
+    end
+
+    clearWorld()
+    local blocks = data.blocks
+    local total = #blocks
+    -- even sampling rather than the first N, so the shape stays recognisable
+    local step = math.max(1, math.ceil(total / MAX_PARTS))
+
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    local made = 0
+
+    for i = 1, total, step do
+        local b = blocks[i]
+        local cf = b.cframe
+        if cf and cf[1] then
+            local x, y, z = cf[1], cf[2], cf[3]
+            local p = Instance.new("Part")
+            p.Anchored = true
+            p.CanCollide = false
+            p.Size = Vector3.new(BS, BS, BS)
+            p.CFrame = CFrame.new(x, y, z)
+            p.Color = colourFor(b.blockType)
+            p.Material = Enum.Material.SmoothPlastic
+            p.Parent = world
+            made = made + 1
+            if x < minX then minX = x end
+            if x > maxX then maxX = x end
+            if y < minY then minY = y end
+            if y > maxY then maxY = y end
+            if z < minZ then minZ = z end
+            if z > maxZ then maxZ = z end
+        end
+        if made % 400 == 0 then task.wait() end
+    end
+
+    if made == 0 then
+        infoLabel.Text = "That file has no placeable blocks."
+        return
+    end
+
+    T.count = made
+    T.name = (selectedFile or "build"):gsub("%.json$", "")
+    local centre = Vector3.new((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2)
+    local span = math.max(maxX - minX, maxY - minY, maxZ - minZ, BS)
+
+    -- park the model at the origin so the camera can orbit a fixed point
+    for _, p in ipairs(world:GetChildren()) do
+        if p:IsA("BasePart") then p.CFrame = p.CFrame - centre end
+    end
+
+    T.radius = span * 1.5 + 10
+    T.height = span * 0.55 + 5
+
+    infoLabel.Text = T.name .. "\n" .. total .. " blocks"
+        .. (made < total and ("  (showing " .. made .. ")") or "")
+    notifyOK("Thumbnail", T.name .. " rendered", 3)
+end
+
+-- ── spin ───────────────────────────────────────────────────────────────────
+local function aimCamera()
+    local x = math.cos(T.spin) * T.radius
+    local z = math.sin(T.spin) * T.radius
+    cam.CFrame = CFrame.new(Vector3.new(x, T.height, z), Vector3.new(0, 0, 0))
+end
+
+local function stopSpin()
+    if T.conn then T.conn:Disconnect() T.conn = nil end
+end
+
+-- One connection, created only while the panel is open. The speed slider fires
+-- its callback as the UI is built, so without the open check this would spin a
+-- hidden viewport for the whole session.
+local function applySpin()
+    stopSpin()
+    if not T.open then return end
+    aimCamera()
+    if T.speed <= 0 then return end
+    T.conn = RunService.RenderStepped:Connect(function(dt)
+        T.spin = (T.spin + dt * T.speed) % (math.pi * 2)
+        aimCamera()
+    end)
+end
+
+-- ── controls ───────────────────────────────────────────────────────────────
+-- opened from the Build tab toggle, which is created earlier in the file
+function BuilderAPI.thumbOpen(on)
+    T.open = on
+    if on then
+        thumbPanel:Show()
+        applySpin()
+        task.spawn(render)
+    else
+        thumbPanel:Hide()
+        stopSpin()
+    end
+end
+
+thumbPanel:AddButton({
+    Name = "Render Selected File",
+    Callback = function() task.spawn(render) end
+})
+
+thumbPanel:AddSlider({
+    Name = "Spin Speed", Min = 0, Max = 10, Increment = 1, Default = 6,
+    Callback = function(v)
+        T.speed = v / 10
+        applySpin()
+    end
+})
 
 end
 

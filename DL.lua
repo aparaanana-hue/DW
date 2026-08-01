@@ -4947,6 +4947,11 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						{BackgroundTransparency = 0, Position = UDim2.new(0, landX, 0, centreY())}
 					):Play()
 				end
+				-- Raw content frame, for callers that need to parent something the
+				-- element factory cannot build (a ViewportFrame, for instance).
+				function api:Container()
+					return cfg.Columns and LeftCol or Content
+				end
 				function api:Hide()
 					if not isOpen then Panel.Visible = false return end
 					isOpen = false
