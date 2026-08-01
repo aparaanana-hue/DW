@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 16:35"
+local IAB_BUILD = "Aug 01 16:39"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2703,44 +2703,29 @@ local function showSelBox()
     local guiHost = (typeof(gethui) == "function" and gethui()) or game:GetService("CoreGui")
     selHandles.Parent = guiHost
 
-    local startSize, startCF
+    -- Roblox's own Resize keeps the opposite face anchored and moves the part
+    -- for you, which is both simpler and more accurate than recomputing the
+    -- CFrame by hand. Deltas are accumulated so a drag steps block by block.
+    local prevDistance = 0
     selHandles.MouseButton1Down:Connect(function()
-        startSize = selBoxPart.Size
-        startCF = selBoxPart.CFrame
+        prevDistance = 0
     end)
     selHandles.MouseDrag:Connect(function(face, distance)
-        if not startSize then return end
-        local normal = Vector3.FromNormalId(face)
-        local axisAbs = Vector3.new(math.abs(normal.X), math.abs(normal.Y), math.abs(normal.Z))
-        -- Snap to whole blocks. Raw handle distance is continuous, which let the
-        -- box land on half a block and made the saved region ambiguous.
-        local snapped = math.floor(distance / 3 + 0.5) * 3
-        local newSize = startSize + axisAbs * snapped
-        newSize = Vector3.new(
-            math.max(3, math.floor(newSize.X / 3 + 0.5) * 3),
-            math.max(3, math.floor(newSize.Y / 3 + 0.5) * 3),
-            math.max(3, math.floor(newSize.Z / 3 + 0.5) * 3))
-        local applied = newSize - startSize
-        local worldNormal = startCF:VectorToWorldSpace(normal)
-        selBoxPart.Size = newSize
-        local moved = startCF + worldNormal * (applied:Dot(axisAbs) / 2)
-        -- Align the box to the block lattice. Snapping size alone still let the
-        -- box sit between blocks, so edges never lined up with real blocks.
-        local pos = moved.Position
-        local function snapAxis(v, size)
-            -- Blocks are centred on multiples of 3, so boundaries fall on
-            -- 1.5 + 3k. For the box edges to land there, an even block count
-            -- needs its centre on a boundary and an odd count on a centre.
-            local half = (math.floor(size / 3 + 0.5) % 2 == 0) and 1.5 or 0
-            return math.floor((v - half) / 3 + 0.5) * 3 + half
+        local delta = distance - prevDistance
+        if math.abs(delta) < 3 then return end
+        local step = math.floor(delta / 3 + 0.5) * 3
+        if step == 0 then return end
+        local oldSize, oldPos = selBoxPart.Size, selBoxPart.Position
+        if selBoxPart:Resize(face, step) then
+            -- never let a face collapse past one block
+            if selBoxPart.Size.X < 3 or selBoxPart.Size.Y < 3 or selBoxPart.Size.Z < 3 then
+                selBoxPart.Size, selBoxPart.Position = oldSize, oldPos
+            end
+            prevDistance = distance
         end
-        selBoxPart.CFrame = CFrame.new(
-            snapAxis(pos.X, newSize.X),
-            snapAxis(pos.Y, newSize.Y),
-            snapAxis(pos.Z, newSize.Z))
     end)
     selHandles.MouseButton1Up:Connect(function()
-        startSize = nil
+        prevDistance = 0
     end)
 end
 
@@ -10974,8 +10959,7 @@ local function colourFor(name)
     local hit = colourCache[name]
     if hit then return hit end
     local col = Color3.fromRGB(160, 160, 165)
-    local folder = ReplicatedStorage:FindFirstChild("blocks")
-    local model = folder and folder:FindFirstChild(name)
+    local model = BuilderAPI.findBlockTemplate and BuilderAPI.findBlockTemplate(name)
     if model then
         if model:IsA("BasePart") then
             col = model.Color
@@ -11005,11 +10989,29 @@ end
 -- Clone the real model for a block type, stripped of anything a viewport
 -- cannot use. Cached, because cloning per block would be brutal.
 local templateCache = {}
+-- Block names are not always what a build file calls them, and templates live
+-- in two places: blocks/<name> and Blocks/<name>/Root. Try both.
+local BLOCK_ALIASES = { dirt = "soil" }
+
+local function findBlockTemplate(name)
+    local want = BLOCK_ALIASES[name] or name
+    local lower = ReplicatedStorage:FindFirstChild("blocks")
+    local hit = lower and lower:FindFirstChild(want)
+    if hit then return hit end
+    local upper = ReplicatedStorage:FindFirstChild("Blocks")
+    local entry = upper and upper:FindFirstChild(want)
+    if entry then
+        return entry:FindFirstChild("Root") or entry
+    end
+    return nil
+end
+
+BuilderAPI.findBlockTemplate = findBlockTemplate
+
 local function templateFor(name)
     local hit = templateCache[name]
     if hit ~= nil then return hit or nil end
-    local folder = ReplicatedStorage:FindFirstChild("blocks")
-    local src = folder and folder:FindFirstChild(name)
+    local src = findBlockTemplate(name)
     if not src then templateCache[name] = false return nil end
 
     local ok, clone = pcall(function() return src:Clone() end)
