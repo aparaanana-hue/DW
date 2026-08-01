@@ -325,7 +325,145 @@ local Stats = {
 	BlocksDestroyed = 0,
 }
 
-local GuiLibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/SoldoxD/libery/refs/heads/main/main"))()
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Duvome adapter for the Islands.God UI calls.
+--
+-- The hub was written against SoldoxD's library. Rather than rewrite 2000+
+-- lines of logic, this implements that library's surface on top of Duvome, so
+-- every CreateToggle/CreateSlider/... below runs unchanged.
+--
+-- Mapping:
+--   CreateWindow  -> Duvome:MakeWindow
+--   CreateTab     -> Window:MakeTab, with left/right columns
+--   CreateSection -> a new section, alternating columns
+--   Create*       -> the matching Duvome element on the current section
+-- ═══════════════════════════════════════════════════════════════════════════
+local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
+Duvome:Init()
+
+local GuiLibrary = {}
+
+-- Roblox fonts have no emoji glyphs, so they render as boxes. Strip them from
+-- labels and keep a matching BuilderIcons name for the tab instead.
+local TAB_ICONS = {
+    Combat = "crosshairs", Farming = "backpack", Movement = "user",
+    Building = "layout-fluid", Vending = "shopping-cart",
+    Island = "house", Settings = "gear",
+}
+
+local function clean(text)
+    local out = tostring(text or "")
+    out = out:gsub("[\128-\255]", "")       -- drop non-ASCII (emoji)
+    out = out:gsub("^%s+", ""):gsub("%s+$", "")
+    return out
+end
+
+local _window
+
+function GuiLibrary:CreateWindow(title, _size)
+    _window = Duvome:MakeWindow({
+        Name           = clean(title),
+        IntroText      = clean(title),
+        ConfigFolder   = "IslandsGod",
+        SaveConfig     = true,
+        AutoLoadConfig = false,
+        IntroEnabled   = true,
+        ShowIcon       = true,
+    })
+    return _window
+end
+
+function GuiLibrary:CreateTab(window, name)
+    local label = clean(name)
+    local container = (window or _window):MakeTab({
+        Name = label, Icon = TAB_ICONS[label] or "list", Columns = true,
+    })
+    local tab = {
+        _left = container:AddLeft(),
+        _right = container:AddRight(),
+        _count = 0,
+        _section = nil,
+    }
+    -- something to hang elements on before any CreateSection call
+    tab._section = tab._left:AddSection({ Name = label })
+    return tab
+end
+
+local function host(tab)
+    return tab._section or tab._left
+end
+
+function GuiLibrary:CreateSection(tab, title)
+    tab._count = tab._count + 1
+    local col = (tab._count % 2 == 1) and tab._right or tab._left
+    tab._section = col:AddSection({ Name = clean(title), Collapsible = tab._count > 1 })
+    return tab._section
+end
+
+function GuiLibrary:CreateLabel(tab, text)
+    return host(tab):AddLabel(clean(text))
+end
+
+function GuiLibrary:CreateButton(tab, name, callback)
+    return host(tab):AddButton({ Name = clean(name), Callback = callback or function() end })
+end
+
+function GuiLibrary:CreateToggle(tab, name, default, callback)
+    return host(tab):AddToggle({
+        Name = clean(name), Default = default and true or false,
+        Callback = callback or function() end,
+    })
+end
+
+function GuiLibrary:CreateSlider(tab, name, min, max, default, callback)
+    -- the hub passes whole numbers throughout
+    return host(tab):AddSlider({
+        Name = clean(name), Min = min or 0, Max = max or 100,
+        Increment = 1, Default = default or min or 0,
+        Callback = callback or function() end,
+    })
+end
+
+function GuiLibrary:CreateDropdown(tab, name, options, callback)
+    return host(tab):AddDropdown({
+        Name = clean(name), Options = options or {},
+        Default = (options and options[1]) or "", Search = true,
+        Callback = callback or function() end,
+    })
+end
+
+-- The hub expects a table of selected names back, so multi-select results are
+-- reshaped from Duvome's list into the { [name] = true } form it uses.
+function GuiLibrary:CreateMultiSelect(tab, name, options, defaults, callback)
+    return host(tab):AddDropdown({
+        Name = clean(name), Options = options or {},
+        Default = defaults or {}, MultiSelect = true, SelectAll = true, Search = true,
+        Callback = function(list)
+            local set = {}
+            if type(list) == "table" then
+                for _, v in ipairs(list) do set[v] = true end
+            elseif list then
+                set[list] = true
+            end
+            if callback then callback(set) end
+        end,
+    })
+end
+
+function GuiLibrary:CreateInput(tab, name, callback)
+    return host(tab):AddTextbox({
+        Name = clean(name), Default = "",
+        Callback = callback or function() end,
+    })
+end
+
+function GuiLibrary:CreateNotification(title, msg, duration, kind)
+    Duvome:MakeNotification({
+        Name = clean(title), Content = clean(msg),
+        Time = duration or 3, Type = kind,
+    })
+end
+
 
 local Window = GuiLibrary:CreateWindow("⚔️ Islands.God | Reborn", UDim2.fromOffset(620, 480))
 
