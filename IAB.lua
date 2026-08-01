@@ -10889,7 +10889,6 @@ end
 do
 
 local BS = 3
-local MAX_PARTS = 20000         -- render everything up to this; beyond it, sample
 
 local thumbPanel = Duvome:MakeSidePanel({ Name = "Thumbnail", Width = 220, Height = 300, Side = "right" })
 BuilderAPI.thumbPanel = thumbPanel
