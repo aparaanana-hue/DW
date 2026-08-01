@@ -1789,7 +1789,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				BackgroundTransparency = 1,
 				Size                   = UDim2.new(0, size, 0, size),
 				Position               = UDim2.new(math.random(), 0, math.random(), 0),
-				ZIndex                 = 1,
+				ZIndex                 = 0,
 				Parent                 = StarCanvas
 			})
 
@@ -1800,7 +1800,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				AnchorPoint            = Vector2.new(0.5, 0.5),
 				Position               = UDim2.new(0.5, 0, 0.5, 0),
 				Size                   = UDim2.new(0.45, 0, 0.45, 0),
-				ZIndex                 = 1,
+				ZIndex                 = 0,
 				Parent                 = holder
 			})
 			Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = glow})
@@ -1817,7 +1817,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Position               = UDim2.new(0.5, 0, 0.5, 0),
 					Size                   = UDim2.new(widthScale, 0, lengthScale, 0),
 					Rotation               = rotation,
-					ZIndex                 = 2,
+					ZIndex                 = 0,
 					Parent                 = holder
 				})
 				Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = f})
