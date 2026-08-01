@@ -2728,8 +2728,10 @@ local function showSelBox()
         -- box sit between blocks, so edges never lined up with real blocks.
         local pos = moved.Position
         local function snapAxis(v, size)
-            -- even block counts sit on boundaries, odd ones on centres
-            local half = (math.floor(size / 3 + 0.5) % 2 == 0) and 0 or 1.5
+            -- Blocks are centred on multiples of 3, so boundaries fall on
+            -- 1.5 + 3k. For the box edges to land there, an even block count
+            -- needs its centre on a boundary and an odd count on a centre.
+            local half = (math.floor(size / 3 + 0.5) % 2 == 0) and 1.5 or 0
             return math.floor((v - half) / 3 + 0.5) * 3 + half
         end
         selBoxPart.CFrame = CFrame.new(
