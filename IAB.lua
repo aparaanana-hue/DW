@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 14:58"
+local IAB_BUILD = "Aug 01 15:03"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -10902,6 +10902,9 @@ viewport.BackgroundTransparency = 0.15
 viewport.BorderSizePixel = 0
 viewport.Size = UDim2.new(1, 0, 0, 250)
 viewport.LayoutOrder = 1
+viewport.Ambient = Color3.fromRGB(190, 190, 200)
+viewport.LightColor = Color3.fromRGB(255, 255, 255)
+viewport.LightDirection = Vector3.new(-0.4, -1, -0.6)
 viewport.Parent = host
 Instance.new("UICorner").Parent = viewport
 
@@ -10972,35 +10975,58 @@ local function render()
     clearWorld()
     local blocks = data.blocks
     local total = #blocks
-    -- even sampling rather than the first N, so the shape stays recognisable
-    local step = math.max(1, math.ceil(total / MAX_PARTS))
+
+    -- occupancy set, so interior blocks can be culled
+    local filled = {}
+    for _, b in ipairs(blocks) do
+        local cf = b.cframe
+        if cf and cf[1] then
+            filled[math.floor(cf[1] / BS + 0.5) .. "," ..
+                   math.floor(cf[2] / BS + 0.5) .. "," ..
+                   math.floor(cf[3] / BS + 0.5)] = true
+        end
+    end
+    local function exposed(gx, gy, gz)
+        return not (filled[(gx+1)..","..gy..","..gz] and filled[(gx-1)..","..gy..","..gz]
+                and filled[gx..","..(gy+1)..","..gz] and filled[gx..","..(gy-1)..","..gz]
+                and filled[gx..","..gy..","..(gz+1)] and filled[gx..","..gy..","..(gz-1)])
+    end
 
     local minX, minY, minZ = math.huge, math.huge, math.huge
     local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-    local made = 0
+    local made, buried = 0, 0
 
-    for i = 1, total, step do
+    for i = 1, total do
         local b = blocks[i]
         local cf = b.cframe
         if cf and cf[1] then
             local x, y, z = cf[1], cf[2], cf[3]
-            local p = Instance.new("Part")
-            p.Anchored = true
-            p.CanCollide = false
-            p.Size = Vector3.new(BS, BS, BS)
-            p.CFrame = CFrame.new(x, y, z)
-            p.Color = colourFor(b.blockType)
-            p.Material = Enum.Material.SmoothPlastic
-            p.Parent = world
-            made = made + 1
+            local gx = math.floor(x / BS + 0.5)
+            local gy = math.floor(y / BS + 0.5)
+            local gz = math.floor(z / BS + 0.5)
+            -- bounds come from every block, visible or not
             if x < minX then minX = x end
             if x > maxX then maxX = x end
             if y < minY then minY = y end
             if y > maxY then maxY = y end
             if z < minZ then minZ = z end
             if z > maxZ then maxZ = z end
+
+            if not exposed(gx, gy, gz) then
+                buried = buried + 1
+            elseif made < MAX_PARTS then
+                local p = Instance.new("Part")
+                p.Anchored = true
+                p.CanCollide = false
+                p.Size = Vector3.new(BS, BS, BS)
+                p.CFrame = CFrame.new(x, y, z)
+                p.Color = colourFor(b.blockType)
+                p.Material = Enum.Material.SmoothPlastic
+                p.Parent = world
+                made = made + 1
+            end
         end
-        if made % 400 == 0 then task.wait() end
+        if i % 500 == 0 then task.wait() end
     end
 
     if made == 0 then
@@ -11022,7 +11048,7 @@ local function render()
     T.height = span * 0.55 + 5
 
     infoLabel.Text = T.name .. "\n" .. total .. " blocks"
-        .. (made < total and ("  (showing " .. made .. ")") or "")
+        .. (buried > 0 and ("  ·  " .. buried .. " hidden inside") or "")
     notifyOK("Thumbnail", T.name .. " rendered", 3)
 end
 
