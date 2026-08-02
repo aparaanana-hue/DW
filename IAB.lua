@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 17:28"
+local IAB_BUILD = "Aug 01 22:38"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -240,6 +240,19 @@ local platTab     = tabGenerate
 local BuilderAPI = {}
 -- Every saved-file kind registers here; one UI drives them all.
 BuilderAPI.fileKinds = {}
+-- Block destroyer settings. The runner lives in its own scope further down.
+BuilderAPI.destroyer = {
+    running   = false,
+    abort     = false,
+    types     = {},      -- empty means every type
+    hits      = 3,       -- hits fired per attempt
+    minDelay  = 20,      -- ms, low end of the gap between blocks
+    maxDelay  = 60,      -- ms, high end
+    hitGap    = 30,      -- ms between hits on the same block
+    boxOnly   = true,    -- confine to the selection box
+    confirm   = true,    -- wait until the block is actually gone
+    maxTries  = 6,       -- attempts before giving up on a stubborn block
+}
 -- Toggle handles, so the watch list rows can flip them.
 BuilderAPI.toggles = {}
 
@@ -2412,6 +2425,58 @@ auto:CreateDropdown({
     Flag = "MoveMode",
     Callback = function(option)
         moveMode = (typeof(option) == "table") and option[1] or option
+    end
+})
+
+
+-- ── Block Destroyer ────────────────────────────────────────────────────────
+BuilderAPI.toggles.destroy = auto:CreateToggle({
+    Name = "Block Destroyer",
+    CurrentValue = false,
+    Tooltip = "Breaks blocks inside the selection box. Waits for each one to actually vanish before moving on.",
+    Gear = {
+        { Type = "toggle", Name = "Selection Box Only", Default = true,
+          Callback = function(v) BuilderAPI.destroyer.boxOnly = v end },
+        { Type = "toggle", Name = "Confirm Destroyed", Default = true,
+          Callback = function(v) BuilderAPI.destroyer.confirm = v end },
+        { Type = "slider", Name = "Hits Per Block", Min = 1, Max = 20, Default = 3,
+          Callback = function(v) BuilderAPI.destroyer.hits = v end },
+        { Type = "slider", Name = "Hit Gap (ms)", Min = 0, Max = 200, Default = 30,
+          Callback = function(v) BuilderAPI.destroyer.hitGap = v end },
+        { Type = "slider", Name = "Give Up After", Min = 1, Max = 20, Default = 6,
+          Callback = function(v) BuilderAPI.destroyer.maxTries = v end },
+    },
+    Callback = function(on)
+        local D = BuilderAPI.destroyer
+        if on then
+            if D.run then D.run() end
+        else
+            D.abort = true
+        end
+    end
+})
+
+auto:CreateDropdown({
+    Name = "Destroy Only These",
+    Options = blockDisplayList(), CurrentOption = {}, MultipleOptions = true,
+    Callback = function(v)
+        local set = {}
+        if typeof(v) == "table" then
+            for _, d in ipairs(v) do set[blockIdFor(d)] = true end
+        elseif v then
+            set[blockIdFor(v)] = true
+        end
+        BuilderAPI.destroyer.types = set
+    end
+})
+
+auto:CreateRangeSlider({
+    Name = "Delay Between Blocks",
+    Range = { 0, 500 }, Increment = 5,
+    DefaultMin = 20, DefaultMax = 60, Suffix = "ms",
+    Callback = function(mn, mx)
+        BuilderAPI.destroyer.minDelay = mn
+        BuilderAPI.destroyer.maxDelay = mx
     end
 })
 
@@ -11213,6 +11278,161 @@ platPanel:AddButton({ Name = "Preview Pattern", Callback = function()
             showThumbnail(blocks, platStyle .. " Platform")
         end)
     end })
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BLOCK DESTROYER
+--
+-- IGD's version fires three hits at a block and moves on regardless, so tough
+-- blocks survive and the pass has to be repeated. This one re-hits until the
+-- block is actually gone from the world, then advances.
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local D = BuilderAPI.destroyer
+
+local hitRemote
+pcall(function()
+    hitRemote = ReplicatedStorage
+        :WaitForChild("rbxts_include"):WaitForChild("node_modules")
+        :WaitForChild("@rbxts"):WaitForChild("net"):WaitForChild("out")
+        :WaitForChild("_NetManaged"):WaitForChild("CLIENT_BLOCK_HIT_REQUEST")
+end)
+
+local function vcreate(x, y, z)
+    if vector and vector.create then return vector.create(x, y, z) end
+    return Vector3.new(x, y, z)
+end
+
+local function hit(part)
+    if not (hitRemote and part) then return end
+    pcall(function()
+        hitRemote:InvokeServer({
+            Xoeoxuqilfgenamojfjmj = "\7\240\159\164\163\240\159\164\161\7\n\7\n\7\nohIstskUiftvgjy",
+            part = part, block = part,
+            norm = vcreate(-3502.331787109375, 39.44426345825195, -3521.013671875),
+            pos = vcreate(0.9916929006576538, 0.07807211577892303, -0.10222448408603668),
+        })
+    end)
+end
+
+-- gone when the instance leaves the Blocks folder
+local function stillThere(inst)
+    return inst and inst.Parent ~= nil
+end
+
+-- inSelectionBox lives in a closed scope, so test containment directly
+local function insideBox(box, p)
+    local half = box.Size / 2
+    local c = box.Position
+    return p.X >= c.X - half.X and p.X <= c.X + half.X
+       and p.Y >= c.Y - half.Y and p.Y <= c.Y + half.Y
+       and p.Z >= c.Z - half.Z and p.Z <= c.Z + half.Z
+end
+
+local function collect()
+    local folder = getBlocksFolder()
+    if not folder then return nil, "No island found near you" end
+
+    local box = D.boxOnly and selBoxPart or nil
+    if D.boxOnly and not box then
+        return nil, "Turn Show Selection Box on, or switch off Selection Box Only"
+    end
+
+    local wantAll = true
+    for _ in pairs(D.types) do wantAll = false break end
+
+    local out = {}
+    for _, part in ipairs(folder:GetChildren()) do
+        if part:IsA("BasePart") and part.Name ~= "bedrock" and part.Name ~= "portalToSpawn" then
+            if wantAll or D.types[part.Name] then
+                if not box or insideBox(box, part.Position) then
+                    out[#out + 1] = part
+                end
+            end
+        end
+    end
+    return out
+end
+
+function D.run()
+    if D.running then
+        notifyWarn("Destroyer", "Already running", 3)
+        return
+    end
+    if not hitRemote then
+        notifyErr("Destroyer", "Block hit remote not found", 5)
+        return
+    end
+
+    task.spawn(function()
+        D.running, D.abort = true, false
+        local targets, err = collect()
+        if not targets then
+            notifyWarn("Destroyer", err, 5)
+            D.running = false
+            pcall(function() BuilderAPI.toggles.destroy:Set(false) end)
+            return
+        end
+        if #targets == 0 then
+            notifyWarn("Destroyer", "Nothing matched inside the box", 4)
+            D.running = false
+            pcall(function() BuilderAPI.toggles.destroy:Set(false) end)
+            return
+        end
+
+        notify("Destroyer", "Breaking " .. #targets .. " blocks...", 3, "info")
+        local started = tick()
+        local broken, stubborn = 0, 0
+
+        for i, part in ipairs(targets) do
+            if D.abort then break end
+            if stillThere(part) then
+                local tries = 0
+                repeat
+                    for _ = 1, D.hits do
+                        if not stillThere(part) then break end
+                        hit(part)
+                        if D.hitGap > 0 then task.wait(D.hitGap / 1000) end
+                    end
+                    tries = tries + 1
+                    -- give the server a moment to remove it before judging
+                    if stillThere(part) then task.wait(0.05) end
+                until (not D.confirm) or (not stillThere(part)) or tries >= D.maxTries or D.abort
+
+                if stillThere(part) then stubborn = stubborn + 1 else broken = broken + 1 end
+            end
+
+            -- randomised gap so the request pattern is not perfectly uniform
+            local lo = math.min(D.minDelay, D.maxDelay)
+            local hi = math.max(D.minDelay, D.maxDelay)
+            local wait = (hi > 0) and (math.random(lo, hi) / 1000) or 0
+            if wait > 0 then task.wait(wait) end
+
+            if i % 25 == 0 then
+                pcall(function()
+                    progressParagraph:Set({
+                        Title = "Build Progress",
+                        Content = "Destroying " .. i .. " / " .. #targets
+                            .. "  (" .. broken .. " broken)"
+                    })
+                end)
+            end
+        end
+
+        local secs = math.floor((tick() - started) * 10) / 10
+        D.running = false
+        pcall(function() BuilderAPI.toggles.destroy:Set(false) end)
+        if stubborn > 0 then
+            notifyWarn("Destroyer", broken .. " broken, " .. stubborn .. " survived in " .. secs .. "s", 6)
+        else
+            notifyOK("Destroyer", broken .. " blocks in " .. secs .. "s", 5)
+        end
+    end)
+end
+
+Duvome:AddWatch("Destroyer", function() return D.running end)
 
 end
 
