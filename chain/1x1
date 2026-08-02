@@ -1,0 +1,2 @@
+-- Link 3 of 4. Forwards the library returned by the final file.
+return loadstring(game:HttpGet("https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/chain/1x1x1x"))()
