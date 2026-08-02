@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 01 22:38"
+local IAB_BUILD = "Aug 02 15:51"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2613,27 +2613,38 @@ function resolveBlockRoot(part)
     return node or part
 end
 
--- A block can be several folder entries sharing one cell: grass is a base plus
--- a separate top surface. Clicking the top used to select only whichever entry
--- the ray hit, so the visible piece and its base disagreed. Take every entry
--- occupying that cell.
-function blocksAtCell(part)
-    local folder = getBlocksFolder()
-    local out = { resolveBlockRoot(part) }
-    if not folder then return out end
-    local p = part.Position
-    local gx = math.floor(p.X / 3 + 0.5)
-    local gy = math.floor(p.Y / 3 + 0.5)
-    local gz = math.floor(p.Z / 3 + 0.5)
-    for _, other in ipairs(folder:GetChildren()) do
-        if other:IsA("BasePart") and other ~= out[1] then
-            local q = other.Position
-            if math.floor(q.X / 3 + 0.5) == gx
-               and math.floor(q.Y / 3 + 0.5) == gy
-               and math.floor(q.Z / 3 + 0.5) == gz then
-                out[#out + 1] = other
+-- Containers holding hit volumes rather than anything you can see. A tree keeps
+-- its trunk and leaves alongside a CollisionBoxes folder, and adorning the model
+-- as a whole boxes all of it - which is why the highlight looked far bigger than
+-- the tree.
+local HITBOX_CONTAINERS = {
+    CollisionBoxes = true, CollisionBox = true,
+    Hitbox = true, Hitboxes = true, HitBox = true,
+}
+
+-- The parts actually worth outlining: visible geometry, no hit volumes.
+function visualParts(root)
+    local out = {}
+    if not root then return out end
+    -- A block can be a part that itself has parts under it: grass is a part
+    -- with a Top child. Take the root when visible, then keep walking.
+    if root:IsA("BasePart") and root.Transparency < 1 then
+        out[#out + 1] = root
+    end
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("BasePart") and d.Transparency < 1 then
+            local a, skip = d.Parent, false
+            while a and a ~= root do
+                if HITBOX_CONTAINERS[a.Name] then skip = true break end
+                a = a.Parent
             end
+            if not skip then out[#out + 1] = d end
         end
+    end
+    -- a block with nothing visible still needs something to show
+    if #out == 0 and root:IsA("Model") then
+        local p = root:FindFirstChildWhichIsA("BasePart", true)
+        if p then out[1] = p end
     end
     return out
 end
@@ -2677,7 +2688,7 @@ end
 function brushTargets(part)
     if brushConnected then return floodSelect(part, false) end
     if brushSurface then return floodSelect(part, true) end
-    if brushRadius <= 0 then return blocksAtCell(part) end
+    if brushRadius <= 0 then return { resolveBlockRoot(part) } end
     local folder = getBlocksFolder()
     local out = {}
     if not folder then return out end
@@ -2694,26 +2705,40 @@ end
 function highlightBlock(part)
     part = resolveBlockRoot(part)
     if selectedBlocks[part] then return end
-    local h = Instance.new("SelectionBox")
-    h.Adornee = part
-    h.Color3 = Color3.fromRGB(0, 255, 255)
-    h.LineThickness = 0.05
-    h.SurfaceColor3 = Color3.fromRGB(0, 255, 255)
-    h.SurfaceTransparency = 0.6
-    h.Parent = part
-    selectedBlocks[part] = h
+    -- One box per visible piece, so grass takes its Top with it and a tree is
+    -- outlined around trunk and leaves instead of its collision volume.
+    local boxes = {}
+    for _, piece in ipairs(visualParts(part)) do
+        local h = Instance.new("SelectionBox")
+        h.Adornee = piece
+        h.Color3 = Color3.fromRGB(0, 255, 255)
+        h.LineThickness = 0.04
+        h.SurfaceColor3 = Color3.fromRGB(0, 255, 255)
+        h.SurfaceTransparency = 0.65
+        h.Parent = piece
+        boxes[#boxes + 1] = h
+    end
+    if #boxes == 0 then return end
+    selectedBlocks[part] = boxes
     blockSelCount = blockSelCount + 1
 end
 
 function unhighlightBlock(part)
     part = resolveBlockRoot(part)
-    local h = selectedBlocks[part]
-    if h then h:Destroy() selectedBlocks[part] = nil blockSelCount = blockSelCount - 1 end
+    local boxes = selectedBlocks[part]
+    if not boxes then return end
+    for _, h in ipairs(boxes) do pcall(function() h:Destroy() end) end
+    selectedBlocks[part] = nil
+    blockSelCount = blockSelCount - 1
 end
 
 function clearBlockSelection()
-    for part, h in pairs(selectedBlocks) do
-        if h then h:Destroy() end
+    for part, boxes in pairs(selectedBlocks) do
+        if type(boxes) == "table" then
+            for _, h in ipairs(boxes) do pcall(function() h:Destroy() end) end
+        elseif boxes then
+            pcall(function() boxes:Destroy() end)
+        end
     end
     selectedBlocks = {}
     blockSelCount = 0
