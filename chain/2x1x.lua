@@ -3,4 +3,4 @@
 --
 -- The 'return' is load-bearing: without it this link hands back nil and the
 -- chain fails silently further down.
-return loadstring(game:HttpGet("https://raw.githubusercontent.com/PrizLovesRice1/PrizsHub/refs/heads/main/2x1x1x1x1x1x.lua"))()
+return loadstring(game:HttpGet("https://raw.githubusercontent.com/PrizLovesRice1/PrizsHub/refs/heads/main/2x1x1x1x1x1x"))()
