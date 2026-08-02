@@ -1,0 +1,3 @@
+-- Alternate entry point. Jumps straight to link 3.
+-- 1x1x1x1 -> 1x1 -> 1x1x1x (the library itself)
+return loadstring(game:HttpGet("https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/chain/1x1"))()
