@@ -4139,10 +4139,24 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					local rel = math.clamp((i.Position.X-track.AbsolutePosition.X)/track.AbsoluteSize.X,0,1)
 					local raw = Config.Min + rel*(Config.Max-Config.Min)
 					local val = math.floor(raw/Config.Increment+0.5)*Config.Increment
+					-- When both handles sit on the same value they overlap, and the
+					-- clamp below pins whichever one you grabbed: min can never
+					-- exceed max, max can never fall below min, so a 0-0 range
+					-- locks up. Hand the drag to the other handle instead.
 					if dragging=="min" then
-						RS.MinValue = math.min(val, RS.MaxValue)
+						if RS.MinValue == RS.MaxValue and val > RS.MinValue then
+							dragging = "max"
+							RS.MaxValue = val
+						else
+							RS.MinValue = math.min(val, RS.MaxValue)
+						end
 					else
-						RS.MaxValue = math.max(val, RS.MinValue)
+						if RS.MinValue == RS.MaxValue and val < RS.MaxValue then
+							dragging = "min"
+							RS.MinValue = val
+						else
+							RS.MaxValue = math.max(val, RS.MinValue)
+						end
 					end
 					refresh()
 					Config.Callback(RS.MinValue, RS.MaxValue)

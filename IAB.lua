@@ -2284,18 +2284,6 @@ progressParagraph = auto:CreateParagraph({
     Content = "Idle. Start a build to see live progress and ETA."
 })
 
-auto:CreateDropdown({
-    Name = "Build Style",
-    Options = {"Around Preview", "Expand from Middle", "Batch (verify)", "Turbo Print"},
-    CurrentOption = {"Around Preview"},
-    MultipleOptions = false,
-    Flag = "BuildMode",
-    Callback = function(option)
-        buildMode = (typeof(option) == "table") and option[1] or option
-    end
-})
-
-
 fileDropdown = auto:CreateDropdown({
     Name = "Select Build File",
     GearAction = {
@@ -2351,6 +2339,51 @@ fileDropdown = auto:CreateDropdown({
     end
 })
 
+auto:CreateToggle({
+    Name = "Build Tuning",
+    CurrentValue = false,
+    Flag = "UseRecommended",
+    Tooltip = "On applies safe values: interval 0.2s, fly 25, gap 12. Open the gear to tune them yourself.",
+    Gear = {
+        -- popover sliders are whole numbers only, hence milliseconds here
+        { Type = "slider", Name = "Place Interval (ms)", Min = 5, Max = 1000, Default = 20,
+          Callback = function(v) placeDelay = v / 1000 end },
+        { Type = "slider", Name = "Fly Speed", Min = 8, Max = 80, Default = 35,
+          Callback = function(v) buildFlySpeed = v end },
+        { Type = "slider", Name = "Build Gap", Min = 3, Max = 40, Default = 12,
+          Callback = function(v) buildStandoff = v end },
+    },
+    Callback = function(v)
+        if v then
+            placeDelay = 0.2
+            buildFlySpeed = 25
+            buildStandoff = 12
+            notifyOK("Build Tuning", "Interval 0.2s, Fly 25, Gap 12", 4)
+        end
+    end
+})
+
+auto:CreateDropdown({
+    Name = "Build Style",
+    Options = {"Around Preview", "Expand from Middle", "Batch (verify)", "Turbo Print"},
+    CurrentOption = {"Around Preview"},
+    MultipleOptions = false,
+    Flag = "BuildMode",
+    Callback = function(option)
+        buildMode = (typeof(option) == "table") and option[1] or option
+    end
+})
+
+auto:CreateDropdown({
+    Name = "Movement Mode",
+    Options = {"Fly", "Float", "Teleport"},
+    CurrentOption = {"Fly"},
+    MultipleOptions = false,
+    Flag = "MoveMode",
+    Callback = function(option)
+        moveMode = (typeof(option) == "table") and option[1] or option
+    end
+})
 
 BuilderAPI.toggles.build = auto:CreateToggle({
     Name = "Start Build",
@@ -2417,19 +2450,6 @@ BuilderAPI.toggles.build = auto:CreateToggle({
     end
 })
 
-auto:CreateDropdown({
-    Name = "Movement Mode",
-    Options = {"Fly", "Float", "Teleport"},
-    CurrentOption = {"Fly"},
-    MultipleOptions = false,
-    Flag = "MoveMode",
-    Callback = function(option)
-        moveMode = (typeof(option) == "table") and option[1] or option
-    end
-})
-
-
--- ── Block Destroyer ────────────────────────────────────────────────────────
 BuilderAPI.toggles.destroy = auto:CreateToggle({
     Name = "Block Destroyer",
     CurrentValue = false,
@@ -2480,30 +2500,11 @@ auto:CreateRangeSlider({
     end
 })
 
-auto:CreateToggle({
-    Name = "Build Tuning",
-    CurrentValue = false,
-    Flag = "UseRecommended",
-    Tooltip = "On applies safe values: interval 0.2s, fly 25, gap 12. Open the gear to tune them yourself.",
-    Gear = {
-        -- popover sliders are whole numbers only, hence milliseconds here
-        { Type = "slider", Name = "Place Interval (ms)", Min = 5, Max = 1000, Default = 20,
-          Callback = function(v) placeDelay = v / 1000 end },
-        { Type = "slider", Name = "Fly Speed", Min = 8, Max = 80, Default = 35,
-          Callback = function(v) buildFlySpeed = v end },
-        { Type = "slider", Name = "Build Gap", Min = 3, Max = 40, Default = 12,
-          Callback = function(v) buildStandoff = v end },
-    },
-    Callback = function(v)
-        if v then
-            placeDelay = 0.2
-            buildFlySpeed = 25
-            buildStandoff = 12
-            notifyOK("Build Tuning", "Interval 0.2s, Fly 25, Gap 12", 4)
-        end
-    end
-})
 
+
+
+
+-- ── Block Destroyer ────────────────────────────────────────────────────────
 -- The Objects controls are identical on every tab that can stamp geometry, so
 -- they are built from one place instead of being copy-pasted per tab. Each tab
 -- keeps its own scene name, matching the previous behaviour.
@@ -2599,6 +2600,10 @@ blockSelCount = 0
 -- A block in this game can be a Model of several parts (grass has its surface,
 -- a tree has trunk and branches). Clicking one part used to grab that part
 -- alone, so you could pick a branch off a tree. Resolve to the whole thing.
+brushRadius = 0        -- 0 = single block
+brushSurface = false   -- click selects the connected flat surface
+brushConnected = false -- click selects everything touching, in 3D
+
 function resolveBlockRoot(part)
     local folder = getBlocksFolder()
     local node = part
@@ -2606,6 +2611,84 @@ function resolveBlockRoot(part)
         node = node.Parent
     end
     return node or part
+end
+
+-- A block can be several folder entries sharing one cell: grass is a base plus
+-- a separate top surface. Clicking the top used to select only whichever entry
+-- the ray hit, so the visible piece and its base disagreed. Take every entry
+-- occupying that cell.
+function blocksAtCell(part)
+    local folder = getBlocksFolder()
+    local out = { resolveBlockRoot(part) }
+    if not folder then return out end
+    local p = part.Position
+    local gx = math.floor(p.X / 3 + 0.5)
+    local gy = math.floor(p.Y / 3 + 0.5)
+    local gz = math.floor(p.Z / 3 + 0.5)
+    for _, other in ipairs(folder:GetChildren()) do
+        if other:IsA("BasePart") and other ~= out[1] then
+            local q = other.Position
+            if math.floor(q.X / 3 + 0.5) == gx
+               and math.floor(q.Y / 3 + 0.5) == gy
+               and math.floor(q.Z / 3 + 0.5) == gz then
+                out[#out + 1] = other
+            end
+        end
+    end
+    return out
+end
+
+-- Flood fill from a block. surfaceOnly keeps it to one horizontal layer.
+function floodSelect(part, surfaceOnly, limit)
+    local folder = getBlocksFolder()
+    if not folder then return {} end
+    local byCell, key = {}, function(x, y, z) return x .. "," .. y .. "," .. z end
+    for _, b in ipairs(folder:GetChildren()) do
+        if b:IsA("BasePart") then
+            local q = b.Position
+            byCell[key(math.floor(q.X/3+0.5), math.floor(q.Y/3+0.5), math.floor(q.Z/3+0.5))] = b
+        end
+    end
+    local p = part.Position
+    local sx = math.floor(p.X/3+0.5); local sy = math.floor(p.Y/3+0.5); local sz = math.floor(p.Z/3+0.5)
+    local wanted = part.Name
+    local dirs = surfaceOnly
+        and { {1,0,0},{-1,0,0},{0,0,1},{0,0,-1} }
+        or  { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }
+    local queue, seen, out = { {sx,sy,sz} }, { [key(sx,sy,sz)] = true }, {}
+    while #queue > 0 and #out < (limit or 4000) do
+        local c = table.remove(queue)
+        local b = byCell[key(c[1], c[2], c[3])]
+        if b and b.Name == wanted then
+            out[#out + 1] = b
+            for _, d in ipairs(dirs) do
+                local nk = key(c[1]+d[1], c[2]+d[2], c[3]+d[3])
+                if not seen[nk] then
+                    seen[nk] = true
+                    queue[#queue + 1] = { c[1]+d[1], c[2]+d[2], c[3]+d[3] }
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- Everything a single brush stroke should affect at this point.
+function brushTargets(part)
+    if brushConnected then return floodSelect(part, false) end
+    if brushSurface then return floodSelect(part, true) end
+    if brushRadius <= 0 then return blocksAtCell(part) end
+    local folder = getBlocksFolder()
+    local out = {}
+    if not folder then return out end
+    local origin = part.Position
+    local r = brushRadius * 3
+    for _, b in ipairs(folder:GetChildren()) do
+        if b:IsA("BasePart") and (b.Position - origin).Magnitude <= r then
+            out[#out + 1] = b
+        end
+    end
+    return out
 end
 
 function highlightBlock(part)
@@ -3152,26 +3235,15 @@ saveTab:CreateToggle({
 
 BuilderAPI.toggles.brush = saveTab:CreateToggle({
     Name = "Block Brush",
-    Gear = {
-        { Type = "button", Name = "Clear Selection", OnClick = function()
-        clearBlockSelection()
-        notify("Cleared", "Selection cleared", 2)
-    end },
-        { Type = "button", Name = "Save Selected Blocks", OnClick = function()
-        task.spawn(function()
-            if blockSelCount == 0 then
-                notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
-                return
-            end
-            saveSelectedBrush()
-        end)
-    end },
-    },
     Tooltip = "Hold click and drag over blocks in the world to add them to the selection.",
     CurrentValue = false,
     Flag = "BlockBrush",
     Callback = function(v)
         blockSelMode = v
+        -- the panel holds this tool's settings, so it follows the toggle
+        pcall(function()
+            if v then BuilderAPI.brushPanel:Show() else BuilderAPI.brushPanel:Hide() end
+        end)
         if v then
             if blockSelConn then blockSelConn.Disconnect() end
             local downC = UserInputService.InputBegan:Connect(function(input, gp)
@@ -3185,12 +3257,10 @@ BuilderAPI.toggles.brush = saveTab:CreateToggle({
                 if not blockSelMode or not blockSelDown then return end
                 local part = blockUnderCursor()
                 if part then
-                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-                        unhighlightBlock(part)
-                    else
-                        highlightBlock(part)
+                    local erase = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                    for _, b in ipairs(brushTargets(part)) do
+                        if erase then unhighlightBlock(b) else highlightBlock(b) end
                     end
-                    -- count now shows on the watch overlay rather than a panel label
                 end
             end)
             blockSelConn = { Disconnect = function() downC:Disconnect() upC:Disconnect() paintC:Disconnect() end }
@@ -11433,6 +11503,54 @@ function D.run()
 end
 
 Duvome:AddWatch("Destroyer", function() return D.running end)
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BRUSH PANEL — modes and actions for the block brush, off the tab
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local brushPanel = Duvome:MakeSidePanel({ Name = "Brush", Width = 200, Height = 340, Side = "right" })
+BuilderAPI.brushPanel = brushPanel
+
+brushPanel:AddLabel("Mode")
+
+local surfaceT, connectedT
+surfaceT = brushPanel:AddToggle({
+    Name = "Surface Select", Default = false,
+    Callback = function(v)
+        brushSurface = v
+        -- the modes are mutually exclusive
+        if v then brushConnected = false pcall(function() connectedT:Set(false) end) end
+    end })
+
+connectedT = brushPanel:AddToggle({
+    Name = "Connected Select", Default = false,
+    Callback = function(v)
+        brushConnected = v
+        if v then brushSurface = false pcall(function() surfaceT:Set(false) end) end
+    end })
+
+brushPanel:AddSlider({
+    Name = "Brush Size", Min = 0, Max = 8, Increment = 1, Default = 0, ValueName = "blk",
+    Callback = function(v) brushRadius = v end })
+
+brushPanel:AddDivider()
+brushPanel:AddLabel("Selection")
+brushPanel:AddButton({ Name = "Clear Selection", Callback = function()
+        clearBlockSelection()
+        notify("Cleared", "Selection cleared", 2)
+    end })
+brushPanel:AddButton({ Name = "Save Selected Blocks", Callback = function()
+        task.spawn(function()
+            if blockSelCount == 0 then
+                notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
+                return
+            end
+            saveSelectedBrush()
+        end)
+    end })
 
 end
 
