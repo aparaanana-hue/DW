@@ -1,4 +1,5 @@
--- Link 5 of 10. Chain ends at 2x1x1x1x1x1x1.lua (Priz's Islands Hub).
+-- Hop 8 of 10. Order is shuffled on purpose; this file's number
+-- says nothing about where it sits in the chain.
 --
 -- The 'return' is load-bearing: without it this link hands back nil and the
 -- chain fails silently further down.
