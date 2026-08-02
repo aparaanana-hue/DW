@@ -4666,6 +4666,156 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   cmb:AddSlider({Name = "Hover Height", Min = -30, Max = 15, Increment = 1, Default = -11, ValueName = "studs", Tooltip = "How far above (positive) or below (negative) the target you hover while auto farming.", Flag = autoFlag("farm"), Callback = function(v)
    hoverOffset = v
   end})
+
+  -- ── Kill aura, spirit and void farms ─────────────────────────────────────
+  -- IGD walks the whole entity list separately for each of these, every tick.
+  -- One cached scan feeds all three instead, refreshed on an interval.
+  local auraOn, spiritOn, voidOn = false, false, false
+  local auraHits, auraMin, auraMax, auraRange = 3, 120, 260, 60
+  local auraMobs = {}
+  local entCache, entCacheAt = {}, 0
+
+  local SPIRITS = { spirit = true, spiritParasite = true, spiritCrop = true }
+  local VOIDS   = { voidParasite = true, voidDog = true, voidPup = true }
+
+  local function entitiesFolder()
+   return (WS:FindFirstChild("WildernessIsland") and WS.WildernessIsland:FindFirstChild("Entities"))
+    or WS:FindFirstChild("Entities")
+  end
+
+  -- refreshed at most 4x a second; the list barely changes between frames
+  local function livingEntities()
+   if tick() - entCacheAt < 0.25 then return entCache end
+   local folder = entitiesFolder()
+   local out = {}
+   if folder then
+    for _, v in ipairs(folder:GetChildren()) do
+     local hum = v:FindFirstChildOfClass("Humanoid")
+     local hrp = v:FindFirstChild("HumanoidRootPart")
+     if hum and hrp and hum.Health > 0 then
+      out[#out + 1] = { model = v, hrp = hrp, name = v.Name }
+     end
+    end
+   end
+   entCache, entCacheAt = out, tick()
+   return out
+  end
+
+  -- shared nearest-target search; the only thing that varies is the predicate
+  local function nearestEntity(pred, maxDist)
+   local hrp = myRoot()
+   if not hrp then return nil end
+   local origin = hrp.Position
+   local best, bestSq = nil, (maxDist and maxDist * maxDist) or math.huge
+   for _, e in ipairs(livingEntities()) do
+    if pred(e.name) then
+     local d = e.hrp.Position - origin
+     local sq = d.X * d.X + d.Y * d.Y + d.Z * d.Z
+     if sq < bestSq then best, bestSq = e.model, sq end
+    end
+   end
+   return best
+  end
+
+  local lastSwing = 0
+  local function swingAt(target)
+   if not (target and R_Combat) then return end
+   pcall(function()
+    R_Combat:FireServer("6164F31F-7600-48E7-866C-7229FEA1FDE1", {{
+     hitUnit = target,
+     IucpoZdgwp = "\a\240\159\164\163\240\159\164\161\a\n\a\n\a\nefmmgivC",
+    }})
+   end)
+  end
+
+  cmb:AddDropdown({
+   Name = "Aura Targets", Options = mobNames, Default = {}, MultiSelect = true,
+   SelectAll = true, Search = true,
+   Tooltip = "Which mobs the kill aura will hit. Leave empty to hit anything nearby.",
+   Callback = function(v)
+    local set = {}
+    if typeof(v) == "table" then
+     for _, d in ipairs(v) do if mobMap[d] then set[mobMap[d]] = true end end
+    elseif v and mobMap[v] then set[mobMap[v]] = true end
+    auraMobs = set
+   end})
+
+  cmb:AddToggle({
+   Name = "Kill Aura", Default = false, Flag = autoFlag("farm"),
+   Tooltip = "Hits the nearest target without moving you. Range and rate live in the gear.",
+   Options = {
+    { Type = "slider", Name = "Hits Per Swing", Min = 1, Max = 20, Default = 3,
+      Callback = function(v) auraHits = v end },
+    { Type = "slider", Name = "Range (studs)", Min = 10, Max = 200, Default = 60,
+      Callback = function(v) auraRange = v end },
+   },
+   Callback = function(on)
+    auraOn = on
+    if not on then return end
+    task.spawn(function()
+     while auraOn do
+      local hasFilter = next(auraMobs) ~= nil
+      local target = nearestEntity(function(n)
+       return (not hasFilter) or auraMobs[n]
+      end, auraRange)
+      if target then
+       for _ = 1, auraHits do
+        if not auraOn then break end
+        swingAt(target)
+        task.wait(0.05)
+       end
+      end
+      -- randomised gap so the request pattern is not perfectly uniform
+      local lo, hi = math.min(auraMin, auraMax), math.max(auraMin, auraMax)
+      task.wait(math.random(lo, hi) / 1000)
+     end
+    end)
+   end})
+
+  cmb:AddRangeSlider({
+   Name = "Aura Delay", Min = 0, Max = 800, Increment = 20,
+   DefaultMin = 120, DefaultMax = 260, ValueName = "ms",
+   Tooltip = "Random pause between aura swings, picked between these two values.",
+   Callback = function(mn, mx) auraMin, auraMax = mn, mx end})
+
+  -- Spirit and void share one loop; only the name set differs.
+  local function buildEntityFarm(label, nameSet, tip)
+   local on = false
+   cmb:AddToggle({
+    Name = label, Default = false, Flag = autoFlag("farm"), Tooltip = tip,
+    Callback = function(v)
+     on = v
+     if label == "Spirit Farm" then spiritOn = v else voidOn = v end
+     if not v then return end
+     task.spawn(function()
+      while on do
+       local target = nearestEntity(function(n) return nameSet[n] end, 400)
+       local hrp = myRoot()
+       if target and hrp then
+        local tp = target:FindFirstChild("HumanoidRootPart")
+        if tp then
+         flyTo(hrp, tp.Position + Vector3.new(0, hoverOffset, 0))
+         for _ = 1, 6 do
+          if not on or not target.Parent then break end
+          swingAt(target)
+          task.wait(0.08)
+         end
+        end
+       else
+        task.wait(0.4)
+       end
+       task.wait(0.1)
+      end
+     end)
+    end})
+  end
+
+  buildEntityFarm("Spirit Farm", SPIRITS, "Targets spirit, spiritParasite and spiritCrop.")
+  buildEntityFarm("Void Farm", VOIDS, "Targets voidParasite, voidDog and voidPup.")
+
+  Duvome:AddWatch("Kill Aura", function() return auraOn end)
+  Duvome:AddWatch("Spirit Farm", function() return spiritOn end)
+  Duvome:AddWatch("Void Farm", function() return voidOn end)
  end
 
  local function BuildFarm(col)
