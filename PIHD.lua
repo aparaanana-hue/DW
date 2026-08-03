@@ -772,9 +772,6 @@ _initFX()
 local HomeTab = Window:MakeTab({Name = "Home", Icon = TAB_ICONS.Home, Columns = true})
 L, R = HomeTab:AddLeft(), HomeTab:AddRight()
 
-UI.about = L:AddSection({Name = "About"})
-UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVersion: 2.0 (Duvome native)\nLast Updated: January 29, 2026\n\nJoin Discord for updates & support:\ndiscord.gg/NuUzrrNaJz")
-
 UI.homeScanner = L:AddSection({Name = "Scanner & Stats"})
 
 UI.output = UI.homeScanner:AddParagraph("Scanner Output", "Select an action below...")
@@ -1206,8 +1203,6 @@ UI.openables:AddToggle({Name = "Auto Walk to Openable", Default = false, Tooltip
 end)})
 
 UI.chest = R:AddSection({Name = "Chest Manager"})
-UI.chest:AddParagraph("How to Use", "Pick items (or Select All) then use Auto-Deposit, or just hold an item. Auto-Withdraw pulls everything from chests.\n\nSelect specific chests with ALT+Click or the drag-select below - selected chests override the radius.")
-
 UI.chest:AddDropdown({Name = "Chest Type", Options = {"All", "Expanded Diamond Chest", "Diamond Chest", "Industrial Large Chest", "Industrial Large Chest (IO)", "Large Chest", "Industrial Medium Chest", "Industrial Medium Chest (IO)", "Medium Chest", "Timed Industrial Chest", "Small Chest"}, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only act on these chest types. ALT+Click or drag-selected chests always override this.", Flag = autoFlag("home"), Callback = function(chosen)
  if not chosen or #chosen == 0 then S.chestTypeSet = nil return end
  local set, all = {}, false
@@ -1322,6 +1317,18 @@ S.useHeldItemChest = true
 S.selectedChestItem = nil
 S.selectedChestItems = {}
 S.chestItemsList = {}
+-- How many of a stack to deposit per chest. 0 means the whole stack (the old
+-- behaviour, where the chest itself capped what it took).
+S.depositAmount = 0
+
+-- What to actually send for a stack of `have`: the requested amount when one is
+-- set, never more than you hold, otherwise the whole stack.
+local function chestDepositAmount(have)
+ if S.depositAmount and S.depositAmount > 0 then
+  return math.min(S.depositAmount, have)
+ end
+ return have
+end
 
 local function deposit()
  local tool = nil
@@ -1373,11 +1380,12 @@ local function deposit()
   return
  end
 
- local amount = btool:FindFirstChild("Amount") and btool.Amount.Value or 1
- if amount <= 0 then
+ local have = btool:FindFirstChild("Amount") and btool.Amount.Value or 1
+ if have <= 0 then
   updateNotification("Error", "Item is empty (0 amount)!", 3)
   return
  end
+ local amount = chestDepositAmount(have)
 
  for _, chest in chests do
   task.spawn(function()
@@ -1479,6 +1487,15 @@ UI.chestDropdown = UI.chest:AddDropdown({Name = "Select Item to Deposit", Option
  S.selectedChestItem = S.selectedChestItems[1]
 end})
 
+UI.chest:AddTextbox({Name = "Deposit Amount (0 = all)", Default = "0", TextDisappear = false, Callback = function(text)
+ local n = tonumber(text)
+ S.depositAmount = (n and n > 0) and math.floor(n) or 0
+end})
+
+UI.chest:AddButton({Name = "Deposit Now", Tooltip = "Deposit the selected items (or the held item) once, using the amount above.", Callback = function()
+ task.spawn(deposit)
+end})
+
 if not S.selectedChestItem and #S.chestItemsList > 0 and S.chestItemsList[1] ~= "No items" then
  S.selectedChestItem = S.chestItemsList[1]
 end
@@ -1533,7 +1550,8 @@ UI.chest:AddToggle({Name = "Auto-Deposit to Chests", Default = false, Tooltip = 
       if #chests > 0 then
        getChestNet()
        for _, tool in ipairs(tools) do
-        local amount = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
+        local have = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
+        local amount = chestDepositAmount(have)
         if amount > 0 then
          for _, chest in chests do
           pcall(function()
@@ -1927,7 +1945,14 @@ local function emptyVending(vending)
  end)
 end
 
-UI.vmSel = L:AddSection({Name = "Vending Tools", Collapsible = true})
+-- Vending Tools now lives on a side panel instead of a section. UI.vmSel is the
+-- panel, so every UI.vmSel:Add... call across the file fills it unchanged. A
+-- toggle at the top of the left column opens it.
+local vmPanel = Duvome:MakeSidePanel({Name = "Vending Tools", Width = 220, Height = 460, Side = "left"})
+UI.vmSel = vmPanel
+L:AddToggle({Name = "Vending Tools Panel", Default = false, Tooltip = "Opens the Vending Tools: selection, radius limit, ESP and the rest.", Callback = function(v)
+ if v then vmPanel:Show() else vmPanel:Hide() end
+end})
 
 local useSelectedOnly = false
 
@@ -3032,10 +3057,9 @@ local function BuildPriceTool()
  end})
 
  local ApplySec = PL:AddSection({Name = "Direct Apply"})
- ApplySec:AddParagraph("Direct Apply", "Merges all selected sources (averaged). Items not present are untouched.")
  ApplySec:AddDropdown({Name = "Pricing Mode", Options = {"All","Sell Only","Buy Only"}, Default = "All", Flag = "PricerMode",
   Callback = function(v) pricerMode = v notify("Pricing Mode", v, 2) end})
- ApplySec:AddButton({Name = "Apply Selected Sources", Callback = function()
+ ApplySec:AddButton({Name = "Apply Selected Sources", Tooltip = "Merges all selected sources (averaged) and applies them. Items not present are left untouched.", Callback = function()
   local labels = selectedSources
   if #labels == 0 then labels = { AVERAGE_LABEL } end
   notify("Applying", "Merging " .. #labels .. " source(s)...", 2)
@@ -3046,8 +3070,7 @@ local function BuildPriceTool()
  end})
 
  local MarkSec = PR:AddSection({Name = "Markup Pricer"})
- MarkSec:AddParagraph("Markup Pricer", "Base = YOUR current shop price. newPrice = base x (1 + markup%).")
- MarkSec:AddDropdown({Name = "Base Price (from your shop)", Options = {"Sell Price","Buy Price"}, Default = "Sell Price", Flag = "MarkupBase",
+ MarkSec:AddDropdown({Name = "Base Price (from your shop)", Tooltip = "Base is YOUR current shop price. New price = base x (1 + markup%).", Options = {"Sell Price","Buy Price"}, Default = "Sell Price", Flag = "MarkupBase",
   Callback = function(v) markupBaseField = (v == "Buy Price") and "buy" or "sell" end})
  MarkSec:AddTextbox({Name = "Markup %", Default = "0", TextDisappear = false, Flag = "MarkupPct",
   Callback = function(v) local n = tonumber(v) if n then markupPct = n end end})
@@ -3069,8 +3092,7 @@ local function BuildPriceTool()
  end
 
  local GLookSec = PR:AddSection({Name = "Price Guide Lookup"})
- GLookSec:AddParagraph("Lookup", "Uses your 'Price Sources' selection on the left. Pick sources there, then search an item below.")
- GLookSec:AddButton({Name = "Refresh From Price Sources", Callback = function()
+ GLookSec:AddButton({Name = "Refresh From Price Sources", Tooltip = "Uses your Price Sources selection on the left. Pick sources there, then search an item below.", Callback = function()
   if refreshGuideItemDropdown then refreshGuideItemDropdown() end
   notify("Lookup", "Refreshed from " .. #selectedSources .. " source(s)", 2)
  end})
@@ -4454,6 +4476,13 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    end)
   end})
 
+  -- Everything except the destination, Auto Farm and Kill Aura lives on this
+  -- side panel so the Combat section stays short. A toggle opens it.
+  local optPanel = Duvome:MakeSidePanel({Name = "Combat Options", Width = 210, Height = 400, Side = "left"})
+  cmb:AddToggle({Name = "Combat Options Panel", Default = false, Tooltip = "Opens the extra combat controls: mob/boss/weapon pickers, boss spawner, hover height, aura targets and the spirit/void farms.", Callback = function(v)
+   if v then optPanel:Show() else optPanel:Hide() end
+  end})
+
   local mobNames, mobMap = {}, {}
   for _, m in ipairs({"slime", "skeletonPirate", "crab", "buffalkor", "rockMimic", "wizardLizard", "skorp", "magmaBlob", "magmaGolem", "voidDog"}) do
    local d = MobOverrides[m] or niceName(m)
@@ -4471,17 +4500,17 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    bossMap[d] = b
   end
 
-  cmb:AddDropdown({Name = "Select Mob", Options = mobNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
+  optPanel:AddDropdown({Name = "Select Mob", Options = mobNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
    selMob = mobMap[v] or "None"
   end})
-  cmb:AddDropdown({Name = "Select Boss", Options = bossNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
+  optPanel:AddDropdown({Name = "Select Boss", Options = bossNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
    selBoss = bossMap[v] or "None"
   end})
-  cmb:AddDropdown({Name = "Select Weapon", Options = {"Best", "Reaper Scythe", "Cursed Hammer", "Divine Dao", "Captain's Rapier", "Frost Hammer", "Ruby Sword", "Cactus Spike", "Cutlass"}, Default = "Best", Flag = autoFlag("farm"), Callback = function(v)
+  optPanel:AddDropdown({Name = "Select Weapon", Options = {"Best", "Reaper Scythe", "Cursed Hammer", "Divine Dao", "Captain's Rapier", "Frost Hammer", "Ruby Sword", "Cactus Spike", "Cutlass"}, Default = "Best", Flag = autoFlag("farm"), Callback = function(v)
    selWeapon = WeaponDisplay[v] or "Best"
   end})
 
-  cmb:AddToggle({Name = "Auto Spawn Bosses", Default = false, Tooltip = "Walks to the selected boss's spawn altar and fires the prompt when that boss isn't alive.", Flag = autoFlag("farm"), Callback = function(value)
+  optPanel:AddToggle({Name = "Auto Spawn Bosses", Default = false, Tooltip = "Walks to the selected boss's spawn altar and fires the prompt when that boss isn't alive.", Flag = autoFlag("farm"), Callback = function(value)
    spawnOn = value
    if not value then return end
    spawnGen = spawnGen + 1
@@ -4663,7 +4692,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    end)
   end})
 
-  cmb:AddSlider({Name = "Hover Height", Min = -30, Max = 15, Increment = 1, Default = -11, ValueName = "studs", Tooltip = "How far above (positive) or below (negative) the target you hover while auto farming.", Flag = autoFlag("farm"), Callback = function(v)
+  optPanel:AddSlider({Name = "Hover Height", Min = -30, Max = 15, Increment = 1, Default = -11, ValueName = "studs", Tooltip = "How far above (positive) or below (negative) the target you hover while auto farming.", Flag = autoFlag("farm"), Callback = function(v)
    hoverOffset = v
   end})
 
@@ -4728,7 +4757,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    end)
   end
 
-  cmb:AddDropdown({
+  optPanel:AddDropdown({
    Name = "Aura Targets", Options = mobNames, Default = {}, MultiSelect = true,
    SelectAll = true, Search = true,
    Tooltip = "Which mobs the kill aura will hit. Leave empty to hit anything nearby.",
@@ -4772,7 +4801,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
     end)
    end})
 
-  cmb:AddRangeSlider({
+  optPanel:AddRangeSlider({
    Name = "Aura Delay", Min = 0, Max = 800, Increment = 20,
    DefaultMin = 120, DefaultMax = 260, ValueName = "ms",
    Tooltip = "Random pause between aura swings, picked between these two values.",
@@ -4781,7 +4810,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   -- Spirit and void share one loop; only the name set differs.
   local function buildEntityFarm(label, nameSet, tip)
    local on = false
-   cmb:AddToggle({
+   optPanel:AddToggle({
     Name = label, Default = false, Flag = autoFlag("farm"), Tooltip = tip,
     Callback = function(v)
      on = v
@@ -5181,90 +5210,8 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   end})
  end
 
- local function BuildMisc(colA, colB)
-  local nukeOn, nukeGen = false, 0
-  local nukeSet, nukeAll = {grass = true}, false
-  local nukeTarget = nil
-  local nk = colB:AddSection({Name = "Demolish Blocks", Collapsible = true})
-  local function islandBlockNames()
-   local names, seen = {"All"}, {All = true}
-   for _, folder in ipairs(blocksFolders()) do
-    for _, b in ipairs(folder:GetChildren()) do
-     if not seen[b.Name] then
-      seen[b.Name] = true
-      table.insert(names, b.Name)
-     end
-    end
-   end
-   table.sort(names)
-   return names
-  end
-  UI.nukeDrop = nk:AddDropdown({Name = "Select Blocks", Options = islandBlockNames(), Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("set"), Callback = function(v)
-   nukeAll = false
-   nukeSet = {}
-   if not v or #v == 0 then nukeAll = true return end
-   for _, b in ipairs(v) do
-    if b == "All" then nukeAll = true nukeSet = {} break end
-    nukeSet[b] = true
-   end
-  end})
-  nk:AddButton({Name = "Refresh Block List", Callback = function()
-   pcall(function() UI.nukeDrop:Refresh(islandBlockNames(), true) end)
-   updateNotification("Demolish Blocks", "Block list refreshed", 2)
-  end})
-  local function blocknuke()
-   if not nukeOn then return end
-   local char = LP.Character
-   if not char then return end
-   local hrp = char:FindFirstChild("HumanoidRootPart")
-   if not hrp then return end
-   local hrpPos = hrp.Position
-   local target = nukeTarget
-   if target and target.Parent then hitBlock(target, target) return end
-   local blocks = getblocksfolder()
-   if not blocks then return end
-   local closestBlock, closestDistSq = nil, 900
-   local regionSize = Vector3.new(60, 60, 60)
-   local found
-   local ok = pcall(function()
-    found = WS:FindPartsInRegion3(Region3.new(hrpPos - regionSize / 2, hrpPos + regionSize / 2), nil, 500)
-   end)
-   if not ok or not found then found = partsInBox(hrpPos, regionSize) end
-   for i, v in ipairs(found) do
-    if v.Parent == blocks then
-     if nukeAll or nukeSet[v.Name] then
-      local d = v.Position - hrpPos
-      local distSq = d.X * d.X + d.Y * d.Y + d.Z * d.Z
-      if distSq < closestDistSq then closestDistSq = distSq closestBlock = v end
-     end
-    end
-    if i % 50 == 0 then task.wait() end
-   end
-   if closestBlock then
-    nukeTarget = closestBlock
-    task.defer(function() hitBlock(closestBlock, closestBlock) end)
-   else
-    nukeTarget = nil
-   end
-  end
-  nk:AddToggle({Name = "Demolish Blocks", Default = false, Tooltip = "Repeatedly breaks the nearest selected block type around you.", Flag = autoFlag("set"), Callback = function(value)
-   nukeOn = value
-   nukeTarget = nil
-   if not value then return end
-   nukeGen = nukeGen + 1
-   local gen = nukeGen
-   task.spawn(function()
-    while nukeOn and gen == nukeGen do
-     pcall(blocknuke)
-     task.wait(0.35)
-    end
-   end)
-  end})
- end
-
  BuildCombat(farmL)
  BuildFarm(farmR)
- BuildMisc(setL, setR)
 end
 
 BuildPookiePort(UI.farmL, UI.farmR, UI.setL, UI.setR)

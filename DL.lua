@@ -4681,7 +4681,22 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				_resizing = false
 				AddConnection(Click.MouseEnter,      function() TweenService:Create(TextboxFrame,TweenInfo.new(0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{BackgroundColor3=Color3.fromRGB(DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.R*255+3,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.G*255+3,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.B*255+3)}):Play() end)
 				AddConnection(Click.MouseLeave,      function() TweenService:Create(TextboxFrame,TweenInfo.new(0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{BackgroundColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second}):Play() end)
-				AddConnection(Click.MouseButton1Up,  function() TweenService:Create(TextboxFrame,TweenInfo.new(0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{BackgroundColor3=Color3.fromRGB(DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.R*255+3,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.G*255+3,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.B*255+3)}):Play() TextboxActual:CaptureFocus() end)
+				-- Double-click selects everything, like a browser field, so it can
+				-- be replaced or deleted in one go instead of held-backspace.
+				local _lastClick = 0
+				local function selectAllText()
+					local t = TextboxActual.Text
+					if t == "" then return end
+					TextboxActual.CursorPosition = #t + 1
+					TextboxActual.SelectionStart = 1
+				end
+				AddConnection(Click.MouseButton1Up,  function()
+					TweenService:Create(TextboxFrame,TweenInfo.new(0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{BackgroundColor3=Color3.fromRGB(DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.R*255+3,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.G*255+3,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.B*255+3)}):Play()
+					TextboxActual:CaptureFocus()
+					local now = tick()
+					if now - _lastClick < 0.35 then task.defer(selectAllText) end
+					_lastClick = now
+				end)
 				AddConnection(Click.MouseButton1Down, function() TweenService:Create(TextboxFrame,TweenInfo.new(0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{BackgroundColor3=Color3.fromRGB(DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.R*255+6,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.G*255+6,DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Second.B*255+6)}):Play() end)
 			end
 
