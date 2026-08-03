@@ -250,6 +250,7 @@ BuilderAPI.destroyer = {
     maxDelay  = 60,      -- ms, high end
     hitGap    = 30,      -- ms between hits on the same block
     boxOnly   = true,    -- confine to the selection box
+    brushOnly = false,   -- destroy exactly what the block brush painted
     confirm   = true,    -- wait until the block is actually gone
     maxTries  = 6,       -- attempts before giving up on a stubborn block
 }
@@ -287,6 +288,8 @@ local waypointTimeout = 2.2
 local buildFlySpeed = 35
 local placeReach = 26
 local buildStandoff = 12
+-- how far Expand from Middle will reach from where it parked before re-parking
+local expandReach = 120
 local autoFillMissing = true
 local maxFillPasses = 3
 local groupByType = false
@@ -926,21 +929,31 @@ local function placeBlockList(blockList, delayTime)
         end
 
         if buildMode == "Expand from Middle" then
+            -- Straight outward sweep from the middle, nothing in its way: no
+            -- verify passes and no per-block flying. We park somewhere and
+            -- expand from there; with Walk To Block on we only re-park once the
+            -- ring has outgrown our reach, then expand from the new spot.
             local center = Vector3.new(centerX, (minY + maxY) / 2, centerZ)
             table.sort(items, function(a, b) return (a.pos - center).Magnitude < (b.pos - center).Magnitude end)
-            local chunk = {}
+
+            local anchor
+            local function park(pos)
+                anchor = pos
+                pcall(function()
+                    flyTo(Vector3.new(pos.X, pos.Y + buildStandoff, pos.Z), 6, moveTimeout)
+                end)
+            end
+            park(center)
+
             for _, it in ipairs(items) do
                 if not isBuilding then break end
-                hoverAbove(it.pos)
+                if moveToBuildPosition and anchor
+                    and (it.pos - anchor).Magnitude > expandReach then
+                    park(it.pos)
+                end
                 pace()
                 pcall(function() placeNow(it.b) end)
-                chunk[#chunk + 1] = it
-                if #chunk >= 40 then
-                    confirmPlaced(chunk)
-                    chunk = {}
-                end
             end
-            if #chunk > 0 then confirmPlaced(chunk) end
 
         elseif buildMode == "Batch (verify)" then
             local PATCH = 15
@@ -1121,26 +1134,43 @@ local function turboPrint(blocks)
         local cf = arrayToCFrame(b.cframe)
 
         if turboTeleport then
+            -- Movement Mode decides how we travel. This used to hard-teleport
+            -- no matter what the dropdown said, so picking Fly still blinked.
             local _, _, hrp = getCharacterParts()
-            if hrp then
-                hrp.CFrame = CFrame.new(cf.Position + Vector3.new(0, 8, 0))
-                -- close enough is good enough; do not wait for exact arrival
-                local deadline = tick() + 0.3
-                while tick() < deadline do
-                    local _, _, r = getCharacterParts()
-                    if not r then break end
-                    if (r.Position - cf.Position).Magnitude < 30 then break end
-                    task.wait(0.05)
+            if hrp and (hrp.Position - cf.Position).Magnitude > placeReach then
+                if moveMode == "Teleport" then
+                    hrp.CFrame = CFrame.new(cf.Position + Vector3.new(0, 8, 0))
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    RunService.Heartbeat:Wait()
+                else
+                    pcall(function()
+                        flyTo(cf.Position + Vector3.new(0, buildStandoff, 0), placeReach, moveTimeout)
+                    end)
                 end
             end
         end
 
-        placeRawBlock(b.blockType, cf, b.upperBlock == true)
+        -- Place, and do not move on until the remote has answered. Previously
+        -- the hop and the place raced, so it looked like it was flying around
+        -- the preview without leaving anything behind.
+        local ok = placeRawBlock(b.blockType, cf, b.upperBlock == true)
+        if not ok and isBuilding and not turboAbort then
+            RunService.Heartbeat:Wait()
+            placeRawBlock(b.blockType, cf, b.upperBlock == true)
+        end
         placed = placed + 1
         progressPlaced = placed
         refreshProgress(false)
         if turboDelay > 0 then task.wait(turboDelay) end
     end
+
+    -- flyTo attaches a mover on demand; Turbo Print owns no build loop to clean
+    -- it up, so drop it here or the character keeps drifting afterwards.
+    pcall(function()
+        local _, _, hrp = getCharacterParts()
+        local m = hrp and hrp:FindFirstChild("BuildMover")
+        if m then m:Destroy() end
+    end)
 
     isBuilding = false
     refreshProgress(true)
@@ -2145,20 +2175,27 @@ local function resolveBlockDisplayName(blockType)
 
     local result = nil
     pcall(function()
-        local blocksFolder = ReplicatedStorage:FindFirstChild("blocks")
-        local template = blocksFolder and blocksFolder:FindFirstChild(key)
-        if template then
-            local dn = template:FindFirstChild("DisplayName")
-            if dn and dn:IsA("StringValue") and dn.Value ~= "" then
-                result = dn.Value
-            else
-                for _, d in ipairs(template:GetDescendants()) do
-                    if d.Name == "DisplayName" and d:IsA("StringValue") and d.Value ~= "" then
-                        result = d.Value
-                        break
+        -- The game keeps the readable name on the *tool* template, not the
+        -- block template, so "flowerDaisyYellowFertile" only resolves to
+        -- "Fertile Yellow Daisy" if we look in Tools as well. Folder casing
+        -- differs between places, hence both spellings.
+        for _, folderName in ipairs({ "Tools", "tools", "Blocks", "blocks", "Items" }) do
+            local folder = ReplicatedStorage:FindFirstChild(folderName)
+            local template = folder and folder:FindFirstChild(key)
+            if template then
+                local dn = template:FindFirstChild("DisplayName")
+                if dn and dn:IsA("StringValue") and dn.Value ~= "" then
+                    result = dn.Value
+                else
+                    for _, d in ipairs(template:GetDescendants()) do
+                        if d.Name == "DisplayName" and d:IsA("StringValue") and d.Value ~= "" then
+                            result = d.Value
+                            break
+                        end
                     end
                 end
             end
+            if result and result ~= "" then break end
         end
     end)
 
@@ -2406,6 +2443,8 @@ BuilderAPI.toggles.build = auto:CreateToggle({
           Callback = function(v) turboDelay = v / 1000 end },
         { Type = "toggle", Name = "Walk To Block", Default = true,
           Callback = function(v) moveToBuildPosition = v end },
+        { Type = "slider", Name = "Expand Reach", Min = 20, Max = 400, Default = 120,
+          Callback = function(v) expandReach = v end },
     },
     Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
     Callback = function(v)
@@ -2455,6 +2494,8 @@ BuilderAPI.toggles.destroy = auto:CreateToggle({
     CurrentValue = false,
     Tooltip = "Breaks blocks inside the selection box. Waits for each one to actually vanish before moving on.",
     Gear = {
+        { Type = "toggle", Name = "Brush Selection", Default = false,
+          Callback = function(v) BuilderAPI.destroyer.brushOnly = v end },
         { Type = "toggle", Name = "Selection Box Only", Default = true,
           Callback = function(v) BuilderAPI.destroyer.boxOnly = v end },
         { Type = "toggle", Name = "Confirm Destroyed", Default = true,
@@ -2649,23 +2690,50 @@ function visualParts(root)
     return out
 end
 
--- Flood fill from a block. surfaceOnly keeps it to one horizontal layer.
-function floodSelect(part, surfaceOnly, limit)
+-- A block's world position, whether it is one part or a model of several.
+function blockOrigin(inst)
+    if not inst then return Vector3.new() end
+    if inst:IsA("BasePart") then return inst.Position end
+    local ok, cf = pcall(function() return inst:GetPivot() end)
+    if ok and cf then return cf.Position end
+    local p = inst:FindFirstChildWhichIsA("BasePart", true)
+    return p and p.Position or Vector3.new()
+end
+
+-- Flood fill from a block. `plane` restricts the spread to one layer:
+--   "y" - a floor, spreading sideways only
+--   "x" / "z" - a wall, spreading along the wall and vertically
+--   nil - free in all six directions
+function floodSelect(part, plane, limit)
     local folder = getBlocksFolder()
     if not folder then return {} end
+    -- Clicks land on whatever sub-part the ray hit ("Top" on grass, a branch on
+    -- a tree). Everything below works in whole blocks, which is why picking a
+    -- surface used to only catch on every so often.
+    local root = resolveBlockRoot(part)
     local byCell, key = {}, function(x, y, z) return x .. "," .. y .. "," .. z end
+    local function cellOf(v)
+        return math.floor(v.X/3+0.5), math.floor(v.Y/3+0.5), math.floor(v.Z/3+0.5)
+    end
     for _, b in ipairs(folder:GetChildren()) do
-        if b:IsA("BasePart") then
-            local q = b.Position
-            byCell[key(math.floor(q.X/3+0.5), math.floor(q.Y/3+0.5), math.floor(q.Z/3+0.5))] = b
+        if b:IsA("BasePart") or b:IsA("Model") then
+            byCell[key(cellOf(blockOrigin(b)))] = b
         end
     end
-    local p = part.Position
-    local sx = math.floor(p.X/3+0.5); local sy = math.floor(p.Y/3+0.5); local sz = math.floor(p.Z/3+0.5)
-    local wanted = part.Name
-    local dirs = surfaceOnly
-        and { {1,0,0},{-1,0,0},{0,0,1},{0,0,-1} }
-        or  { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }
+
+    local sx, sy, sz = cellOf(blockOrigin(root))
+    local wanted = root.Name
+    local dirs
+    if plane == "y" then
+        dirs = { {1,0,0},{-1,0,0},{0,0,1},{0,0,-1} }
+    elseif plane == "x" then
+        dirs = { {0,0,1},{0,0,-1},{0,1,0},{0,-1,0} }
+    elseif plane == "z" then
+        dirs = { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0} }
+    else
+        dirs = { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} }
+    end
+
     local queue, seen, out = { {sx,sy,sz} }, { [key(sx,sy,sz)] = true }, {}
     while #queue > 0 and #out < (limit or 4000) do
         local c = table.remove(queue)
@@ -2681,24 +2749,39 @@ function floodSelect(part, surfaceOnly, limit)
             end
         end
     end
+    -- a click should never come back empty-handed
+    if #out == 0 then out[1] = root end
     return out
 end
 
+-- Which plane the clicked face lies in: a floor gives "y", a wall gives the
+-- axis it faces along.
+local function planeFromNormal(normal)
+    if not normal then return "y" end
+    local ax, ay, az = math.abs(normal.X), math.abs(normal.Y), math.abs(normal.Z)
+    if ay >= ax and ay >= az then return "y" end
+    if ax >= az then return "x" end
+    return "z"
+end
+
 -- Everything a single brush stroke should affect at this point.
-function brushTargets(part)
-    if brushConnected then return floodSelect(part, false) end
-    if brushSurface then return floodSelect(part, true) end
-    if brushRadius <= 0 then return { resolveBlockRoot(part) } end
+function brushTargets(part, normal)
+    if brushConnected then return floodSelect(part, nil) end
+    if brushSurface then return floodSelect(part, planeFromNormal(normal)) end
+    local root = resolveBlockRoot(part)
+    if brushRadius <= 0 then return { root } end
     local folder = getBlocksFolder()
     local out = {}
-    if not folder then return out end
-    local origin = part.Position
+    if not folder then return { root } end
+    local origin = blockOrigin(root)
     local r = brushRadius * 3
     for _, b in ipairs(folder:GetChildren()) do
-        if b:IsA("BasePart") and (b.Position - origin).Magnitude <= r then
+        if (b:IsA("BasePart") or b:IsA("Model"))
+            and (blockOrigin(b) - origin).Magnitude <= r then
             out[#out + 1] = b
         end
     end
+    if #out == 0 then out[1] = root end
     return out
 end
 
@@ -2767,9 +2850,11 @@ function blockUnderCursor()
     params.FilterDescendantsInstances = { folder }
     local hit = Workspace:Raycast(ray.Origin, ray.Direction * 5000, params)
     if hit and hit.Instance and hit.Instance:IsA("BasePart") then
-        local n = hit.Instance.Name
+        local n = resolveBlockRoot(hit.Instance).Name
         if n ~= "bedrock" and n ~= "portalToSpawn" then
-            return hit.Instance
+            -- the face normal tells Surface Select whether it is looking at a
+            -- floor or a wall
+            return hit.Instance, hit.Normal
         end
     end
     return nil
@@ -2980,34 +3065,12 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
     Name = "Preview Build",
     CurrentValue = false,
     Flag = "PreviewToggle",
-    Gear = {
-        { Type = "toggle", Name = "Use Real Models", Default = true,
-          Callback = function(v) previewRealModels = v end },
-        { Type = "toggle", Name = "Low-Lag Preview", Default = false,
-          Callback = function(v) previewMinimized = v end },
-        -- popover sliders are integers, so transparency is a percentage
-        { Type = "button", Name = "Rotate 90", OnClick = function()
-        if not previewModel or not previewModel.Parent then
-            notify("No Preview", "Preview a build first", 3)
-            return
-        end
-        rotatePreview(90)
-        notify("Rotated", "Turned 90 degrees", 2)
-    end },
-        { Type = "slider", Name = "Transparency %", Min = 0, Max = 90, Default = 50,
-          Callback = function(v)
-              previewTransparency = v / 100
-              local folder = Workspace:FindFirstChild(previewFolderName)
-              if folder then
-                  for _, part in ipairs(folder:GetDescendants()) do
-                      if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
-                          part.Transparency = previewTransparency
-                      end
-                  end
-              end
-          end },
-    },
+    -- Settings live on the Preview panel rather than behind a gear, so the
+    -- move handles sit alongside them instead of on the tab.
     Callback = function(v)
+        pcall(function()
+            if v then BuilderAPI.previewPanel:Show() else BuilderAPI.previewPanel:Hide() end
+        end)
         if v then
             local data = loadSelectedBuild()
             if not data then
@@ -3021,16 +3084,6 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
             clearPreview()
             notify("Preview Off", "Ghost blocks removed", 2)
         end
-    end
-})
-
-BuilderAPI.toggles.handles = previewTab:CreateToggle({
-    Name = "Move Handles",
-    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
-    CurrentValue = false,
-    Flag = "PreviewDrag",
-    Callback = function(v)
-        setDragMode(v)
     end
 })
 
@@ -3168,7 +3221,8 @@ end
 
 buildTypeDropdown = previewTab:CreateDropdown({
     Name = "Replace Block",
-    Gear = { { Type = "button", Name = "Refresh Lists", OnClick = function()
+    -- refresh belongs with the list it refreshes, not behind a gear
+    Actions = { { Text = "Refresh", OnClick = function()
         buildTypeDropdown:Refresh(getBuildTypeOptions())
         invBlockDropdown:Refresh(getInventoryOptions())
         notify("Refreshed", "Build & inventory lists updated", 2)
@@ -3184,7 +3238,7 @@ buildTypeDropdown = previewTab:CreateDropdown({
 
 invBlockDropdown = previewTab:CreateDropdown({
     Name = "With Block",
-    Gear = { { Type = "button", Name = "Refresh Lists", OnClick = function()
+    Actions = { { Text = "Refresh", OnClick = function()
         buildTypeDropdown:Refresh(getBuildTypeOptions())
         invBlockDropdown:Refresh(getInventoryOptions())
         notify("Refreshed", "Build & inventory lists updated", 2)
@@ -3280,10 +3334,10 @@ BuilderAPI.toggles.brush = saveTab:CreateToggle({
             end)
             local paintC = RunService.Heartbeat:Connect(function()
                 if not blockSelMode or not blockSelDown then return end
-                local part = blockUnderCursor()
+                local part, normal = blockUnderCursor()
                 if part then
                     local erase = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-                    for _, b in ipairs(brushTargets(part)) do
+                    for _, b in ipairs(brushTargets(part, normal)) do
                         if erase then unhighlightBlock(b) else highlightBlock(b) end
                     end
                 end
@@ -3855,7 +3909,7 @@ local structBlockDropdown = structTab:CreateDropdown({
         notify("Refreshed", #list .. " blocks found", 3)
     end } },
     Options = structFetchBlocks(),
-    CurrentOption = {"grass"},
+    CurrentOption = { blockDisplayFor("grass") },
     MultipleOptions = false,
     Flag = "StructBlock",
     Callback = function(v)
@@ -10874,23 +10928,10 @@ BuilderAPI.editorPanel = panel
 
 panel:AddLabel("Blocks")
 
-local blockList = (function()
-    local seen, b = {}, {}
-    local f = ReplicatedStorage:FindFirstChild("blocks")
-    if f then
-        for _, v in ipairs(f:GetChildren()) do
-            if not seen[v.Name] then seen[v.Name] = true table.insert(b, v.Name) end
-        end
-    end
-    table.sort(b)
-    if #b == 0 then b = { "stone", "grass" } end
-    return b
-end)()
-
 panel:AddDropdown({
     Name = "Active Block",
-    Options = blockList, Default = "stone", Search = true,
-    Callback = function(v) O.activeBlock = v end
+    Options = blockDisplayList(), Default = blockDisplayFor("stone"), Search = true,
+    Callback = function(v) O.activeBlock = blockIdFor((typeof(v) == "table") and v[1] or v) end
 })
 
 panel:AddDivider()
@@ -11430,6 +11471,29 @@ local function collect()
     local folder = getBlocksFolder()
     if not folder then return nil, "No island found near you" end
 
+    local wantTypes = D.types
+    local anyType = true
+    for _ in pairs(wantTypes) do anyType = false break end
+
+    -- A brush selection is an explicit list of blocks, so it wins over the box:
+    -- paint exactly what you want gone, then run the destroyer.
+    if D.brushOnly then
+        if blockSelCount == 0 then
+            return nil, "Paint blocks with the Block Brush first, or switch off Brush Selection"
+        end
+        local picked = {}
+        for root in pairs(selectedBlocks) do
+            if root and root.Parent and (anyType or wantTypes[root.Name]) then
+                if root:IsA("BasePart") then
+                    picked[#picked + 1] = root
+                else
+                    for _, p in ipairs(visualParts(root)) do picked[#picked + 1] = p end
+                end
+            end
+        end
+        return picked
+    end
+
     local box = D.boxOnly and selBoxPart or nil
     if D.boxOnly and not box then
         return nil, "Turn Show Selection Box on, or switch off Selection Box Only"
@@ -11532,6 +11596,54 @@ Duvome:AddWatch("Destroyer", function() return D.running end)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- PREVIEW PANEL — ghost settings and the move handles, off the tab
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+local previewPanel = Duvome:MakeSidePanel({ Name = "Preview", Width = 200, Height = 320, Side = "right" })
+BuilderAPI.previewPanel = previewPanel
+
+BuilderAPI.toggles.handles = previewPanel:AddToggle({
+    Name = "Move Handles", Default = false, Flag = "PreviewDrag",
+    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
+    Callback = function(v) setDragMode(v) end })
+
+previewPanel:AddDivider()
+
+previewPanel:AddToggle({
+    Name = "Use Real Models", Default = true,
+    Callback = function(v) previewRealModels = v end })
+
+previewPanel:AddToggle({
+    Name = "Low-Lag Preview", Default = false,
+    Callback = function(v) previewMinimized = v end })
+
+previewPanel:AddSlider({
+    Name = "Transparency", Min = 0, Max = 90, Increment = 5, Default = 50, ValueName = "%",
+    Callback = function(v)
+        previewTransparency = v / 100
+        local folder = Workspace:FindFirstChild(previewFolderName)
+        if folder then
+            for _, part in ipairs(folder:GetDescendants()) do
+                if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
+                    part.Transparency = previewTransparency
+                end
+            end
+        end
+    end })
+
+previewPanel:AddButton({ Name = "Rotate 90", Callback = function()
+        if not previewModel or not previewModel.Parent then
+            notify("No Preview", "Preview a build first", 3)
+            return
+        end
+        rotatePreview(90)
+        notify("Rotated", "Turned 90 degrees", 2)
+    end })
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- BRUSH PANEL — modes and actions for the block brush, off the tab
 -- ═══════════════════════════════════════════════════════════════════════════
 do
@@ -11539,11 +11651,10 @@ do
 local brushPanel = Duvome:MakeSidePanel({ Name = "Brush", Width = 200, Height = 340, Side = "right" })
 BuilderAPI.brushPanel = brushPanel
 
-brushPanel:AddLabel("Mode")
-
 local surfaceT, connectedT
 surfaceT = brushPanel:AddToggle({
     Name = "Surface Select", Default = false,
+    Tooltip = "Picks the whole flat run you clicked - a floor sideways, a wall along its face.",
     Callback = function(v)
         brushSurface = v
         -- the modes are mutually exclusive
@@ -11562,7 +11673,6 @@ brushPanel:AddSlider({
     Callback = function(v) brushRadius = v end })
 
 brushPanel:AddDivider()
-brushPanel:AddLabel("Selection")
 brushPanel:AddButton({ Name = "Clear Selection", Callback = function()
         clearBlockSelection()
         notify("Cleared", "Selection cleared", 2)
