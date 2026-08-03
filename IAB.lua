@@ -10562,7 +10562,11 @@ end
 
 -- ── preview ────────────────────────────────────────────────────────────────
 local PREVIEW_FOLDER = "IABImagePreview"
-local MAX_PREVIEW = 12000
+local MAX_PREVIEW = 60000
+-- Ceiling on how many blocks one image may resolve to. A 1024-wide heightmap
+-- at max height would otherwise run to hundreds of millions of cells and take
+-- the client down before it ever got to writing a file.
+local MAX_CELLS = 750000
 
 local function clearImagePreview()
     local f = Workspace:FindFirstChild(PREVIEW_FOLDER)
@@ -10613,7 +10617,8 @@ local function sampled()
             local r, g, b, a = img.get(sx, sy)
             out[py][px] = { r, g, b, a }
         end
-        if py % 16 == 0 then task.wait() end
+        -- rows are up to 1024 px wide now, so yield more often than every 16
+        if py % 4 == 0 then task.wait() end
     end
     return out, tw, th
 end
@@ -10635,6 +10640,11 @@ local function imageCells(atOrigin)
     end
 
     local cells = {}
+    local n = 0
+    -- The row-based yield was fine at 160 wide. At 1024, and with a heightmap
+    -- stacking up to 512 blocks per pixel, a single row can be half a million
+    -- cells - so pace on the cell count instead, or the client locks up.
+    local truncated = false
     for py = 1, th do
         for px = 1, tw do
             local px4 = grid[py][px]
@@ -10643,22 +10653,35 @@ local function imageCells(atOrigin)
                 local name, col = blockFor(r, g, b)
                 if IMG.mode == "Pixel Art (Wall)" then
                     -- image rows run top-down, world Y runs up
-                    cells[#cells + 1] = { ax + px, ay + (th - py), az, name, col }
+                    n = n + 1
+                    cells[n] = { ax + px, ay + (th - py), az, name, col }
                 elseif IMG.mode == "Pixel Art (Floor)" then
-                    cells[#cells + 1] = { ax + px, ay, az + py, name, col }
+                    n = n + 1
+                    cells[n] = { ax + px, ay, az + py, name, col }
                 else
                     -- Heightmap: brightness drives column height
                     local lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
                     local hgt = math.max(1, math.floor(lum * IMG.maxHeight + 0.5))
                     for y = 1, hgt do
-                        cells[#cells + 1] = { ax + px, ay + y, az + py, name, col }
+                        n = n + 1
+                        cells[n] = { ax + px, ay + y, az + py, name, col }
                     end
                 end
+                if n % 20000 == 0 then
+                    say("Image", "Resolving blocks... " .. n)
+                    task.wait()
+                end
+                -- Better a capped build than a frozen client and no build.
+                if n >= MAX_CELLS then truncated = true break end
             end
         end
+        if truncated then break end
         if py % 8 == 0 then task.wait() end
     end
-    return cells, tw, th
+    if truncated then
+        notifyWarn("Image", "Capped at " .. MAX_CELLS .. " blocks - lower the width or height", 8)
+    end
+    return cells, tw, th, truncated
 end
 
 -- The image never became a build file: it could only be placed live, cell by
@@ -10674,7 +10697,10 @@ local function imageBlocks()
             cframe = { c[1] * 3, c[2] * 3, c[3] * 3, 1, 0, 0, 0, 1, 0 },
             parts = {},
         }
-        if i % 4000 == 0 then task.wait() end
+        if i % 20000 == 0 then
+            say("Image", "Converting to blocks... " .. i .. " / " .. #cells)
+            task.wait()
+        end
     end
     return out, tw, th
 end
@@ -10698,12 +10724,15 @@ local function generateImageFile()
         if name == "" then name = "MyImage" end
         if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
 
+        say("Image", "Encoding " .. #blocks .. " blocks...\nLarge images can take a while here.")
+        task.wait()
         local ok, err = pcall(function()
             writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
         end)
         if not ok then
             notifyErr("Image", "Save failed: " .. tostring(err), 6)
-            say("Image", "Save failed:\n" .. tostring(err))
+            say("Image", "Save failed:\n" .. tostring(err)
+                .. "\n\nIf this is a size problem, lower Build Width and try again.")
             return
         end
 
@@ -10831,19 +10860,23 @@ auto:CreateDropdown({
 })
 
 auto:CreateSlider({
-    Name = "Build Width", Range = { 8, 160 }, Increment = 4, CurrentValue = 48,
+    Name = "Build Width", Range = { 8, 1024 }, Increment = 4, CurrentValue = 48,
     Suffix = "blk", Flag = "IMGW",
     Callback = function(v)
         IMG.width = v
         if IMG.cache then
+            -- block count grows with the square of the width, so show it: 1024
+            -- wide is a different order of magnitude from 160
+            local th = math.max(1, math.floor(IMG.cache.h * (math.min(v, IMG.cache.w) / IMG.cache.w)))
             say("Image", "Loaded " .. IMG.cache.w .. " x " .. IMG.cache.h
-                .. "\nWill build at " .. v .. " blocks wide.")
+                .. "\nWill build at " .. v .. " blocks wide (" .. v .. " x " .. th .. ")"
+                .. "\nUp to " .. (v * th) .. " blocks before transparent pixels are dropped.")
         end
     end
 })
 
 auto:CreateSlider({
-    Name = "Heightmap Max Height", Range = { 2, 64 }, Increment = 1, CurrentValue = 24,
+    Name = "Heightmap Max Height", Range = { 2, 512 }, Increment = 1, CurrentValue = 24,
     Suffix = "blk", Flag = "IMGH", Callback = function(v) IMG.maxHeight = v end
 })
 
