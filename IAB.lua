@@ -377,7 +377,7 @@ end
 local function sendSaveWebhook(name)
     task.spawn(function()
         local url = BuilderAPI.saveWebhook
-        if not url or url == "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE" then return end       -- no webhook set; skip
+        if not url or url == "" then return end       -- no webhook set; skip
         local req = httpRequest()
         if not req then return end                    -- executor has no HTTP; skip quietly
         local path = "autoBuilder/" .. name
