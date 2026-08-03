@@ -10132,6 +10132,7 @@ local IMG = {
     width = 48,
     mode = "Pixel Art (Wall)",
     maxHeight = 24,
+    file = "MyImage",
     cache = nil,      -- decoded { pixels = {}, w = , h = }
     match = {},       -- memo: "r,g,b" -> block name
 }
@@ -10618,15 +10619,19 @@ local function sampled()
 end
 
 -- Resolves the image into world cells. Each entry is {x, y, z, name, colour}.
-local function imageCells()
+-- atOrigin keeps it at 0,0,0 instead of anchoring to the cursor - that is what
+-- a saved build file wants, since the preview transform places it later.
+local function imageCells(atOrigin)
     local grid, tw, th = sampled()
     local ax, ay, az = 0, 0, 0
-    local part = targetPart()
-    if part then
-        ax, ay, az = toCell(part.Position)
-    else
-        local _, _, hrp = getCharacterParts()
-        if hrp then ax, ay, az = toCell(hrp.Position) end
+    if not atOrigin then
+        local part = targetPart()
+        if part then
+            ax, ay, az = toCell(part.Position)
+        else
+            local _, _, hrp = getCharacterParts()
+            if hrp then ax, ay, az = toCell(hrp.Position) end
+        end
     end
 
     local cells = {}
@@ -10654,6 +10659,62 @@ local function imageCells()
         if py % 8 == 0 then task.wait() end
     end
     return cells, tw, th
+end
+
+-- The image never became a build file: it could only be placed live, cell by
+-- cell. This turns the same cells into the { blockType, cframe } records every
+-- other generator writes, so the ghost preview and the builder can take it.
+local function imageBlocks()
+    local cells, tw, th = imageCells(true)
+    local out = {}
+    for i, c in ipairs(cells) do
+        out[#out + 1] = {
+            blockType = c[4],
+            -- cells are in block units; files are in studs, 3 per block
+            cframe = { c[1] * 3, c[2] * 3, c[3] * 3, 1, 0, 0, 0, 1, 0 },
+            parts = {},
+        }
+        if i % 4000 == 0 then task.wait() end
+    end
+    return out, tw, th
+end
+
+local function generateImageFile()
+    if not IMG.cache then
+        notifyWarn("Image", "Load an image first", 4)
+        return
+    end
+    task.spawn(function()
+        say("Image", "Converting to blocks...")
+        local blocks, tw, th = imageBlocks()
+        if #blocks == 0 then
+            notifyWarn("Image", "Nothing to save (all transparent?)", 4)
+            say("Image", "Nothing to save - every pixel was transparent.")
+            return
+        end
+
+        if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+        local name = IMG.file
+        if name == "" then name = "MyImage" end
+        if name:lower():sub(-5) ~= ".json" then name = name .. ".json" end
+
+        local ok, err = pcall(function()
+            writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
+        end)
+        if not ok then
+            notifyErr("Image", "Save failed: " .. tostring(err), 6)
+            say("Image", "Save failed:\n" .. tostring(err))
+            return
+        end
+
+        selectedFile = name
+        savedPreviewTransform = nil
+        pcall(function() saveAlignment(name, CFrame.new()) end)
+        pcall(function() fileDropdown:Refresh(getFiles()) fileDropdown:Set({ name }) end)
+        say("Image Saved", #blocks .. " blocks (" .. tw .. " x " .. th .. ")\n-> "
+            .. name .. "\nPreview tab: Preview Build, then Start Build.")
+        notifyOK("Image", #blocks .. " blocks -> " .. name .. " (selected)", 6)
+    end)
 end
 
 local function previewImage()
@@ -10709,25 +10770,31 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
-tabEdit:CreateDivider()
+-- Lives on Build rather than Edit: it produces a build file now, so it belongs
+-- next to the rest of the build pipeline.
+auto:CreateSection("Image", { Collapsible = true, Column = "right" })
 
-imgPara = tabEdit:CreateParagraph({
+imgPara = auto:CreateParagraph({
     Title = "Image",
     Content = "Needs a DIRECT link to a .png file - one that ends in .png and\n"
         .. "shows only the image, no page around it.\n"
         .. "A gallery page link (imgur.com/abc) returns HTML, not an image;\n"
         .. "open the image, right-click it, Copy image address.\n"
         .. "Only PNG works. JPEG, WebP and GIF are not supported.\n"
-        .. "Run Scan Block Colours on the Colour tab once first.",
+        .. "Run Scan Block Colours on the Colour tab once first.\n\n"
+        .. "1. Paste the link, press Load Image\n"
+        .. "2. Set the mode and width\n"
+        .. "3. Generate Image Build File\n"
+        .. "4. Preview tab: Preview Build, then Start Build",
 })
 
-tabEdit:CreateInput({
+auto:CreateInput({
     Name = "Image URL",
     Default = "",
     Callback = function(t) if t and t ~= "" then IMG.url = t end end
 })
 
-tabEdit:CreateButton({
+auto:CreateButton({
     Name = "Load Image",
     Gear = { { Type = "button", Name = "Check URL", OnClick = function()
         if IMG.url == "" then notifyWarn("Image", "Paste a link first", 3) return end
@@ -10755,7 +10822,7 @@ tabEdit:CreateButton({
     Callback = loadImage
 })
 
-tabEdit:CreateDropdown({
+auto:CreateDropdown({
     Name = "Image Mode",
     Options = { "Pixel Art (Wall)", "Pixel Art (Floor)", "Heightmap Terrain" },
     CurrentOption = { "Pixel Art (Wall)" }, MultipleOptions = false,
@@ -10763,7 +10830,7 @@ tabEdit:CreateDropdown({
     Callback = function(v) IMG.mode = (typeof(v) == "table") and v[1] or v end
 })
 
-tabEdit:CreateSlider({
+auto:CreateSlider({
     Name = "Build Width", Range = { 8, 160 }, Increment = 4, CurrentValue = 48,
     Suffix = "blk", Flag = "IMGW",
     Callback = function(v)
@@ -10775,12 +10842,12 @@ tabEdit:CreateSlider({
     end
 })
 
-tabEdit:CreateSlider({
+auto:CreateSlider({
     Name = "Heightmap Max Height", Range = { 2, 64 }, Increment = 1, CurrentValue = 24,
     Suffix = "blk", Flag = "IMGH", Callback = function(v) IMG.maxHeight = v end
 })
 
-tabEdit:CreateButton({
+auto:CreateButton({
     Name = "Preview Image at Cursor",
     Gear = { { Type = "button", Name = "Clear Image Preview", OnClick = function()
         clearImagePreview()
@@ -10790,10 +10857,23 @@ tabEdit:CreateButton({
     Callback = previewImage
 })
 
-tabEdit:CreateButton({
+auto:CreateButton({
     Name = "Build Image at Cursor",
     Tooltip = "Place the image where you are pointing, or at you if pointing at nothing.",
     Callback = buildImage
+})
+
+auto:CreateInput({
+    Name = "Image File Name",
+    PlaceholderText = "MyImage",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(t) if t and t ~= "" then IMG.file = t end end
+})
+
+auto:CreateButton({
+    Name = "Generate Image Build File",
+    Tooltip = "Convert the image into a build file you can preview, move and build like any other.",
+    Callback = generateImageFile
 })
 
 end
