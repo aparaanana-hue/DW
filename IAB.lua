@@ -378,7 +378,7 @@ end
 local function sendSaveWebhook(name)
     task.spawn(function()
         local url = BuilderAPI.saveWebhook
-        if not url or url == "" then return end       -- no webhook set; skip
+        if not url or url == "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE" then return end       -- no webhook set; skip
         local req = httpRequest()
         if not req then return end                    -- executor has no HTTP; skip quietly
         local path = "autoBuilder/" .. name
@@ -7915,18 +7915,115 @@ local function averageColour(inst)
     return Color3.new(rt / wt, gt / wt, bt / wt)
 end
 
-local function scanColours()
-    local folder = ReplicatedStorage:FindFirstChild("blocks")
-    if not folder then
-        notifyErr("Colour Scan", "ReplicatedStorage.blocks not found", 5)
-        return
+-- Every placeable block in the game, from the saved block palette. This is the
+-- authoritative list the image tool matches against: scanning
+-- ReplicatedStorage.blocks was unreliable (folder sometimes missing, templates
+-- often textured meshes with a flat tint), so the candidate set comes from here
+-- instead. Names only - positions were dropped, they only mattered in the swatch
+-- board the palette was built from.
+local BLOCK_PALETTE = {
+    "clayDeposit", "coalBlock", "buffalkorCrystalBlock", "darkGreenBlock", "clayPink", "neonCyan",
+    "coralBlockPink", "neonRed", "copperDeposit", "neonYellow", "clayYellow", "woolLightGreen",
+    "woolCyan", "clayBlue", "oilDeposit", "whiteBlock", "neonBlue", "pearlBlock",
+    "haybaleBlock", "blueBlock", "blackBlock", "neonPurple", "targetBlockIron", "clayOrange",
+    "neonWhite", "coralBlockYellow", "woolOrange", "honeycombBlock", "goldBlock", "diamondBlock",
+    "neonBlack", "clayLightGreen", "redBronzeBlock", "lightGreenBlock", "clayWhite", "neonOrange",
+    "ironBlock", "orangeBlock", "purpleBlock", "goldDeposit", "targetBlockWood", "honeyBlock",
+    "clayCyan", "neonDarkGreen", "yellowBlock", "clayDarkGreen", "clayPurple", "neonLightGreen",
+    "clayRed", "woolYellow", "coralBlockLightBlue", "neonPink", "woolWhite", "woolPurple",
+    "woolBlack", "woolPink", "clayBlack", "woolDarkGreen", "woolRed", "pinkBlock",
+    "cyanBlock", "opalBlock", "copperBlock", "rubyBlock", "amethystBlock", "coralBlockBlue",
+    "woolBlue", "redBlock", "voidStoneCarvedStair", "yellowStair", "voidStoneTiledSlab", "purpleStair",
+    "pastelOrangeSlab", "stairBirch", "pinkSlab", "stairCherryBlossom", "leavesBlock", "pastelOrangeStair",
+    "mapleSlab", "woodSpirit", "cyanSlab", "purpleSlab", "stairMaple", "woodCherryBlossom",
+    "darkGreenStair", "pastelBlueStair", "slimeBlockPink", "stairHickory", "iceCompact", "blueStair",
+    "whiteSlab", "snowCompact", "pinkStair", "orangeSlab", "glassBlockBlue", "bambooBlock",
+    "snow", "mudBlock", "glassBlockRed", "voidBlock", "grass", "ice",
+    "voidGrass", "voidStoneTiledStair", "pastelOrangeBlock", "glowingMushroomPinkBlock", "pastelPinkStair", "checkerTiledBlock",
+    "voidStonePolishedSlab", "slimeBlockBlue", "pastelRedBlock", "voidSandBlock", "redSlab", "voidStoneTiled",
+    "blackSlab", "pastelPurpleStair", "pastelRedSlab", "stairOak", "hickorySlab", "oakSlab",
+    "pastelPinkSlab", "yellowSlab", "woodMaple", "darkGreenSlab", "blackStair", "glowingMushroomCyanBlock",
+    "pinePlank", "pastelBlueSlab", "voidStoneCarvedSlab", "birchSlab", "woodHickory", "pastelGreenStair",
+    "pastelYellowStair", "stairPine", "cyanStair", "voidStoneStair", "cautionSlab", "orangeStair",
+    "redStair", "checkerTiledSlab", "checkerTiledStair", "pastelPurpleSlab", "pineSlab", "voidStoneCobbleStair",
+    "spiritPlank", "pastelYellowSlab", "voidStoneSlab", "glassBlockChrome", "voidStoneBrick", "testGenerator",
+    "blueSlab", "magmaBlock", "ledLight", "pastelGreenBlock", "whiteStair", "stairSpirit",
+    "lightGreenSlab", "cautionBlock", "sand", "glassBlockPurple", "voidStoneBrickStair", "cherryBlossomPlank",
+    "cautionStair", "pastelGreenSlab", "pumpkinHarvested", "wood", "cherryBlossomSlab", "grassDry",
+    "lightGreenStair", "voidStoneCobbleSlab", "candyCane", "glassBlockDarkGreen", "spiritSlab", "glassBlockOrange",
+    "glassBlockBlack", "voidStoneBlock", "glassBlockCyan", "voidStoneBrickSlab", "glassBlockLightGreen", "maplePlank",
+    "pastelPinkBlock", "glowingMushroomGreenBlock", "glassBlockYellow", "woodBirch", "boneBlock", "jackOLantern",
+    "bambooDriedBlock", "glassBlockPink", "voidStonePolished", "voidStonePolishedStair", "leavesMapleBlock", "slimeBlockGreen",
+    "pastelPurpleBlock", "pastelYellowBlock", "woodPlank", "melonHarvested", "woodPine", "voidStoneCobble",
+    "mushroomBlock", "voidStoneCarved", "birchPlank", "pastelBlueBlock", "hickoryPlank", "glowingMushroomBlueBlock",
+    "graniteBrickStair", "graniteBrickSlab", "graniteStair", "graniteCarved", "graniteSlab", "granite",
+    "graniteSmooth", "graniteBrick", "graniteTiles", "stairAquamarineSmooth", "stairMarble", "stairStoneBrick",
+    "sandstoneSmoothRedSlab", "dioriteStair", "sandstoneSlab", "basaltSlab", "dioriteBrickSlab", "basaltStair",
+    "sandstoneRedSlab", "stairSandstoneSmooth", "sandstoneBrickSlab", "slateSlab", "stairMarbleBrick", "stoneSmooth",
+    "aquamarineSmooth", "prismarineBrick", "prismarineBrickStair", "stairSandstoneBrick", "slateBrickSlab", "marbleBrickSlab",
+    "dioriteBrickStair", "slateTiles", "mossyCobblestoneSlab", "sandstoneSmoothRedBrickSlab", "stairSandstoneSmoothBrick", "marbleTiles",
+    "stairBrick", "sandstoneSmooth", "stairSandstoneRedBrick", "cobblestoneSlab", "sandstoneSmoothBrickSlab", "sandstoneSmoothSlab",
+    "andesite", "stone", "stairSlateBrick", "dioriteSlab", "sandstoneBrick", "stairSandstoneSmoothRed",
+    "slateSmooth", "aquamarineSmoothBrickSlab", "basaltBrickStair", "stoneBrick", "basaltBrickSlab", "aquamarineSmoothSlab",
+    "aquamarineCarved", "andesiteSlab", "mossySlab", "andesiteStair", "andesiteCarved", "sandstoneRedBrickSlab",
+    "basaltSmooth", "stoneTiles", "prismarineSlab", "andesiteSmooth", "dioriteCarved", "marblePillar",
+    "stoneBrickSlab", "stoneCarved", "clay", "andesiteBrickSlab", "slateBrick", "prismarineBlock",
+    "andesiteTiles", "stairAquamarineSmoothBrick", "stairSandstoneSmoothRedBrick", "dioriteSmooth", "andesiteBrickStair", "brickSlab",
+    "prismarineBrickSlab", "prismarineStair", "stairSlate", "basaltBrick", "aquamarineSmoothBrick", "marbleSlab",
+    "cobblestoneStair", "slateBlock", "sandstone", "slateCarved", "marbleCarved", "stairSandstoneRed",
+    "basaltTiles", "marbleSmooth", "sandstoneSmoothRed", "diorite", "dioriteTiles", "stairSandstone",
+    "andesiteBrick", "sandstoneSmoothRedBrick", "cobblestoneBlock", "mossyCobblestoneBlock", "sandstoneSmoothBrick", "dioriteBrick",
+    "stoneBrickMossy", "sandstoneRed", "basaltCarved", "brick", "aquamarineTiles", "mossyBlock",
+    "sandstoneRedBrick", "marbleBrick", "marbleBlock", "basalt",
+}
+BuilderAPI.blockPalette = BLOCK_PALETTE
+
+-- One placed block of each name from the world, so colours come from the real
+-- rendered blocks (the swatch board, or anything already built) rather than the
+-- flat tint on a textured template.
+local function worldColourByName()
+    local map = {}
+    local island = getNearestIsland()
+    local folder = island and island:FindFirstChild("Blocks")
+    if folder then
+        for _, b in ipairs(folder:GetChildren()) do
+            if not map[b.Name] then
+                local c = averageColour(b)
+                if c then map[b.Name] = c end
+            end
+        end
     end
+    return map
+end
+
+-- The template folder, whatever it is called in this place.
+local function templateFolder()
+    for _, n in ipairs({ "blocks", "Blocks", "BlockModels", "blockModels", "Items" }) do
+        local f = ReplicatedStorage:FindFirstChild(n)
+        if f then return f end
+    end
+    return nil
+end
+
+local function scanColours()
+    -- Colour each palette block: prefer the real placed block, fall back to the
+    -- ReplicatedStorage template. The palette is the source of names, so the
+    -- index always covers exactly the game's placeable blocks.
+    local world = worldColourByName()
+    local folder = templateFolder()
     local out = {}
-    for _, child in ipairs(folder:GetChildren()) do
-        local col = averageColour(child)
+    local missing = 0
+    for _, name in ipairs(BLOCK_PALETTE) do
+        local col = world[name]
+        if not col and folder then
+            local tmpl = folder:FindFirstChild(name)
+            if tmpl then col = averageColour(tmpl) end
+        end
         if col then
             local L, a, b = toOklab(col)
-            out[#out + 1] = { name = child.Name, col = col, L = L, a = a, b = b }
+            out[#out + 1] = { name = name, col = col, L = L, a = a, b = b }
+        else
+            missing = missing + 1
         end
     end
     table.sort(out, function(p, q) return p.L < q.L end)
@@ -7934,10 +8031,15 @@ local function scanColours()
     pcall(function()
         scanPara:Set({
             Title = "Colour Index",
-            Content = #out .. " block colours sampled, sorted dark to light.",
+            Content = #out .. " of " .. #BLOCK_PALETTE .. " palette blocks coloured, dark to light."
+                .. (missing > 0 and ("\n" .. missing .. " had no colour source (build the block palette to colour them).") or ""),
         })
     end)
-    notifyOK("Colour Scan", #out .. " blocks indexed", 5)
+    if #out == 0 then
+        notifyErr("Colour Scan", "No block colours found - build the block palette or check ReplicatedStorage", 6)
+    else
+        notifyOK("Colour Scan", #out .. " palette blocks indexed", 5)
+    end
 end
 
 local function ensureCache()
@@ -8076,7 +8178,7 @@ scanPara = colTab:CreateParagraph({
 
 colTab:CreateButton({
     Name = "Scan Block Colours",
-    Tooltip = "Sample every block in ReplicatedStorage.blocks and index it in OKLab. Run this once per session.",
+    Tooltip = "Colour every block in the palette (from real placed blocks first, template otherwise) and index it in OKLab. Run once per session; build the block palette in the world for the truest colours.",
     Callback = function() task.spawn(scanColours) end
 })
 
@@ -10895,7 +10997,9 @@ imgPara = auto:CreateParagraph({
         .. "A gallery page link (imgur.com/abc) returns HTML, not an image;\n"
         .. "open the image, right-click it, Copy image address.\n"
         .. "Only PNG works. JPEG, WebP and GIF are not supported.\n"
-        .. "Run Scan Block Colours on the Colour tab once first.\n\n"
+        .. "Blocks are matched from the game's full block palette. For the\n"
+        .. "truest colours, build the block palette in your world, then run\n"
+        .. "Scan Block Colours on the Colour tab once.\n\n"
         .. "1. Paste the link, press Load Image\n"
         .. "2. Set the mode and width\n"
         .. "3. Generate Image Build File\n"
