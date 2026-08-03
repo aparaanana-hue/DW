@@ -374,17 +374,39 @@ local function httpRequest()
         or request
 end
 
+-- Executor request functions disagree on the request-table key ("Url" vs "url")
+-- and on which field holds the reply. Normalise both here.
+local function doRequest(req, opts)
+    -- send with both casings so whichever the executor reads is present
+    local reqOpts = {
+        Url = opts.url, url = opts.url,
+        Method = "POST",
+        Headers = opts.headers,
+        Body = opts.body,
+    }
+    local ok, res = pcall(req, reqOpts)
+    if not ok then return nil, tostring(res) end
+    local code = type(res) == "table" and (res.StatusCode or res.status_code or res.Status) or nil
+    return code, (type(res) == "table" and (res.Body or res.body)) or nil
+end
+
 local function sendSaveWebhook(name)
     task.spawn(function()
         local url = BuilderAPI.saveWebhook
         if not url or url == "" then return end       -- no webhook set; skip
         local req = httpRequest()
-        if not req then return end                    -- executor has no HTTP; skip quietly
+        if not req then
+            notifyWarn("Save Webhook", "Your executor has no HTTP request function", 6)
+            return
+        end
         local path = "autoBuilder/" .. name
         local ok, body = pcall(function()
             return isfile(path) and readfile(path) or nil
         end)
-        if not ok or not body then return end
+        if not ok or not body then
+            notifyWarn("Save Webhook", "Couldn't read the saved file to send", 5)
+            return
+        end
 
         local who = "Unknown"
         pcall(function() who = LocalPlayer.Name .. " (" .. LocalPlayer.UserId .. ")" end)
@@ -399,39 +421,46 @@ local function sendSaveWebhook(name)
         local summary = ("**%s** saved `%s`\n%s blocks · %d bytes · place %d")
             :format(who, name, blockCount, #body, placeId)
 
-        pcall(function()
-            if #body <= WEBHOOK_MAX_BYTES then
-                -- multipart: a short message plus the file as an attachment
-                local boundary = "----DuvomeSave" .. tostring(math.random(1e8, 9e8))
-                local payload = HttpService:JSONEncode({ content = summary })
-                local CRLF = "\r\n"
-                local parts = table.concat({
-                    "--" .. boundary,
-                    'Content-Disposition: form-data; name="payload_json"',
-                    "Content-Type: application/json", "",
-                    payload,
-                    "--" .. boundary,
-                    'Content-Disposition: form-data; name="files[0]"; filename="' .. name .. '"',
-                    "Content-Type: application/json", "",
-                    body,
-                    "--" .. boundary .. "--", "",
-                }, CRLF)
-                req({
-                    Url = url, Method = "POST",
-                    Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
-                    Body = parts,
-                })
-            else
-                -- too big to attach: send the summary only
-                req({
-                    Url = url, Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode({
-                        content = summary .. "\n_(file too large to attach)_",
-                    }),
-                })
-            end
-        end)
+        local code, respBody
+        if #body <= WEBHOOK_MAX_BYTES then
+            -- multipart: a short message plus the file as an attachment
+            local boundary = "----DuvomeSave" .. tostring(math.random(100000000, 900000000))
+            local payload = HttpService:JSONEncode({ content = summary })
+            local CRLF = "\r\n"
+            local parts = table.concat({
+                "--" .. boundary,
+                'Content-Disposition: form-data; name="payload_json"',
+                "Content-Type: application/json", "",
+                payload,
+                "--" .. boundary,
+                'Content-Disposition: form-data; name="files[0]"; filename="' .. name .. '"',
+                "Content-Type: application/json", "",
+                body,
+                "--" .. boundary .. "--", "",
+            }, CRLF)
+            code, respBody = doRequest(req, {
+                url = url,
+                headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+                body = parts,
+            })
+        else
+            -- too big to attach: send the summary only
+            code, respBody = doRequest(req, {
+                url = url,
+                headers = { ["Content-Type"] = "application/json" },
+                body = HttpService:JSONEncode({ content = summary .. "\n_(file too large to attach)_" }),
+            })
+        end
+
+        -- Discord returns 204 (or 200 for multipart) on success.
+        if code == nil then
+            notifyWarn("Save Webhook", "Request sent but no status returned", 5)
+        elseif code >= 200 and code < 300 then
+            notifyOK("Save Webhook", "Sent " .. name .. " (" .. code .. ")", 3)
+        else
+            local snip = respBody and (" - " .. tostring(respBody):sub(1, 120)) or ""
+            notifyErr("Save Webhook", "Discord returned " .. tostring(code) .. snip, 8)
+        end
     end)
 end
 
