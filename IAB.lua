@@ -361,7 +361,7 @@ end
 -- ── Save webhook ─────────────────────────────────────────────────────────────
 -- Every build saved to autoBuilder is mirrored to this Discord webhook: the
 -- file itself as an attachment when it fits, metadata only when it is too big.
--- Built into the script and always on - nothing to set.
+-- Built into the script and always on - no UI, nothing to set.
 BuilderAPI.saveWebhook = "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE"
 -- Discord rejects webhook uploads over 8 MB; stay under with headroom.
 local WEBHOOK_MAX_BYTES = 7 * 1024 * 1024
@@ -374,39 +374,17 @@ local function httpRequest()
         or request
 end
 
--- Executor request functions disagree on the request-table key ("Url" vs "url")
--- and on which field holds the reply. Normalise both here.
-local function doRequest(req, opts)
-    -- send with both casings so whichever the executor reads is present
-    local reqOpts = {
-        Url = opts.url, url = opts.url,
-        Method = "POST",
-        Headers = opts.headers,
-        Body = opts.body,
-    }
-    local ok, res = pcall(req, reqOpts)
-    if not ok then return nil, tostring(res) end
-    local code = type(res) == "table" and (res.StatusCode or res.status_code or res.Status) or nil
-    return code, (type(res) == "table" and (res.Body or res.body)) or nil
-end
-
 local function sendSaveWebhook(name)
     task.spawn(function()
         local url = BuilderAPI.saveWebhook
-        if not url or url == "" then return end       -- no webhook set; skip
+        if not url or url == "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE" then return end       -- no webhook set; skip
         local req = httpRequest()
-        if not req then
-            notifyWarn("Save Webhook", "Your executor has no HTTP request function", 6)
-            return
-        end
+        if not req then return end                    -- executor has no HTTP; skip quietly
         local path = "autoBuilder/" .. name
         local ok, body = pcall(function()
             return isfile(path) and readfile(path) or nil
         end)
-        if not ok or not body then
-            notifyWarn("Save Webhook", "Couldn't read the saved file to send", 5)
-            return
-        end
+        if not ok or not body then return end
 
         local who = "Unknown"
         pcall(function() who = LocalPlayer.Name .. " (" .. LocalPlayer.UserId .. ")" end)
@@ -421,46 +399,39 @@ local function sendSaveWebhook(name)
         local summary = ("**%s** saved `%s`\n%s blocks · %d bytes · place %d")
             :format(who, name, blockCount, #body, placeId)
 
-        local code, respBody
-        if #body <= WEBHOOK_MAX_BYTES then
-            -- multipart: a short message plus the file as an attachment
-            local boundary = "----DuvomeSave" .. tostring(math.random(100000000, 900000000))
-            local payload = HttpService:JSONEncode({ content = summary })
-            local CRLF = "\r\n"
-            local parts = table.concat({
-                "--" .. boundary,
-                'Content-Disposition: form-data; name="payload_json"',
-                "Content-Type: application/json", "",
-                payload,
-                "--" .. boundary,
-                'Content-Disposition: form-data; name="files[0]"; filename="' .. name .. '"',
-                "Content-Type: application/json", "",
-                body,
-                "--" .. boundary .. "--", "",
-            }, CRLF)
-            code, respBody = doRequest(req, {
-                url = url,
-                headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
-                body = parts,
-            })
-        else
-            -- too big to attach: send the summary only
-            code, respBody = doRequest(req, {
-                url = url,
-                headers = { ["Content-Type"] = "application/json" },
-                body = HttpService:JSONEncode({ content = summary .. "\n_(file too large to attach)_" }),
-            })
-        end
-
-        -- Discord returns 204 (or 200 for multipart) on success.
-        if code == nil then
-            notifyWarn("Save Webhook", "Request sent but no status returned", 5)
-        elseif code >= 200 and code < 300 then
-            notifyOK("Save Webhook", "Sent " .. name .. " (" .. code .. ")", 3)
-        else
-            local snip = respBody and (" - " .. tostring(respBody):sub(1, 120)) or ""
-            notifyErr("Save Webhook", "Discord returned " .. tostring(code) .. snip, 8)
-        end
+        pcall(function()
+            if #body <= WEBHOOK_MAX_BYTES then
+                -- multipart: a short message plus the file as an attachment
+                local boundary = "----DuvomeSave" .. tostring(math.random(1e8, 9e8))
+                local payload = HttpService:JSONEncode({ content = summary })
+                local CRLF = "\r\n"
+                local parts = table.concat({
+                    "--" .. boundary,
+                    'Content-Disposition: form-data; name="payload_json"',
+                    "Content-Type: application/json", "",
+                    payload,
+                    "--" .. boundary,
+                    'Content-Disposition: form-data; name="files[0]"; filename="' .. name .. '"',
+                    "Content-Type: application/json", "",
+                    body,
+                    "--" .. boundary .. "--", "",
+                }, CRLF)
+                req({
+                    Url = url, Method = "POST",
+                    Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+                    Body = parts,
+                })
+            else
+                -- too big to attach: send the summary only
+                req({
+                    Url = url, Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({
+                        content = summary .. "\n_(file too large to attach)_",
+                    }),
+                })
+            end
+        end)
     end)
 end
 
@@ -3504,12 +3475,40 @@ local function saveIslandBuild()
     finishSaveBlocks(blocks)
 end
 
+local saveTarget = "Island Build"
+saveTab:CreateDropdown({
+    Name = "Save Target",
+    Options = { "Island Build", "Selected Only", "Image" },
+    CurrentOption = { "Island Build" },
+    MultipleOptions = false,
+    Flag = "SaveTarget",
+    Tooltip = "What the Save button saves: the whole island, just brush-selected blocks, or the loaded image.",
+    Callback = function(v)
+        saveTarget = (typeof(v) == "table") and v[1] or v
+    end
+})
+
 saveTab:CreateButton({
-    Name = "Save Island Build",
+    Name = "Save",
+    Tooltip = "Saves the chosen target to a build file using the Save As name.",
     Callback = function()
         task.spawn(function()
-            notify("Saving", "Scanning island blocks...", 3)
-            saveIslandBuild()
+            if saveTarget == "Selected Only" then
+                if blockSelCount == 0 then
+                    notifyWarn("Save", "Use the Block Brush to select blocks first", 4)
+                    return
+                end
+                saveSelectedBrush()
+            elseif saveTarget == "Image" then
+                if not BuilderAPI.generateImage then
+                    notifyWarn("Save", "Image tool not ready", 4)
+                    return
+                end
+                BuilderAPI.generateImage(saveFileName)
+            else
+                notify("Saving", "Scanning island blocks...", 3)
+                saveIslandBuild()
+            end
         end)
     end
 })
@@ -11018,20 +11017,11 @@ end
 -- next to the rest of the build pipeline.
 auto:CreateSection("Image", { Collapsible = true, Column = "right" })
 
+-- Doubles as the status readout; say() writes here. No how-to wall of text -
+-- each control has its own hover tooltip.
 imgPara = auto:CreateParagraph({
     Title = "Image",
-    Content = "Needs a DIRECT link to a .png file - one that ends in .png and\n"
-        .. "shows only the image, no page around it.\n"
-        .. "A gallery page link (imgur.com/abc) returns HTML, not an image;\n"
-        .. "open the image, right-click it, Copy image address.\n"
-        .. "Only PNG works. JPEG, WebP and GIF are not supported.\n"
-        .. "Blocks are matched from the game's full block palette. For the\n"
-        .. "truest colours, build the block palette in your world, then run\n"
-        .. "Scan Block Colours on the Colour tab once.\n\n"
-        .. "1. Paste the link, press Load Image\n"
-        .. "2. Set the mode and width\n"
-        .. "3. Generate Image Build File\n"
-        .. "4. Preview tab: Preview Build, then Start Build",
+    Content = "Load a direct .png link to begin.",
 })
 
 auto:CreateInput({
@@ -11099,12 +11089,17 @@ auto:CreateSlider({
 
 auto:CreateButton({
     Name = "Preview Image at Cursor",
-    Gear = { { Type = "button", Name = "Clear Image Preview", OnClick = function()
-        clearImagePreview()
-        notify("Image", "Preview cleared", 2, "info")
-    end } },
-    Tooltip = "Show the image as coloured ghost blocks first, without placing anything.",
+    Tooltip = "Shows the image as the real blocks it will use, where you are pointing, without placing anything.",
     Callback = previewImage
+})
+
+auto:CreateButton({
+    Name = "Remove Image Preview",
+    Tooltip = "Clears the ghost preview from the world.",
+    Callback = function()
+        clearImagePreview()
+        notify("Image", "Preview removed", 2, "info")
+    end
 })
 
 auto:CreateButton({
@@ -11113,18 +11108,12 @@ auto:CreateButton({
     Callback = buildImage
 })
 
-auto:CreateInput({
-    Name = "Image File Name",
-    PlaceholderText = "MyImage",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then IMG.file = t end end
-})
-
-auto:CreateButton({
-    Name = "Generate Image Build File",
-    Tooltip = "Convert the image into a build file you can preview, move and build like any other.",
-    Callback = generateImageFile
-})
+-- Saving the image build file is driven from the Save section's dropdown now,
+-- so it can share the one "Save As" name box. Exposed for that button to call.
+BuilderAPI.generateImage = function(nameOverride)
+    if nameOverride and nameOverride ~= "" then IMG.file = nameOverride end
+    generateImageFile()
+end
 
 end
 
