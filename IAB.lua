@@ -358,6 +358,84 @@ local function notifyErr(title, content, duration)
     notify(title, content, duration, "error")
 end
 
+-- ── Save webhook ─────────────────────────────────────────────────────────────
+-- Every build saved to autoBuilder is mirrored to a Discord webhook: the file
+-- itself as an attachment when it fits, metadata only when it is too big.
+-- Blank by default; set it from the Save Webhook section on the Build tab.
+-- Kept on BuilderAPI so the UI (in a later do-block) can write it.
+BuilderAPI.saveWebhook = BuilderAPI.saveWebhook or ""
+-- Discord rejects webhook uploads over 8 MB; stay under with headroom.
+local WEBHOOK_MAX_BYTES = 7 * 1024 * 1024
+
+local function httpRequest()
+    return (syn and syn.request)
+        or (http and http.request)
+        or http_request
+        or (fluxus and fluxus.request)
+        or request
+end
+
+local function sendSaveWebhook(name)
+    task.spawn(function()
+        local url = BuilderAPI.saveWebhook
+        if not url or url == "" then return end       -- no webhook set; skip
+        local req = httpRequest()
+        if not req then return end                    -- executor has no HTTP; skip quietly
+        local path = "autoBuilder/" .. name
+        local ok, body = pcall(function()
+            return isfile(path) and readfile(path) or nil
+        end)
+        if not ok or not body then return end
+
+        local who = "Unknown"
+        pcall(function() who = LocalPlayer.Name .. " (" .. LocalPlayer.UserId .. ")" end)
+        local blockCount = "?"
+        pcall(function()
+            local _, n = body:gsub('"blockType"', "")
+            blockCount = tostring(n)
+        end)
+        local placeId = 0
+        pcall(function() placeId = game.PlaceId end)
+
+        local summary = ("**%s** saved `%s`\n%s blocks · %d bytes · place %d")
+            :format(who, name, blockCount, #body, placeId)
+
+        pcall(function()
+            if #body <= WEBHOOK_MAX_BYTES then
+                -- multipart: a short message plus the file as an attachment
+                local boundary = "----DuvomeSave" .. tostring(math.random(1e8, 9e8))
+                local payload = HttpService:JSONEncode({ content = summary })
+                local CRLF = "\r\n"
+                local parts = table.concat({
+                    "--" .. boundary,
+                    'Content-Disposition: form-data; name="payload_json"',
+                    "Content-Type: application/json", "",
+                    payload,
+                    "--" .. boundary,
+                    'Content-Disposition: form-data; name="files[0]"; filename="' .. name .. '"',
+                    "Content-Type: application/json", "",
+                    body,
+                    "--" .. boundary .. "--", "",
+                }, CRLF)
+                req({
+                    Url = url, Method = "POST",
+                    Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+                    Body = parts,
+                })
+            else
+                -- too big to attach: send the summary only
+                req({
+                    Url = url, Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({
+                        content = summary .. "\n_(file too large to attach)_",
+                    }),
+                })
+            end
+        end)
+    end)
+end
+
 -- Modal yes/no dialog, replaces the old "tap the button twice" confirmations.
 local function confirm(title, content, confirmText, onConfirm)
     Duvome:Prompt({
@@ -2150,6 +2228,7 @@ function objCombineToFile(fileName)
         writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = out }))
     end)
     if not ok then notify("Save Failed", tostring(err), 5) return end
+    sendSaveWebhook(name)
     selectedFile = name
     pcall(function() saveAlignment(name, CFrame.new()) end)
     pcall(function() fileDropdown:Refresh(getFiles()) fileDropdown:Set({ name }) end)
@@ -2952,6 +3031,7 @@ function finishSaveBlocks(blocks)
         writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
     end)
     if ok then
+        sendSaveWebhook(name)
         saveAlignment(name, CFrame.new())
         fileDropdown:Refresh(getFiles())
         notify("Build Saved", #blocks .. " blocks -> " .. name, 6)
@@ -4448,7 +4528,7 @@ cityTab:CreateButton({
                     local ok = pcall(function()
                         writefile("autoBuilder/" .. fn, HttpService:JSONEncode({ blocks = lot.blocks }))
                     end)
-                    if ok then written = written + 1 end
+                    if ok then written = written + 1 sendSaveWebhook(fn) end
                     task.wait()
                 end
                 notify("City Saved", written .. " lot files written", 6)
@@ -4462,6 +4542,7 @@ cityTab:CreateButton({
                     notify("Save Failed", tostring(err), 5)
                     return
                 end
+                sendSaveWebhook(name)
                 selectedFile = name
                 savedPreviewTransform = nil
                 pcall(function() fileDropdown:Set({ name }) end)
@@ -4657,6 +4738,7 @@ platTab:CreateButton({
                 writefile("autoBuilder/" .. name, HttpService:JSONEncode({ blocks = blocks }))
             end)
             if not ok then notify("Save Failed", tostring(err), 5) return end
+            sendSaveWebhook(name)
 
             selectedFile = name
             savedPreviewTransform = nil
@@ -4750,6 +4832,7 @@ structTab:CreateButton({
                 notify("Save Failed", "Could not write file: " .. tostring(err), 5)
                 return
             end
+            sendSaveWebhook(name)
 
             selectedFile = name
             savedPreviewTransform = nil
@@ -5748,6 +5831,7 @@ toolTab:CreateButton({
                 notifyErr("Save Failed", tostring(err), 5)
                 return
             end
+            sendSaveWebhook(name)
             selectedFile = name
             savedPreviewTransform = nil
             pcall(function()
@@ -10735,6 +10819,7 @@ local function generateImageFile()
                 .. "\n\nIf this is a size problem, lower Build Width and try again.")
             return
         end
+        sendSaveWebhook(name)
 
         selectedFile = name
         savedPreviewTransform = nil
@@ -10907,6 +10992,60 @@ auto:CreateButton({
     Name = "Generate Image Build File",
     Tooltip = "Convert the image into a build file you can preview, move and build like any other.",
     Callback = generateImageFile
+})
+
+-- ── Save webhook ─────────────────────────────────────────────────────────────
+-- Paste a Discord webhook URL here to mirror every saved build to it. Blank
+-- means off. Kept out of the source so the URL is not published in the repo.
+auto:CreateSection("Save Webhook", { Collapsible = true, Column = "right" })
+
+auto:CreateParagraph({
+    Title = "Save Webhook",
+    Content = "Paste a Discord webhook URL to send a copy of every build you save.\n"
+        .. "Leave it blank to turn this off. The saved file is attached when it\n"
+        .. "fits (under 7 MB), otherwise only a short summary is sent.",
+})
+
+auto:CreateInput({
+    Name = "Webhook URL",
+    PlaceholderText = "https://discord.com/api/webhooks/...",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(t)
+        BuilderAPI.saveWebhook = t or ""
+        if t and t ~= "" then
+            notifyOK("Save Webhook", "Saves will be sent to this webhook", 4)
+        else
+            notify("Save Webhook", "Turned off", 3, "info")
+        end
+    end
+})
+
+auto:CreateButton({
+    Name = "Test Webhook",
+    Tooltip = "Send a test message to check the webhook works.",
+    Callback = function()
+        local url = BuilderAPI.saveWebhook
+        if not url or url == "" then
+            notifyWarn("Save Webhook", "Paste a webhook URL first", 4)
+            return
+        end
+        local req = httpRequest()
+        if not req then
+            notifyErr("Save Webhook", "Your executor has no HTTP request function", 5)
+            return
+        end
+        task.spawn(function()
+            local ok = pcall(function()
+                req({
+                    Url = url, Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({ content = "Duvome save webhook test - it works." }),
+                })
+            end)
+            if ok then notifyOK("Save Webhook", "Test sent", 4)
+            else notifyErr("Save Webhook", "Test failed to send", 5) end
+        end)
+    end
 })
 
 end
