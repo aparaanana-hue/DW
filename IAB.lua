@@ -10761,14 +10761,73 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- IMAGE -> BLOCKS
 -- ═══════════════════════════════════════════════════════════════════════════
--- Memoised per distinct pixel colour: returns the block name and the colour
--- that block actually is, so the preview shows the quantised result.
+-- Pixel art only looks right with flat, solid-colour blocks, and only if their
+-- colours are accurate. Matching against all 316 blocks (stairs, slabs, ores,
+-- textured stone) with colours guessed from a grey template is what made images
+-- come out wrong. This is a hand-picked palette of the game's flat blocks with
+-- their real colours; images match against just these.
+local IMAGE_PALETTE = {
+    -- basic colour blocks
+    { "whiteBlock", 236,236,236 }, { "blackBlock", 30,30,32 },
+    { "redBlock", 200,45,45 }, { "blueBlock", 45,80,200 }, { "cyanBlock", 55,190,205 },
+    { "pinkBlock", 235,120,175 }, { "orangeBlock", 230,130,40 }, { "purpleBlock", 130,55,180 },
+    { "yellowBlock", 235,205,55 }, { "lightGreenBlock", 120,200,90 }, { "darkGreenBlock", 45,110,55 },
+    -- wool (softer)
+    { "woolWhite", 240,240,235 }, { "woolBlack", 45,45,48 }, { "woolRed", 190,60,55 },
+    { "woolBlue", 55,90,180 }, { "woolCyan", 80,190,200 }, { "woolPink", 235,150,190 },
+    { "woolOrange", 225,145,60 }, { "woolPurple", 135,75,175 }, { "woolYellow", 235,210,90 },
+    { "woolLightGreen", 140,205,110 }, { "woolDarkGreen", 60,120,65 },
+    -- clay (earthy, muted)
+    { "clayWhite", 220,210,200 }, { "clayBlack", 55,50,50 }, { "clayRed", 175,80,60 },
+    { "clayBlue", 90,110,160 }, { "clayCyan", 110,170,175 }, { "clayPink", 220,150,150 },
+    { "clayOrange", 200,120,70 }, { "clayPurple", 140,100,150 }, { "clayYellow", 215,185,110 },
+    { "clayLightGreen", 150,180,120 }, { "clayDarkGreen", 90,120,80 },
+    -- neon (vivid)
+    { "neonWhite", 255,255,255 }, { "neonBlack", 40,40,45 }, { "neonRed", 255,50,50 },
+    { "neonBlue", 50,90,255 }, { "neonCyan", 40,240,240 }, { "neonPink", 255,90,200 },
+    { "neonOrange", 255,140,30 }, { "neonPurple", 180,50,240 }, { "neonYellow", 250,240,40 },
+    { "neonLightGreen", 120,255,90 }, { "neonDarkGreen", 30,180,60 },
+    -- pastel (light)
+    { "pastelPinkBlock", 245,200,215 }, { "pastelBlueBlock", 190,215,240 },
+    { "pastelGreenBlock", 200,230,190 }, { "pastelPurpleBlock", 210,195,235 },
+    { "pastelYellowBlock", 245,235,190 }, { "pastelOrangeBlock", 245,210,175 },
+    { "pastelRedBlock", 240,180,180 },
+    -- naturals and materials
+    { "grass", 95,170,75 }, { "grassDry", 200,180,95 }, { "sand", 225,205,150 },
+    { "snow", 245,245,250 }, { "ice", 175,215,245 }, { "mudBlock", 95,70,50 },
+    { "sandstone", 220,200,150 }, { "goldBlock", 235,200,70 }, { "ironBlock", 200,200,205 },
+    { "diamondBlock", 150,225,235 }, { "coalBlock", 45,45,50 }, { "copperBlock", 200,120,70 },
+    { "amethystBlock", 150,90,200 }, { "rubyBlock", 190,40,60 }, { "opalBlock", 225,230,235 },
+    { "pearlBlock", 235,230,225 }, { "boneBlock", 235,230,215 }, { "haybaleBlock", 210,185,80 },
+    { "honeycombBlock", 235,185,70 }, { "magmaBlock", 210,80,40 }, { "leavesBlock", 60,140,60 },
+    { "woodPlank", 165,120,75 }, { "marbleBlock", 235,235,240 }, { "voidBlock", 60,35,95 },
+}
+
+-- Precompute each palette colour in OKLab once, for perceptual nearest-match.
+local IMAGE_PAL = {}
+do
+    local toOk = BA.toOklab
+    for _, e in ipairs(IMAGE_PALETTE) do
+        local col = Color3.fromRGB(e[2], e[3], e[4])
+        local L, a, b = toOk(col)
+        IMAGE_PAL[#IMAGE_PAL + 1] = { name = e[1], col = col, L = L, a = a, b = b }
+    end
+end
+
+-- Memoised per distinct pixel colour: nearest palette block in OKLab, plus the
+-- colour that block actually is, so the preview shows the quantised result.
 local function blockFor(r, g, b)
     local k = r .. "," .. g .. "," .. b
     local hit = IMG.match[k]
     if hit then return hit[1], hit[2] end
-    local e = BA.nearestBlockEntry(Color3.fromRGB(r, g, b))
-    local rec = e and { e.name, e.col } or { O.activeBlock, Color3.fromRGB(r, g, b) }
+    local L, a, bb = BA.toOklab(Color3.fromRGB(r, g, b))
+    local best, bestD
+    for _, e in ipairs(IMAGE_PAL) do
+        local dL, da, db = L - e.L, a - e.a, bb - e.b
+        local d = dL * dL + da * da + db * db
+        if not bestD or d < bestD then bestD, best = d, e end
+    end
+    local rec = best and { best.name, best.col } or { O.activeBlock, Color3.fromRGB(r, g, b) }
     IMG.match[k] = rec
     return rec[1], rec[2]
 end
