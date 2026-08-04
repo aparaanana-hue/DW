@@ -15,6 +15,8 @@ anchored at the build's own corner, so a file drops in anywhere.
 | `blockmap.py` | Minecraft block -> Islands block. Shared by both converters. |
 | `world_to_islands.py` | Converts a **world save**. Has to isolate the build from generated terrain, so it uses a hard-coded bounding box. |
 | `schem_to_islands.py` | Converts a **Sponge `.schem`** schematic. Simpler — a schematic is already just the build. |
+| `legacy_schematic_to_islands.py` | Converts an **old MCEdit `.schematic`**, which stores numeric block ids plus 4-bit metadata instead of a name palette. |
+| `castleworld_to_islands.py` | Castle World holds several builds in one world, so it clusters the placed blocks and writes one file per castle. |
 
 ## Usage
 
@@ -49,6 +51,12 @@ large; skip it if you want the solid interior.
 | Luffy | 13,624 | 13,584 | 82x118x46 |
 | DragonSlayer | 32,473 | 32,185 | 148x124x79 |
 | AngelV14 | 58,112 | 57,687 | 168x160x66 |
+| Epsilon | 34,042 | — | 91x164x103 |
+| Castle1 | 696,512 | 635,273 | 245x384x245 |
+| Castle2 | 560,358 | 490,453 | 238x380x247 |
+| Castle3 | 220,857 | 212,798 | 655x265x768 |
+| Castle4 | 100,463 | 92,332 | 173x333x225 |
+| Castle5 | 32,270 | 30,066 | 104x126x117 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

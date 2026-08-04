@@ -508,6 +508,72 @@ MAP = {
     "minecraft:chiseled_nether_bricks": "basaltCarved",
     "minecraft:cracked_deepslate_bricks": "slateBrick",
     "minecraft:cracked_deepslate_tiles": "slateTiles",
+
+    # ── deepslate family (1.17+) ──────────────────────────────────────────
+    "minecraft:deepslate_brick_slab": "slateBrickSlab",
+    "minecraft:deepslate_brick_stairs": "stairSlateBrick",
+    "minecraft:deepslate_brick_wall": "slateBrick",
+    "minecraft:deepslate_tile_slab": "slateSlab",
+    "minecraft:deepslate_tile_stairs": "stairSlate",
+    "minecraft:deepslate_tile_wall": "slateTiles",
+    "minecraft:polished_deepslate_slab": "slateSlab",
+    "minecraft:polished_deepslate_stairs": "stairSlate",
+    "minecraft:polished_deepslate_wall": "slateSmooth",
+    "minecraft:cobbled_deepslate_slab": "slateSlab",
+    "minecraft:cobbled_deepslate_stairs": "stairSlate",
+    "minecraft:cobbled_deepslate_wall": "slateBlock",
+
+    # ── blackstone family ─────────────────────────────────────────────────
+    "minecraft:polished_blackstone_brick_stairs": "basaltBrickStair",
+    "minecraft:polished_blackstone_brick_slab": "basaltBrickSlab",
+    "minecraft:polished_blackstone_brick_wall": "basaltBrick",
+    "minecraft:blackstone_wall": "basalt",
+    "minecraft:polished_blackstone_pressure_plate": "basaltSlab",
+
+    # ── pale oak (1.21.4) ─────────────────────────────────────────────────
+    "minecraft:pale_oak_planks": "birchPlank",
+    "minecraft:pale_oak_slab": "birchSlab",
+    "minecraft:pale_oak_stairs": "stairBirch",
+    "minecraft:pale_oak_log": "woodBirch",
+    "minecraft:pale_oak_wood": "woodBirch",
+    "minecraft:stripped_pale_oak_log": "woodBirch",
+    "minecraft:pale_oak_fence": "birchPlank",
+    "minecraft:pale_oak_fence_gate": "birchPlank",
+    "minecraft:pale_oak_door": "birchPlank",
+    "minecraft:pale_oak_trapdoor": "birchSlab",
+    "minecraft:pale_oak_button": "birchSlab",
+    "minecraft:pale_oak_leaves": "leavesBlock",
+
+    # ── copper ────────────────────────────────────────────────────────────
+    "minecraft:cut_copper": "copperBlock",
+    "minecraft:cut_copper_slab": "copperBlock",
+    "minecraft:cut_copper_stairs": "copperBlock",
+    "minecraft:exposed_copper": "copperBlock",
+    "minecraft:exposed_cut_copper": "copperBlock",
+    "minecraft:weathered_copper": "prismarineBlock",
+    "minecraft:weathered_cut_copper": "prismarineBlock",
+    "minecraft:oxidized_cut_copper": "prismarineBlock",
+    "minecraft:oxidized_cut_copper_slab": "prismarineSlab",
+    "minecraft:oxidized_cut_copper_stairs": "prismarineStair",
+
+    # ── misc walls and odds ───────────────────────────────────────────────
+    "minecraft:tuff_wall": "andesite",
+    "minecraft:tuff_slab": "andesiteSlab",
+    "minecraft:tuff_stairs": "andesiteStair",
+    "minecraft:prismarine_wall": "prismarineBlock",
+    "minecraft:granite_wall": "granite",
+    "minecraft:sandstone_wall_red": "sandstoneRed",
+    "minecraft:red_sandstone_wall": "sandstoneRed",
+    "minecraft:chipped_anvil": "ironBlock",
+    "minecraft:damaged_anvil": "ironBlock",
+    "minecraft:gray_glazed_terracotta": "clayBlack",
+    "minecraft:white_glazed_terracotta": "clayWhite",
+    "minecraft:black_glazed_terracotta": "clayBlack",
+    "minecraft:blue_glazed_terracotta": "clayBlue",
+    "minecraft:cyan_glazed_terracotta": "clayCyan",
+    "minecraft:red_glazed_terracotta": "clayRed",
+    "minecraft:green_glazed_terracotta": "clayDarkGreen",
+    "minecraft:light_gray_glazed_terracotta": "clayWhite",
 }
 
 # Small decorations with no sensible block equivalent: dropped rather than
@@ -524,6 +590,8 @@ DROP = {
     "minecraft:oak_sapling", "minecraft:spruce_sapling", "minecraft:birch_sapling",
     "minecraft:rail", "minecraft:redstone_wire", "minecraft:tripwire",
     "minecraft:air", "minecraft:cave_air", "minecraft:void_air",
+    "minecraft:light",          # invisible light source, nothing to place
+    "minecraft:barrier", "minecraft:structure_void",
 }
 
 

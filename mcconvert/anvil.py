@@ -1,7 +1,12 @@
-"""Read a Minecraft Java 1.14 world (Anvil) and yield placed blocks.
+"""Read a Minecraft Java world (Anvil) and yield placed blocks.
 
-1.14 packs BlockStates as a long array where entries are contiguous and may
-span across longs (the non-spanning layout only arrives in 1.16).
+Handles both chunk layouts:
+
+  1.13-1.15  Level.Sections, Palette/BlockStates, bits packed contiguously so
+             an entry may straddle two longs.
+  1.16-1.17  same layout, but entries no longer straddle: each long is padded.
+  1.18+      sections (lowercase) at the root, block_states.palette /
+             block_states.data, and Y extends down to -64.
 """
 import io, os, struct, zlib, glob
 from collections import Counter
@@ -43,54 +48,96 @@ def read_region(path):
             yield (i % 32, i // 32, root)
 
 
-def unpack_states(longs, bits, count=4096):
-    """1.13-1.15 packing: contiguous bits, entries may straddle longs."""
+def unpack_states(longs, bits, count=4096, spanning=True):
+    """Decode a packed block-state array.
+
+    spanning=True  is the 1.13-1.15 layout, where an entry may straddle longs.
+    spanning=False is 1.16+, where each long holds floor(64/bits) entries and
+    the leftover high bits are padding.
+    """
     out = []
     mask = (1 << bits) - 1
-    # normalise to unsigned 64-bit
-    u = [(int(v) & 0xFFFFFFFFFFFFFFFF) for v in longs]
-    total = len(u) * 64
-    for i in range(count):
-        start = i * bits
-        if start + bits > total:
-            break
-        li, off = start // 64, start % 64
-        val = (u[li] >> off) & mask
-        if off + bits > 64:  # straddles into the next long
-            got = 64 - off
-            val |= (u[li + 1] << got) & mask
-        out.append(val)
+    u = [(int(v) & 0xFFFFFFFFFFFFFFFF) for v in longs]   # to unsigned 64-bit
+    if not u:
+        return out
+
+    if spanning:
+        total = len(u) * 64
+        for i in range(count):
+            start = i * bits
+            if start + bits > total:
+                break
+            li, off = start // 64, start % 64
+            val = (u[li] >> off) & mask
+            if off + bits > 64:
+                val |= (u[li + 1] << (64 - off)) & mask
+            out.append(val)
+    else:
+        per_long = 64 // bits
+        for word in u:
+            for k in range(per_long):
+                if len(out) >= count:
+                    return out
+                out.append((word >> (k * bits)) & mask)
     return out
+
+
+AIR = {"minecraft:air", "minecraft:cave_air", "minecraft:void_air"}
 
 
 def chunk_blocks(root):
     """Yield (x, y, z, block_name) in world coords for one chunk."""
+    dv = int(root.get("DataVersion", 0))
+    spanning = dv < 2529          # 2529 = 1.16, where packing stopped straddling
     lvl = root["Level"] if "Level" in root else root
-    if "Sections" not in lvl:
+
+    # 1.18+ renamed things and moved the palette one level deeper
+    if "sections" in root:
+        sections = root["sections"]
+        cx, cz = int(root["xPos"]), int(root["zPos"])
+        new_layout = True
+    elif "Sections" in lvl:
+        sections = lvl["Sections"]
+        cx, cz = int(lvl["xPos"]), int(lvl["zPos"])
+        new_layout = False
+    else:
         return
-    cx, cz = int(lvl["xPos"]), int(lvl["zPos"])
-    for sec in lvl["Sections"]:
-        if "Palette" not in sec or "BlockStates" not in sec:
-            continue
-        pal = []
-        for p in sec["Palette"]:
-            pal.append(str(p["Name"]))
+
+    for sec in sections:
+        if new_layout:
+            bs = sec.get("block_states")
+            if bs is None or "palette" not in bs:
+                continue
+            pal = [str(p["Name"]) for p in bs["palette"]]
+            data = bs.get("data")
+        else:
+            if "Palette" not in sec or "BlockStates" not in sec:
+                continue
+            pal = [str(p["Name"]) for p in sec["Palette"]]
+            data = sec["BlockStates"]
+
         n = len(pal)
-        if n <= 1 and (n == 0 or pal[0] == "minecraft:air"):
+        if n == 0:
             continue
-        bits = max(4, (n - 1).bit_length())
-        idx = unpack_states(sec["BlockStates"], bits)
         ybase = int(sec["Y"]) * 16
-        for i, v in enumerate(idx):
+
+        # A single-entry palette carries no data array: the whole section is
+        # that one block.
+        if n == 1 or data is None or len(data) == 0:
+            if pal[0] in AIR:
+                continue
+            for i in range(4096):
+                yield (cx * 16 + (i & 15), ybase + (i >> 8), cz * 16 + ((i >> 4) & 15), pal[0])
+            continue
+
+        bits = max(4, (n - 1).bit_length())
+        for i, v in enumerate(unpack_states(data, bits, spanning=spanning)):
             if v >= n:
                 continue
             name = pal[v]
-            if name == "minecraft:air" or name == "minecraft:cave_air" or name == "minecraft:void_air":
+            if name in AIR:
                 continue
-            y = ybase + (i >> 8)
-            z = (i >> 4) & 15
-            x = i & 15
-            yield (cx * 16 + x, y, cz * 16 + z, name)
+            yield (cx * 16 + (i & 15), ybase + (i >> 8), cz * 16 + ((i >> 4) & 15), name)
 
 
 def iter_world(region_dir):
