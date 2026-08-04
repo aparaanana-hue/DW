@@ -480,6 +480,27 @@ MAP = {
     "minecraft:emerald_ore": "amethystBlock",
     "minecraft:redstone_ore": "redBlock",
     "minecraft:lapis_ore": "blueBlock",
+
+    # 1.17+ odds and ends
+    "minecraft:quartz_bricks": "marbleBrick",
+    "minecraft:quartz_slab": "marbleSlab",
+    "minecraft:azalea_leaves": "leavesBlock",
+    "minecraft:flowering_azalea_leaves": "leavesBlock",
+    "minecraft:azalea": "leavesBlock",
+    "minecraft:flowering_azalea": "leavesBlock",
+    "minecraft:mangrove_leaves": "leavesBlock",
+    "minecraft:mangrove_planks": "cherryBlossomPlank",
+    "minecraft:mangrove_log": "woodCherryBlossom",
+    "minecraft:cherry_leaves": "leavesBlock",
+    "minecraft:cherry_planks": "cherryBlossomPlank",
+    "minecraft:cherry_log": "woodCherryBlossom",
+    "minecraft:bamboo_planks": "bambooBlock",
+    "minecraft:bamboo_block": "bambooBlock",
+    "minecraft:moss_carpet": "mossySlab",
+    "minecraft:big_dripleaf": "leavesBlock",
+    "minecraft:glow_lichen": "mossyBlock",
+    "minecraft:sculk": "voidBlock",
+    "minecraft:sculk_catalyst": "voidStoneCarved",
 }
 
 # Small decorations with no sensible block equivalent: dropped rather than
