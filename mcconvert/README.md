@@ -47,6 +47,7 @@ large; skip it if you want the solid interior.
 | Phoenix | 24,912 | 24,572 | 124x131x38 |
 | Angel | 23,828 | 23,802 | 188x118x48 |
 | Luffy | 13,624 | 13,584 | 82x118x46 |
+| DragonSlayer | 32,473 | 32,185 | 148x124x79 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

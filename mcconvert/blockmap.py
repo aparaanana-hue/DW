@@ -501,6 +501,13 @@ MAP = {
     "minecraft:glow_lichen": "mossyBlock",
     "minecraft:sculk": "voidBlock",
     "minecraft:sculk_catalyst": "voidStoneCarved",
+    "minecraft:cracked_polished_blackstone_bricks": "basaltBrick",
+    "minecraft:chiseled_polished_blackstone": "basaltCarved",
+    "minecraft:gilded_blackstone": "basaltBrick",
+    "minecraft:cracked_nether_bricks": "basaltBrick",
+    "minecraft:chiseled_nether_bricks": "basaltCarved",
+    "minecraft:cracked_deepslate_bricks": "slateBrick",
+    "minecraft:cracked_deepslate_tiles": "slateTiles",
 }
 
 # Small decorations with no sensible block equivalent: dropped rather than
