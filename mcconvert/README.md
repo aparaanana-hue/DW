@@ -81,6 +81,7 @@ large; skip it if you want the solid interior.
 | Dragon | 241,013 | 237,287 | 704x258x466 |
 | WoFBateau | 468,448 | 420,077 | 505x239x195 |
 | BigBoat | 31,377 | 29,109 | 65x123x154 |
+| AsianSanctum | 171,401 | 167,037 | 159x170x232 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
