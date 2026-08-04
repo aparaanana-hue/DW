@@ -4662,6 +4662,37 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					TextContainer, Click
 				}), "Second")
+
+				-- Optional action buttons carried by the input itself, so things
+				-- like "Load" sit on the field instead of as separate controls.
+				if type(TextboxConfig.Actions) == "table" and #TextboxConfig.Actions > 0 then
+					TextboxFrame.Size = UDim2.new(1, 0, 0, 38 + 26)
+					local n = #TextboxConfig.Actions
+					local row = Create("Frame", {
+						BackgroundTransparency = 1, BorderSizePixel = 0,
+						Size = UDim2.new(1, -24, 0, 22), Position = UDim2.new(0, 12, 0, 38),
+						Parent = TextboxFrame,
+					})
+					for i, act in ipairs(TextboxConfig.Actions) do
+						local b = Create("TextButton", {
+							Text = act.Text or "Action",
+							Font = Enum.Font.GothamBold, TextSize = 11,
+							TextColor3 = Color3.fromRGB(235, 235, 240),
+							BorderSizePixel = 0, AutoButtonColor = false,
+							Size = UDim2.new(1 / n, -3, 1, 0),
+							Position = UDim2.new((i - 1) / n, 0, 0, 0),
+							Parent = row,
+						})
+						AddThemeObject(b, "Main")
+						Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = b})
+						AddThemeObject(Create("UIStroke", {Thickness = 1, Parent = b}), "Stroke")
+						b.MouseButton1Click:Connect(function()
+							-- hand over the current text so the action can use it
+							if act.OnClick then pcall(act.OnClick, TextboxActual.Text) end
+						end)
+					end
+				end
+
 				local _resizing = false
 				local function measureAndSize(text)
 					local sz = TextService:GetTextSize(text, 14, Enum.Font.GothamSemibold, Vector2.new(1000,24))
@@ -5185,6 +5216,9 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					table.insert(children, ArrowLbl)
 					table.insert(children, ClickBtn)
 					local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
+						-- explicit order lets a caller place a section above ones
+						-- that were created before it
+						LayoutOrder = SectionConfig.Order or 0,
 						Size = UDim2.new(1, 0, 0, 28), Parent = colFrame, ClipsDescendants = true
 					}), children)
 					local tw = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -5210,6 +5244,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					end)
 				else
 					local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
+						LayoutOrder = SectionConfig.Order or 0,
 						Size = UDim2.new(1, 0, 0, 26), Parent = colFrame
 					}), children)
 					AddConnection(HolderFrame.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()

@@ -67,6 +67,9 @@ local function wrapTab(container)
         currentSection = current:AddSection({
             Name = name,
             Collapsible = opts.Collapsible,
+            -- sections default to 0 and fall back to creation order; Order lets
+            -- one built later still sit above one built earlier
+            Order = opts.Order,
         })
         return currentSection
     end
@@ -191,6 +194,7 @@ local function wrapTab(container)
             Name = cfg.Name,
             Default = cfg.Default or "",
             TextDisappear = cfg.RemoveTextAfterFocusLost or false,
+            Actions = cfg.Actions,
             Callback = cfg.Callback or function() end,
         })
     end
@@ -2364,6 +2368,12 @@ local function blockDisplayFor(id)
     return resolveBlockDisplayName(id)
 end
 
+-- The same required-blocks rundown the paragraph shows, but as data, so the
+-- panel can render one clickable row per entry.
+requiredBlocksList = {}
+-- block ids the user clicked away; cleared by Unhide All
+requiredHidden = {}
+
 local function getRequiredBlocksText(blocks)
     local needed = {}
     local order = {}
@@ -2384,21 +2394,26 @@ local function getRequiredBlocksText(blocks)
 
     local list = {}
     for _, t in ipairs(order) do
-        table.insert(list, {
-            name = resolveBlockDisplayName(t),
-            have = have[t] or 0,
-            need = needed[t],
-            from = swappedFrom[t],
-        })
+        if not requiredHidden[t] then
+            table.insert(list, {
+                name = resolveBlockDisplayName(t),
+                have = have[t] or 0,
+                need = needed[t],
+                from = swappedFrom[t],
+                id = t,
+            })
+        end
     end
     table.sort(list, function(a, b) return a.need > b.need end)
 
+    requiredBlocksList = {}
     local lines = {}
     local hidden = 0
     for _, e in ipairs(list) do
         if e.need < requiredMinCount then
             hidden = hidden + 1
         else
+            requiredBlocksList[#requiredBlocksList + 1] = e
             -- show the swap inline when this type is being replaced
             local label = e.name
             if e.from then
@@ -3165,7 +3180,9 @@ local function showSelBox()
     end)
 end
 
-previewTab:CreateSection("Preview", { Collapsible = true, Column = "right" })
+-- Right column runs Preview, Image, Save; Image is built last but sits above
+-- Save, so all three are ordered explicitly.
+previewTab:CreateSection("Preview", { Collapsible = true, Column = "right", Order = 0 })
 
 BuilderAPI.toggles.preview = previewTab:CreateToggle({
     Name = "Preview Build",
@@ -3199,10 +3216,8 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
 
 -- declared before use: the required-blocks scan refreshes these
 local buildTypeDropdown, invBlockDropdown
-local requiredBlocksParagraph = previewTab:CreateParagraph({
-    Title = "Required Blocks",
-    Content = "Tap 'Show Required Blocks' to see what you need."
-})
+-- Lives on the Preview panel now, alongside the scan button.
+local requiredBlocksParagraph = { Set = function() end }
 
 task.spawn(function()
     task.wait(1)
@@ -3217,49 +3232,36 @@ task.spawn(function()
     end)
 end)
 
-previewTab:CreateButton({
-    Name = "Show Required Blocks",
-    Gear = {
-        { Type = "slider", Name = "Hide under", Min = 1, Max = 64, Default = 1,
-          Callback = function(v) requiredMinCount = v end },
-    },
-    Callback = function()
-        local blocks = lastPreviewBlocks
-        if not blocks then
-            local data = loadSelectedBuild()
-            if not data then
-                return
-            end
-            blocks = data.blocks
+-- Exposed so the Preview panel's button can run the same scan.
+BuilderAPI.scanRequired = function()
+    local blocks = lastPreviewBlocks
+    if not blocks then
+        local data = loadSelectedBuild()
+        if not data then return end
+        blocks = data.blocks
+    end
+
+    task.spawn(function()
+        notify("Scanning", "Checking what's still missing...", 3)
+        local _, missing = getPlacedAndMissingBlocks(blocks)
+
+        if #missing == 0 then
+            requiredBlocksList = {}
+            if BuilderAPI.renderRequired then BuilderAPI.renderRequired("Nothing missing - all blocks are already placed.") end
+            notify("Done", "Nothing missing", 3)
+            return
         end
 
-        task.spawn(function()
-            notify("Scanning", "Checking what's still missing...", 3)
-            local _, missing = getPlacedAndMissingBlocks(blocks)
-
-            if #missing == 0 then
-                requiredBlocksParagraph:Set({
-                    Title = "Required Blocks (Missing)",
-                    Content = "Nothing missing - all blocks are already placed."
-                })
-                notify("Done", "Nothing missing", 3)
-                return
-            end
-
-            requiredBlocksParagraph:Set({
-                Title = "Required Blocks (Missing)",
-                Content = getRequiredBlocksText(missing)
-            })
-            -- fill the replace pickers now, so Refresh is not a separate step
-            pcall(function()
-                buildTypeDropdown:Refresh(getBuildTypeOptions())
-                invBlockDropdown:Refresh(getInventoryOptions())
-            end)
-            notify("Done", "Still need " .. #missing .. " block(s)", 4)
+        local text = getRequiredBlocksText(missing)
+        if BuilderAPI.renderRequired then BuilderAPI.renderRequired(text) end
+        -- fill the replace pickers now, so Refresh is not a separate step
+        pcall(function()
+            buildTypeDropdown:Refresh(getBuildTypeOptions())
+            invBlockDropdown:Refresh(getInventoryOptions())
         end)
-    end
-})
-
+        notify("Done", "Still need " .. #missing .. " block(s)", 4)
+    end)
+end
 
 local buildTypeMap = {}
 local invTypeMap = {}
@@ -3365,7 +3367,8 @@ previewTab:CreateButton({
         replaceListParagraph:Set({ Title = "Current Replacements", Content = "No replacements set." })
         if lastPreviewBlocks then
             pcall(function()
-                requiredBlocksParagraph:Set({ Title = "Required Blocks", Content = getRequiredBlocksText(lastPreviewBlocks) })
+                local t = getRequiredBlocksText(lastPreviewBlocks)
+                if BuilderAPI.renderRequired then BuilderAPI.renderRequired(t) end
             end)
         end
         notify("Cleared", "All replacements removed", 3)
@@ -3379,7 +3382,8 @@ previewTab:CreateButton({
         replaceListParagraph:Set({ Title = "Current Replacements", Content = replacementsText() })
         if lastPreviewBlocks then
             pcall(function()
-                requiredBlocksParagraph:Set({ Title = "Required Blocks", Content = getRequiredBlocksText(lastPreviewBlocks) })
+                local t = getRequiredBlocksText(lastPreviewBlocks)
+                if BuilderAPI.renderRequired then BuilderAPI.renderRequired(t) end
             end)
         end
         notify("Replacement Added", resolveBlockDisplayName(replaceFromType) .. " -> " .. resolveBlockDisplayName(replaceToType), 4)
@@ -3387,7 +3391,7 @@ previewTab:CreateButton({
 })
 
 
-saveTab:CreateSection("Save", { Collapsible = true, Column = "right" })
+saveTab:CreateSection("Save", { Collapsible = true, Column = "right", Order = 2 })
 
 saveTab:CreateInput({
     Name = "Save As",
@@ -10375,6 +10379,9 @@ local IMG = {
     file = "MyImage",
     cache = nil,      -- decoded { pixels = {}, w = , h = }
     match = {},       -- memo: "r,g,b" -> block name
+    groups = {},      -- palette groups in play; empty = all of them
+    limit = 0,        -- max distinct blocks for the whole image; 0 = no limit
+    chosen = nil,     -- the reduced palette picked for this image, when limited
 }
 
 local imgPara
@@ -10794,41 +10801,61 @@ end
 -- come out wrong. This is a hand-picked palette of the game's flat blocks with
 -- their real colours; images match against just these.
 local IMAGE_PALETTE = {
+    -- { name, r, g, b, group }
     -- basic colour blocks
-    { "whiteBlock", 236,236,236 }, { "blackBlock", 30,30,32 },
-    { "redBlock", 200,45,45 }, { "blueBlock", 45,80,200 }, { "cyanBlock", 55,190,205 },
-    { "pinkBlock", 235,120,175 }, { "orangeBlock", 230,130,40 }, { "purpleBlock", 130,55,180 },
-    { "yellowBlock", 235,205,55 }, { "lightGreenBlock", 120,200,90 }, { "darkGreenBlock", 45,110,55 },
+    { "whiteBlock", 236,236,236, "Solid" }, { "blackBlock", 30,30,32, "Solid" },
+    { "redBlock", 200,45,45, "Solid" }, { "blueBlock", 45,80,200, "Solid" }, { "cyanBlock", 55,190,205, "Solid" },
+    { "pinkBlock", 235,120,175, "Solid" }, { "orangeBlock", 230,130,40, "Solid" }, { "purpleBlock", 130,55,180, "Solid" },
+    { "yellowBlock", 235,205,55, "Solid" }, { "lightGreenBlock", 120,200,90, "Solid" }, { "darkGreenBlock", 45,110,55, "Solid" },
     -- wool (softer)
-    { "woolWhite", 240,240,235 }, { "woolBlack", 45,45,48 }, { "woolRed", 190,60,55 },
-    { "woolBlue", 55,90,180 }, { "woolCyan", 80,190,200 }, { "woolPink", 235,150,190 },
-    { "woolOrange", 225,145,60 }, { "woolPurple", 135,75,175 }, { "woolYellow", 235,210,90 },
-    { "woolLightGreen", 140,205,110 }, { "woolDarkGreen", 60,120,65 },
+    { "woolWhite", 240,240,235, "Wool" }, { "woolBlack", 45,45,48, "Wool" }, { "woolRed", 190,60,55, "Wool" },
+    { "woolBlue", 55,90,180, "Wool" }, { "woolCyan", 80,190,200, "Wool" }, { "woolPink", 235,150,190, "Wool" },
+    { "woolOrange", 225,145,60, "Wool" }, { "woolPurple", 135,75,175, "Wool" }, { "woolYellow", 235,210,90, "Wool" },
+    { "woolLightGreen", 140,205,110, "Wool" }, { "woolDarkGreen", 60,120,65, "Wool" },
     -- clay (earthy, muted)
-    { "clayWhite", 220,210,200 }, { "clayBlack", 55,50,50 }, { "clayRed", 175,80,60 },
-    { "clayBlue", 90,110,160 }, { "clayCyan", 110,170,175 }, { "clayPink", 220,150,150 },
-    { "clayOrange", 200,120,70 }, { "clayPurple", 140,100,150 }, { "clayYellow", 215,185,110 },
-    { "clayLightGreen", 150,180,120 }, { "clayDarkGreen", 90,120,80 },
+    { "clayWhite", 220,210,200, "Clay" }, { "clayBlack", 55,50,50, "Clay" }, { "clayRed", 175,80,60, "Clay" },
+    { "clayBlue", 90,110,160, "Clay" }, { "clayCyan", 110,170,175, "Clay" }, { "clayPink", 220,150,150, "Clay" },
+    { "clayOrange", 200,120,70, "Clay" }, { "clayPurple", 140,100,150, "Clay" }, { "clayYellow", 215,185,110, "Clay" },
+    { "clayLightGreen", 150,180,120, "Clay" }, { "clayDarkGreen", 90,120,80, "Clay" },
     -- neon (vivid)
-    { "neonWhite", 255,255,255 }, { "neonBlack", 40,40,45 }, { "neonRed", 255,50,50 },
-    { "neonBlue", 50,90,255 }, { "neonCyan", 40,240,240 }, { "neonPink", 255,90,200 },
-    { "neonOrange", 255,140,30 }, { "neonPurple", 180,50,240 }, { "neonYellow", 250,240,40 },
-    { "neonLightGreen", 120,255,90 }, { "neonDarkGreen", 30,180,60 },
+    { "neonWhite", 255,255,255, "Neon" }, { "neonBlack", 40,40,45, "Neon" }, { "neonRed", 255,50,50, "Neon" },
+    { "neonBlue", 50,90,255, "Neon" }, { "neonCyan", 40,240,240, "Neon" }, { "neonPink", 255,90,200, "Neon" },
+    { "neonOrange", 255,140,30, "Neon" }, { "neonPurple", 180,50,240, "Neon" }, { "neonYellow", 250,240,40, "Neon" },
+    { "neonLightGreen", 120,255,90, "Neon" }, { "neonDarkGreen", 30,180,60, "Neon" },
     -- pastel (light)
-    { "pastelPinkBlock", 245,200,215 }, { "pastelBlueBlock", 190,215,240 },
-    { "pastelGreenBlock", 200,230,190 }, { "pastelPurpleBlock", 210,195,235 },
-    { "pastelYellowBlock", 245,235,190 }, { "pastelOrangeBlock", 245,210,175 },
-    { "pastelRedBlock", 240,180,180 },
-    -- naturals and materials
-    { "grass", 95,170,75 }, { "grassDry", 200,180,95 }, { "sand", 225,205,150 },
-    { "snow", 245,245,250 }, { "ice", 175,215,245 }, { "mudBlock", 95,70,50 },
-    { "sandstone", 220,200,150 }, { "goldBlock", 235,200,70 }, { "ironBlock", 200,200,205 },
-    { "diamondBlock", 150,225,235 }, { "coalBlock", 45,45,50 }, { "copperBlock", 200,120,70 },
-    { "amethystBlock", 150,90,200 }, { "rubyBlock", 190,40,60 }, { "opalBlock", 225,230,235 },
-    { "pearlBlock", 235,230,225 }, { "boneBlock", 235,230,215 }, { "haybaleBlock", 210,185,80 },
-    { "honeycombBlock", 235,185,70 }, { "magmaBlock", 210,80,40 }, { "leavesBlock", 60,140,60 },
-    { "woodPlank", 165,120,75 }, { "marbleBlock", 235,235,240 }, { "voidBlock", 60,35,95 },
+    { "pastelPinkBlock", 245,200,215, "Pastel" }, { "pastelBlueBlock", 190,215,240, "Pastel" },
+    { "pastelGreenBlock", 200,230,190, "Pastel" }, { "pastelPurpleBlock", 210,195,235, "Pastel" },
+    { "pastelYellowBlock", 245,235,190, "Pastel" }, { "pastelOrangeBlock", 245,210,175, "Pastel" },
+    { "pastelRedBlock", 240,180,180, "Pastel" },
+    -- wood tones
+    { "woodPlank", 165,120,75, "Wood" }, { "maplePlank", 175,95,65, "Wood" },
+    { "birchPlank", 220,205,165, "Wood" }, { "pinePlank", 115,95,70, "Wood" },
+    { "hickoryPlank", 145,105,70, "Wood" }, { "cherryBlossomPlank", 240,185,200, "Wood" },
+    { "spiritPlank", 95,200,180, "Wood" }, { "bambooBlock", 200,190,120, "Wood" },
+    { "leavesBlock", 60,140,60, "Wood" }, { "haybaleBlock", 210,185,80, "Wood" },
+    -- stone tones
+    { "marbleBlock", 235,235,240, "Stone" }, { "slateBlock", 90,100,120, "Stone" },
+    { "basalt", 60,60,66, "Stone" }, { "granite", 150,120,115, "Stone" },
+    { "andesite", 140,140,145, "Stone" }, { "diorite", 210,210,215, "Stone" },
+    { "stone", 140,140,145, "Stone" }, { "cobblestoneBlock", 120,120,125, "Stone" },
+    { "sandstone", 220,200,150, "Stone" }, { "brick", 170,80,60, "Stone" },
+    { "prismarineBlock", 70,160,150, "Stone" },
+    -- naturals
+    { "grass", 95,170,75, "Natural" }, { "grassDry", 200,180,95, "Natural" },
+    { "sand", 225,205,150, "Natural" }, { "snow", 245,245,250, "Natural" },
+    { "ice", 175,215,245, "Natural" }, { "mudBlock", 95,70,50, "Natural" },
+    { "magmaBlock", 210,80,40, "Natural" }, { "voidBlock", 60,35,95, "Natural" },
+    -- ores and gems
+    { "goldBlock", 235,200,70, "Ore" }, { "ironBlock", 200,200,205, "Ore" },
+    { "diamondBlock", 150,225,235, "Ore" }, { "coalBlock", 45,45,50, "Ore" },
+    { "copperBlock", 200,120,70, "Ore" }, { "amethystBlock", 150,90,200, "Ore" },
+    { "rubyBlock", 190,40,60, "Ore" }, { "opalBlock", 225,230,235, "Ore" },
+    { "pearlBlock", 235,230,225, "Ore" }, { "boneBlock", 235,230,215, "Ore" },
+    { "honeycombBlock", 235,185,70, "Ore" },
 }
+
+-- The groups offered in the palette dropdown, in display order.
+local IMAGE_GROUPS = { "Solid", "Wool", "Clay", "Neon", "Pastel", "Wood", "Stone", "Natural", "Ore" }
 
 -- Precompute each palette colour in OKLab once, for perceptual nearest-match.
 local IMAGE_PAL = {}
@@ -10837,8 +10864,63 @@ do
     for _, e in ipairs(IMAGE_PALETTE) do
         local col = Color3.fromRGB(e[2], e[3], e[4])
         local L, a, b = toOk(col)
-        IMAGE_PAL[#IMAGE_PAL + 1] = { name = e[1], col = col, L = L, a = a, b = b }
+        IMAGE_PAL[#IMAGE_PAL + 1] = { name = e[1], col = col, L = L, a = a, b = b, group = e[5] }
     end
+end
+
+-- The palette actually in play: every group when none are picked, otherwise
+-- only the chosen ones. Rebuilt when the dropdown changes.
+local activePal = IMAGE_PAL
+local function rebuildActivePalette()
+    local want = IMG.groups
+    if not want or next(want) == nil then
+        activePal = IMAGE_PAL
+    else
+        local out = {}
+        for _, e in ipairs(IMAGE_PAL) do
+            if want[e.group] then out[#out + 1] = e end
+        end
+        activePal = (#out > 0) and out or IMAGE_PAL
+    end
+    IMG.match = {}      -- cached matches were made against the old palette
+    IMG.chosen = nil
+end
+
+-- Nearest entry in a given palette, in OKLab.
+local function nearestIn(pal, L, a, bb)
+    local best, bestD
+    for _, e in ipairs(pal) do
+        local dL, da, db = L - e.L, a - e.a, bb - e.b
+        local d = dL * dL + da * da + db * db
+        if not bestD or d < bestD then bestD, best = d, e end
+    end
+    return best
+end
+
+-- "Simple" mode: cap how many distinct blocks the whole image may use. Pick the
+-- ones that would cover the most pixels, then match everything to just those,
+-- so you get a poster-like reduction instead of a hundred near-identical
+-- shades. Needs the image, so it runs once per build from the sampled grid.
+local function chooseLimitedPalette(grid, tw, th, limit)
+    local tally = {}
+    for py = 1, th do
+        local row = grid[py]
+        for px = 1, tw do
+            local p = row[px]
+            if p[4] >= 128 then
+                local L, a, bb = BA.toOklab(Color3.fromRGB(p[1], p[2], p[3]))
+                local e = nearestIn(activePal, L, a, bb)
+                if e then tally[e] = (tally[e] or 0) + 1 end
+            end
+        end
+        if py % 8 == 0 then task.wait() end
+    end
+    local ranked = {}
+    for e, n in pairs(tally) do ranked[#ranked + 1] = { e = e, n = n } end
+    table.sort(ranked, function(x, y) return x.n > y.n end)
+    local out = {}
+    for i = 1, math.min(limit, #ranked) do out[#out + 1] = ranked[i].e end
+    return (#out > 0) and out or activePal
 end
 
 -- Memoised per distinct pixel colour: nearest palette block in OKLab, plus the
@@ -10848,12 +10930,7 @@ local function blockFor(r, g, b)
     local hit = IMG.match[k]
     if hit then return hit[1], hit[2] end
     local L, a, bb = BA.toOklab(Color3.fromRGB(r, g, b))
-    local best, bestD
-    for _, e in ipairs(IMAGE_PAL) do
-        local dL, da, db = L - e.L, a - e.a, bb - e.b
-        local d = dL * dL + da * da + db * db
-        if not bestD or d < bestD then bestD, best = d, e end
-    end
+    local best = nearestIn(IMG.chosen or activePal, L, a, bb)
     local rec = best and { best.name, best.col } or { O.activeBlock, Color3.fromRGB(r, g, b) }
     IMG.match[k] = rec
     return rec[1], rec[2]
@@ -10861,7 +10938,7 @@ end
 
 -- ── preview ────────────────────────────────────────────────────────────────
 local PREVIEW_FOLDER = "IABImagePreview"
-local MAX_PREVIEW = 60000
+local MAX_PREVIEW = 70000
 -- Ceiling on how many blocks one image may resolve to. A 1024-wide heightmap
 -- at max height would otherwise run to hundreds of millions of cells and take
 -- the client down before it ever got to writing a file.
@@ -10927,6 +11004,17 @@ end
 -- a saved build file wants, since the preview transform places it later.
 local function imageCells(atOrigin)
     local grid, tw, th = sampled()
+
+    -- With a block limit set, decide which blocks this image gets to use before
+    -- resolving any cells, so every pixel matches against the same reduced set.
+    IMG.match = {}
+    if IMG.limit and IMG.limit > 0 then
+        say("Image", "Picking the best " .. IMG.limit .. " blocks...")
+        IMG.chosen = chooseLimitedPalette(grid, tw, th, IMG.limit)
+    else
+        IMG.chosen = nil
+    end
+
     local ax, ay, az = 0, 0, 0
     if not atOrigin then
         local part = targetPart()
@@ -11046,14 +11134,20 @@ local function generateImageFile()
     end)
 end
 
+-- the toggle owns the preview, so put it back when we cannot deliver one
+local function previewFailed(msg)
+    notifyWarn("Image", msg, 4)
+    pcall(function() BuilderAPI.toggles.imagePreview:Set(false) end)
+end
+
 local function previewImage()
-    if not IMG.cache then notifyWarn("Image", "Load an image first", 4) return end
+    if not IMG.cache then previewFailed("Load an image first") return end
     task.spawn(function()
         clearImagePreview()
         say("Image", "Building preview...")
         local cells, tw, th = imageCells()
         if #cells == 0 then
-            notifyWarn("Image", "Nothing to preview (all transparent?)", 4)
+            previewFailed("Nothing to preview (all transparent?)")
             return
         end
         local folder = Instance.new("Folder")
@@ -11081,27 +11175,13 @@ local function previewImage()
     end)
 end
 
-local function buildImage()
-    if not IMG.cache then
-        notifyWarn("Image", "Load an image first", 4)
-        return
-    end
-    runCommit("Image", function(rec)
-        local cells, tw, th = imageCells()
-        if #cells == 0 then notifyWarn("Image", "Nothing to build (all transparent?)", 4) return end
-        clearImagePreview()
-        say("Image", "Placing " .. #cells .. " blocks...")
-        placeCells(cells, rec)
-        notifyOK("Image", #cells .. " blocks from " .. tw .. "x" .. th, 6)
-    end)
-end
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- UI
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Lives on Build rather than Edit: it produces a build file now, so it belongs
 -- next to the rest of the build pipeline.
-auto:CreateSection("Image", { Collapsible = true, Column = "right" })
+-- Order 1 puts Image above the Save section, which is built earlier.
+auto:CreateSection("Image", { Collapsible = true, Column = "right", Order = 1 })
 
 -- Doubles as the status readout; say() writes here. No how-to wall of text -
 -- each control has its own hover tooltip.
@@ -11110,38 +11190,41 @@ imgPara = auto:CreateParagraph({
     Content = "Load a direct .png link to begin.",
 })
 
+-- Load and Check ride on the URL field itself rather than being separate
+-- controls below it.
 auto:CreateInput({
     Name = "Image URL",
     Default = "",
+    Actions = {
+        { Text = "Load Image", OnClick = function(text)
+            if text and text ~= "" then IMG.url = text end
+            loadImage()
+        end },
+        { Text = "Check URL", OnClick = function(text)
+            if text and text ~= "" then IMG.url = text end
+            if IMG.url == "" then notifyWarn("Image", "Paste a link first", 3) return end
+            task.spawn(function()
+                say("Checking", IMG.url)
+                local ok, data = pcall(function() return game:HttpGet(IMG.url) end)
+                if not ok then
+                    local msg = tostring(data):gsub("^.-:%d+:%s*", "")
+                    say("Check Failed", "The request itself failed:\n" .. msg
+                        .. "\nThe host may be blocking the game.")
+                    notifyErr("Image", "Request failed", 6)
+                    return
+                end
+                local kind, why = sniffFormat(data)
+                if kind == "png" then
+                    say("Check OK", "That is a PNG, " .. #data .. " bytes. Press Load Image.")
+                    notifyOK("Image", "Valid PNG (" .. #data .. " bytes)", 5)
+                else
+                    say("Check: " .. kind, why or "Unsupported file type.")
+                    notifyWarn("Image", why or ("Got " .. kind), 8)
+                end
+            end)
+        end },
+    },
     Callback = function(t) if t and t ~= "" then IMG.url = t end end
-})
-
-auto:CreateButton({
-    Name = "Load Image",
-    Gear = { { Type = "button", Name = "Check URL", OnClick = function()
-        if IMG.url == "" then notifyWarn("Image", "Paste a link first", 3) return end
-        task.spawn(function()
-            say("Checking", IMG.url)
-            local ok, data = pcall(function() return game:HttpGet(IMG.url) end)
-            if not ok then
-                local msg = tostring(data):gsub("^.-:%d+:%s*", "")
-                say("Check Failed", "The request itself failed:\n" .. msg
-                    .. "\nThe host may be blocking the game.")
-                notifyErr("Image", "Request failed", 6)
-                return
-            end
-            local kind, why = sniffFormat(data)
-            if kind == "png" then
-                say("Check OK", "That is a PNG, " .. #data .. " bytes. Press Load Image.")
-                notifyOK("Image", "Valid PNG (" .. #data .. " bytes)", 5)
-            else
-                say("Check: " .. kind, why or "Unsupported file type.")
-                notifyWarn("Image", why or ("Got " .. kind), 8)
-            end
-        end)
-    end } },
-    Tooltip = "Download and decode the PNG. 8-bit non-interlaced PNGs are supported.",
-    Callback = loadImage
 })
 
 auto:CreateDropdown({
@@ -11150,6 +11233,36 @@ auto:CreateDropdown({
     CurrentOption = { "Pixel Art (Wall)" }, MultipleOptions = false,
     Flag = "IMGMode",
     Callback = function(v) IMG.mode = (typeof(v) == "table") and v[1] or v end
+})
+
+auto:CreateDropdown({
+    Name = "Block Palette",
+    Options = IMAGE_GROUPS,
+    CurrentOption = {},
+    MultipleOptions = true,
+    Flag = "IMGPalette",
+    Tooltip = "Which families of blocks the image may use. Pick none to allow all of them.",
+    Callback = function(v)
+        local set = {}
+        if typeof(v) == "table" then
+            for _, g in ipairs(v) do set[g] = true end
+        elseif v then
+            set[v] = true
+        end
+        IMG.groups = set
+        rebuildActivePalette()
+    end
+})
+
+auto:CreateSlider({
+    Name = "Simplify (max blocks)", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
+    Suffix = "types", Flag = "IMGSimple",
+    Tooltip = "Cap how many different blocks the whole image uses. 0 is off. Low values give a poster look.",
+    Callback = function(v)
+        IMG.limit = v
+        IMG.match = {}
+        IMG.chosen = nil
+    end
 })
 
 auto:CreateSlider({
@@ -11173,25 +11286,20 @@ auto:CreateSlider({
     Suffix = "blk", Flag = "IMGH", Callback = function(v) IMG.maxHeight = v end
 })
 
-auto:CreateButton({
+-- One toggle owns the preview: on shows it at the cursor, off clears it.
+BuilderAPI.toggles.imagePreview = auto:CreateToggle({
     Name = "Preview Image at Cursor",
-    Tooltip = "Shows the image as the real blocks it will use, where you are pointing, without placing anything.",
-    Callback = previewImage
-})
-
-auto:CreateButton({
-    Name = "Remove Image Preview",
-    Tooltip = "Clears the ghost preview from the world.",
-    Callback = function()
-        clearImagePreview()
-        notify("Image", "Preview removed", 2, "info")
+    CurrentValue = false,
+    Flag = "IMGPreview",
+    Tooltip = "Shows the image as the real blocks it will use, where you are pointing. Turn off to remove it.",
+    Callback = function(v)
+        if v then
+            previewImage()
+        else
+            clearImagePreview()
+            notify("Image", "Preview removed", 2, "info")
+        end
     end
-})
-
-auto:CreateButton({
-    Name = "Build Image at Cursor",
-    Tooltip = "Place the image where you are pointing, or at you if pointing at nothing.",
-    Callback = buildImage
 })
 
 -- Saving the image build file is driven from the Save section's dropdown now,
@@ -12045,6 +12153,84 @@ previewPanel:AddButton({ Name = "Rotate 90", Callback = function()
         rotatePreview(90)
         notify("Rotated", "Turned 90 degrees", 2)
     end })
+
+-- ── Required blocks ────────────────────────────────────────────────────────
+previewPanel:AddDivider()
+previewPanel:AddLabel("Required Blocks")
+
+previewPanel:AddButton({
+    Name = "Show Required Blocks",
+    Tooltip = "Scan the build and list what you still need. Click a row to drop it.",
+    Callback = function()
+        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+    end })
+
+local reqSummary = previewPanel:AddParagraph("Required", "Tap Show Required Blocks.")
+
+-- A fixed pool of rows, shown or hidden as the list changes: elements cannot be
+-- destroyed once created, so they are reused instead.
+local REQ_ROWS = 22
+local reqRows = {}
+for i = 1, REQ_ROWS do
+    local row = previewPanel:AddButton({
+        Name = "",
+        Tooltip = "Click to remove this entry.",
+        Callback = function()
+            local e = requiredBlocksList and requiredBlocksList[i]
+            if not e then return end
+            if e.from then
+                -- this type is here because of a replacement; clicking undoes it
+                confirm("Remove Replacement",
+                    "Stop replacing " .. resolveBlockDisplayName(e.from)
+                        .. " with " .. e.name .. "?",
+                    "Remove", function()
+                        blockReplacements[e.from] = nil
+                        notifyOK("Replacement Removed", resolveBlockDisplayName(e.from) .. " left as-is", 4)
+                        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+                    end)
+            else
+                -- no replacement to undo, so hide it from the list instead
+                confirm("Hide Entry",
+                    "Hide " .. e.name .. " from the required list?",
+                    "Hide", function()
+                        requiredHidden[e.id] = true
+                        notify("Hidden", e.name .. " hidden from the list", 3, "info")
+                        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+                    end)
+            end
+        end })
+    row:SetVisible(false)
+    reqRows[i] = row
+end
+
+previewPanel:AddButton({
+    Name = "Unhide All",
+    Tooltip = "Bring back any rows you hid from the required list.",
+    Callback = function()
+        requiredHidden = {}
+        notify("Required Blocks", "Hidden rows restored", 3, "info")
+        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+    end })
+
+-- Paints the pooled rows from requiredBlocksList; summary carries the tail text.
+BuilderAPI.renderRequired = function(summaryText)
+    pcall(function()
+        local list = requiredBlocksList or {}
+        for i = 1, REQ_ROWS do
+            local e, row = list[i], reqRows[i]
+            if e then
+                local label = e.name
+                if e.from then label = resolveBlockDisplayName(e.from) .. " -> " .. e.name end
+                row:Set(label .. "   " .. e.have .. "/" .. e.need)
+                row:SetVisible(true)
+            else
+                row:SetVisible(false)
+            end
+        end
+        local extra = (#list > REQ_ROWS) and ("\n(" .. (#list - REQ_ROWS) .. " more not shown)") or ""
+        reqSummary:Set(tostring(summaryText or "") .. extra)
+    end)
+end
 
 end
 
