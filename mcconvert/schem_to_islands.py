@@ -1,8 +1,9 @@
 """Convert a Sponge .schem schematic into an Islands build JSON.
 
 A schematic is already just the build - no terrain to isolate - so this is a
-straight walk of its block array. Sponge v2 stores BlockData as varint indices
-into a palette, ordered y, then z, then x.
+straight walk of its block array. Block indices are varints into a palette,
+ordered y, then z, then x. Version 2 keeps `Palette` and `BlockData` at the
+root; version 3 moves them into a `Blocks` compound as `Palette` and `Data`.
 
     python3 schem_to_islands.py <file.schem> <OutputName> [--hollow]
 
@@ -59,13 +60,21 @@ def main():
     root = load_schem(src)
     W, H, L = int(root["Width"]), int(root["Height"]), int(root["Length"])
 
+    # v3 nests the palette and data under Blocks; v2 has them at the root
+    if "Blocks" in root:
+        palette = root["Blocks"]["Palette"]
+        data = root["Blocks"]["Data"]
+    else:
+        palette = root["Palette"]
+        data = root["BlockData"]
+
     # palette maps blockstate string -> index; invert it, keeping the full
     # state so stair facing and slab halves survive
     by_index = {}
-    for state, idx in root["Palette"].items():
+    for state, idx in palette.items():
         by_index[int(idx)] = str(state)
 
-    indices = read_varints(bytes(root["BlockData"]))
+    indices = read_varints(bytes(data))
     expected = W * H * L
     if len(indices) != expected:
         print(f"warning: {len(indices)} blocks decoded, expected {expected}")

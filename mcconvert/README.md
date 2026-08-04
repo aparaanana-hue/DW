@@ -20,7 +20,7 @@ double slab is written as both halves so it fills its cell.
 | `anvil.py` | Reads Minecraft Java world region files (`.mca`) — chunk headers, zlib, NBT, and the 1.13-1.15 packed `BlockStates` layout where entries straddle longs. |
 | `blockmap.py` | Minecraft block -> Islands block. Shared by both converters. |
 | `world_to_islands.py` | Converts a **world save**. Has to isolate the build from generated terrain, so it uses a hard-coded bounding box. |
-| `schem_to_islands.py` | Converts a **Sponge `.schem`** schematic. Simpler — a schematic is already just the build. |
+| `schem_to_islands.py` | Converts a **Sponge `.schem`** schematic, version 2 or 3. Simpler — a schematic is already just the build. |
 | `legacy_schematic_to_islands.py` | Converts an **old MCEdit `.schematic`**, which stores numeric block ids plus 4-bit metadata instead of a name palette. |
 | `world_build_to_islands.py` | Converts one build sitting in a world — a flat "build world" with a floor plane, say. Takes the region folder plus `--miny`/`--maxy` to cut the floor off. |
 | `litematic_to_islands.py` | Converts a **Litematica `.litematic`**. Same packing as pre-1.16, and a region's Size sign only says which corner `Position` is. |
@@ -87,6 +87,7 @@ large; skip it if you want the solid interior.
 | BigBoat | 31,377 | 29,109 | 65x123x154 |
 | AsianSanctum | 171,401 | 167,037 | 159x170x232 |
 | EarlyWorks1..12 | 819,291 total | — | largest 203x279x235 |
+| GadangBigHouse | 340,590 | 115,957 | 158x116x113 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
