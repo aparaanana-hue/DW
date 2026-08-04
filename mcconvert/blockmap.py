@@ -1,16 +1,4 @@
-"""Convert the IvyWood Manor Minecraft world into an Islands build JSON.
-
-Minecraft is 1 block = 1 unit; Islands is 1 block = 3 studs. Coordinates are
-emitted relative to the build's own corner so the file drops in anywhere, and
-Y is kept relative to the build's base.
-"""
-import sys, json
-from collections import Counter
-import mc_to_islands_read as mcread
-
-X0, X1 = -52, 35
-Y0, Y1 = 54, 94
-Z0, Z1 = -76, 71
+"""Minecraft block -> Islands block mapping, shared by both converters."""
 
 # Bulk terrain never carried over.
 BULK = {
@@ -263,6 +251,189 @@ MAP = {
     "minecraft:jukebox": "hickoryPlank",
     "minecraft:note_block": "woodPlank",
     "minecraft:beacon": "glassBlockChrome",
+
+    # ── terracotta (1.13+) ────────────────────────────────────────────────
+    "minecraft:terracotta": "clayOrange",
+    "minecraft:white_terracotta": "clayWhite",
+    "minecraft:black_terracotta": "clayBlack",
+    "minecraft:gray_terracotta": "clayBlack",
+    "minecraft:light_gray_terracotta": "clayWhite",
+    "minecraft:red_terracotta": "clayRed",
+    "minecraft:orange_terracotta": "clayOrange",
+    "minecraft:yellow_terracotta": "clayYellow",
+    "minecraft:lime_terracotta": "clayLightGreen",
+    "minecraft:green_terracotta": "clayDarkGreen",
+    "minecraft:cyan_terracotta": "clayCyan",
+    "minecraft:light_blue_terracotta": "clayCyan",
+    "minecraft:blue_terracotta": "clayBlue",
+    "minecraft:purple_terracotta": "clayPurple",
+    "minecraft:magenta_terracotta": "clayPink",
+    "minecraft:pink_terracotta": "clayPink",
+    "minecraft:brown_terracotta": "clayOrange",
+
+    # ── concrete and concrete powder ──────────────────────────────────────
+    "minecraft:red_concrete": "redBlock",
+    "minecraft:orange_concrete": "orangeBlock",
+    "minecraft:yellow_concrete": "yellowBlock",
+    "minecraft:lime_concrete": "lightGreenBlock",
+    "minecraft:green_concrete": "darkGreenBlock",
+    "minecraft:cyan_concrete": "cyanBlock",
+    "minecraft:light_blue_concrete": "cyanBlock",
+    "minecraft:blue_concrete": "blueBlock",
+    "minecraft:purple_concrete": "purpleBlock",
+    "minecraft:magenta_concrete": "pinkBlock",
+    "minecraft:pink_concrete": "pinkBlock",
+    "minecraft:brown_concrete": "clayOrange",
+    "minecraft:white_concrete_powder": "sand",
+    "minecraft:light_gray_concrete_powder": "clayWhite",
+    "minecraft:gray_concrete_powder": "clayBlack",
+    "minecraft:brown_concrete_powder": "sand",
+    "minecraft:black_concrete_powder": "clayBlack",
+    "minecraft:red_concrete_powder": "clayRed",
+    "minecraft:yellow_concrete_powder": "sand",
+
+    # ── nether / 1.16 woods ───────────────────────────────────────────────
+    "minecraft:warped_planks": "spiritPlank",
+    "minecraft:warped_slab": "spiritSlab",
+    "minecraft:warped_stairs": "stairSpirit",
+    "minecraft:warped_fence": "spiritPlank",
+    "minecraft:warped_fence_gate": "spiritPlank",
+    "minecraft:warped_door": "spiritPlank",
+    "minecraft:warped_trapdoor": "spiritSlab",
+    "minecraft:warped_button": "spiritSlab",
+    "minecraft:warped_stem": "woodSpirit",
+    "minecraft:warped_hyphae": "woodSpirit",
+    "minecraft:stripped_warped_stem": "woodSpirit",
+    "minecraft:warped_wart_block": "glowingMushroomCyanBlock",
+    "minecraft:crimson_planks": "cherryBlossomPlank",
+    "minecraft:crimson_slab": "cherryBlossomSlab",
+    "minecraft:crimson_stairs": "stairCherryBlossom",
+    "minecraft:crimson_fence": "cherryBlossomPlank",
+    "minecraft:crimson_fence_gate": "cherryBlossomPlank",
+    "minecraft:crimson_door": "cherryBlossomPlank",
+    "minecraft:crimson_trapdoor": "cherryBlossomSlab",
+    "minecraft:crimson_button": "cherryBlossomSlab",
+    "minecraft:crimson_stem": "woodCherryBlossom",
+    "minecraft:crimson_hyphae": "woodCherryBlossom",
+    "minecraft:stripped_crimson_stem": "woodCherryBlossom",
+    "minecraft:nether_wart_block": "glowingMushroomPinkBlock",
+    "minecraft:soul_soil": "mudBlock",
+    "minecraft:soul_sand": "mudBlock",
+    "minecraft:basalt": "basalt",
+    "minecraft:polished_basalt": "basaltSmooth",
+    "minecraft:smooth_basalt": "basaltSmooth",
+    "minecraft:blackstone": "basalt",
+    "minecraft:polished_blackstone": "basaltSmooth",
+    "minecraft:polished_blackstone_bricks": "basaltBrick",
+    "minecraft:polished_blackstone_stairs": "basaltBrickStair",
+    "minecraft:polished_blackstone_slab": "basaltBrickSlab",
+    "minecraft:polished_blackstone_button": "basaltSlab",
+    "minecraft:polished_blackstone_wall": "basaltBrick",
+    "minecraft:red_nether_bricks": "sandstoneRedBrick",
+    "minecraft:red_nether_brick_wall": "sandstoneRedBrick",
+    "minecraft:red_nether_brick_slab": "sandstoneRedBrickSlab",
+    "minecraft:nether_portal": "voidBlock",
+    "minecraft:bone_block": "boneBlock",
+    "minecraft:chain": "ironBlock",
+    "minecraft:hopper": "ironBlock",
+    "minecraft:lodestone": "stoneSmooth",
+
+    # ── polished / extra stone variants ───────────────────────────────────
+    "minecraft:polished_andesite": "andesiteSmooth",
+    "minecraft:polished_andesite_stairs": "andesiteStair",
+    "minecraft:polished_andesite_slab": "andesiteSlab",
+    "minecraft:andesite_stairs": "andesiteStair",
+    "minecraft:andesite_slab": "andesiteSlab",
+    "minecraft:polished_granite": "graniteSmooth",
+    "minecraft:polished_granite_stairs": "graniteStair",
+    "minecraft:polished_granite_slab": "graniteSlab",
+    "minecraft:granite_stairs": "graniteStair",
+    "minecraft:granite_slab": "graniteSlab",
+    "minecraft:polished_diorite": "dioriteSmooth",
+    "minecraft:polished_diorite_stairs": "dioriteStair",
+    "minecraft:polished_diorite_slab": "dioriteSlab",
+    "minecraft:diorite_stairs": "dioriteStair",
+    "minecraft:diorite_slab": "dioriteSlab",
+    "minecraft:stone_brick_slab": "stoneBrickSlab",
+    "minecraft:stone_brick_stairs": "stairStoneBrick",
+    "minecraft:stone_brick_wall": "stoneBrick",
+    "minecraft:mossy_stone_bricks": "stoneBrickMossy",
+    "minecraft:mossy_stone_brick_slab": "stoneBrickSlab",
+    "minecraft:mossy_stone_brick_stairs": "stairStoneBrick",
+    "minecraft:infested_mossy_stone_bricks": "stoneBrickMossy",
+    "minecraft:infested_stone_bricks": "stoneBrick",
+    "minecraft:chiseled_stone_bricks": "stoneCarved",
+    "minecraft:cracked_stone_bricks": "stoneBrick",
+    "minecraft:cobblestone_stairs": "cobblestoneStair",
+    "minecraft:cobblestone_slab": "cobblestoneSlab",
+    "minecraft:mossy_cobblestone_stairs": "cobblestoneStair",
+    "minecraft:mossy_cobblestone_slab": "mossyCobblestoneSlab",
+    "minecraft:mossy_cobblestone_wall": "mossyCobblestoneBlock",
+    "minecraft:brick_stairs": "stairBrick",
+    "minecraft:brick_slab": "brickSlab",
+    "minecraft:brick_wall": "brick",
+    "minecraft:smooth_quartz_stairs": "stairMarble",
+    "minecraft:quartz_stairs": "stairMarble",
+    "minecraft:quartz_pillar": "marblePillar",
+    "minecraft:chiseled_quartz_block": "marbleCarved",
+    "minecraft:cut_sandstone_slab": "sandstoneBrickSlab",
+    "minecraft:chiseled_red_sandstone": "sandstoneRedBrick",
+    "minecraft:cut_red_sandstone": "sandstoneRedBrick",
+    "minecraft:red_sandstone_slab": "sandstoneRedSlab",
+    "minecraft:red_sandstone_stairs": "stairSandstoneRed",
+    "minecraft:smooth_red_sandstone": "sandstoneSmoothRed",
+    "minecraft:smooth_red_sandstone_slab": "sandstoneSmoothRedSlab",
+    "minecraft:prismarine": "prismarineBlock",
+    "minecraft:prismarine_slab": "prismarineSlab",
+    "minecraft:prismarine_stairs": "prismarineStair",
+    "minecraft:prismarine_bricks": "prismarineBrick",
+    "minecraft:prismarine_brick_slab": "prismarineBrickSlab",
+    "minecraft:prismarine_brick_stairs": "prismarineBrickStair",
+    "minecraft:dark_prismarine": "prismarineBrick",
+    "minecraft:dark_prismarine_slab": "prismarineBrickSlab",
+    "minecraft:dark_prismarine_stairs": "prismarineBrickStair",
+
+    # ── remaining wood variants ───────────────────────────────────────────
+    "minecraft:jungle_slab": "mapleSlab",
+    "minecraft:jungle_stairs": "stairMaple",
+    "minecraft:jungle_trapdoor": "mapleSlab",
+    "minecraft:jungle_fence": "maplePlank",
+    "minecraft:jungle_button": "mapleSlab",
+    "minecraft:acacia_slab": "mapleSlab",
+    "minecraft:acacia_stairs": "stairMaple",
+    "minecraft:acacia_trapdoor": "mapleSlab",
+    "minecraft:acacia_fence": "maplePlank",
+    "minecraft:acacia_wood": "woodMaple",
+    "minecraft:stripped_acacia_wood": "woodMaple",
+    "minecraft:stripped_spruce_wood": "woodPine",
+    "minecraft:stripped_oak_wood": "wood",
+    "minecraft:stripped_birch_wood": "woodBirch",
+    "minecraft:stripped_dark_oak_wood": "woodHickory",
+    "minecraft:stripped_jungle_wood": "woodMaple",
+
+    # ── remaining glass ───────────────────────────────────────────────────
+    "minecraft:gray_stained_glass": "glassBlockBlack",
+    "minecraft:light_gray_stained_glass": "glassBlockChrome",
+    "minecraft:blue_stained_glass": "glassBlockBlue",
+    "minecraft:red_stained_glass": "glassBlockRed",
+    "minecraft:green_stained_glass": "glassBlockDarkGreen",
+    "minecraft:lime_stained_glass": "glassBlockLightGreen",
+    "minecraft:yellow_stained_glass": "glassBlockYellow",
+    "minecraft:orange_stained_glass": "glassBlockOrange",
+    "minecraft:cyan_stained_glass": "glassBlockCyan",
+    "minecraft:light_blue_stained_glass": "glassBlockCyan",
+    "minecraft:pink_stained_glass": "glassBlockPink",
+    "minecraft:purple_stained_glass": "glassBlockPurple",
+    "minecraft:magenta_stained_glass": "glassBlockPink",
+    "minecraft:brown_stained_glass": "glassBlockOrange",
+    "minecraft:tinted_glass": "glassBlockBlack",
+    "minecraft:blackstone_slab": "basaltSlab",
+    "minecraft:blackstone_stairs": "basaltStair",
+    "minecraft:nether_brick_wall": "basaltBrick",
+    "minecraft:redstone_torch": "ledLight",
+    "minecraft:soul_torch": "ledLight",
+    "minecraft:soul_wall_torch": "ledLight",
+    "minecraft:redstone_wall_torch": "ledLight",
 }
 
 # Small decorations with no sensible block equivalent: dropped rather than
@@ -293,57 +464,3 @@ def islands_name(mc):
     return None
 
 
-def main():
-    blocks = []
-    unmapped = Counter()
-    kept = Counter()
-    raw = []
-
-    for x, y, z, name in mcread.iter_world("IvyWood Manor/region"):
-        if not (X0 <= x <= X1 and Y0 <= y <= Y1 and Z0 <= z <= Z1):
-            continue
-        if name in BULK:
-            continue
-        raw.append((x, y, z, name))
-
-    # anchor at the build's own minimum corner so the file is position-independent
-    mnx = min(b[0] for b in raw)
-    mny = min(b[1] for b in raw)
-    mnz = min(b[2] for b in raw)
-
-    for x, y, z, name in raw:
-        target = islands_name(name)
-        if target is None:
-            if name not in DROP and not name.startswith("minecraft:potted_"):
-                unmapped[name] += 1
-            continue
-        kept[target] += 1
-        # 1 Minecraft block = 3 studs in Islands; identity rotation
-        blocks.append({
-            "blockType": target,
-            "upperBlock": False,
-            "cframe": [(x - mnx) * 3, (y - mny) * 3, (z - mnz) * 3, 1, 0, 0, 0, 1, 0],
-            "parts": [],
-        })
-
-    out = "IvyWoodManor.json"
-    with open(out, "w") as f:
-        json.dump({"blocks": blocks}, f)
-
-    print("wrote", out)
-    print("blocks:", len(blocks))
-    print("size (blocks): %d x %d x %d" % (
-        max(b[0] for b in raw) - mnx + 1,
-        max(b[1] for b in raw) - mny + 1,
-        max(b[2] for b in raw) - mnz + 1))
-    print("\ntop Islands blocks used:")
-    for n, c in kept.most_common(25):
-        print(f"{c:8d}  {n}")
-    if unmapped:
-        print("\nUNMAPPED (dropped):")
-        for n, c in unmapped.most_common(40):
-            print(f"{c:8d}  {n}")
-
-
-if __name__ == "__main__":
-    main()
