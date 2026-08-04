@@ -49,6 +49,10 @@ python3 world_build_to_islands.py path/to/region OutputName --miny -48
 # connected structure, and drop the blocks the "water" is faked with
 python3 world_build_to_islands.py path/to/region OutputName \
     --natural --largest --drop blue_stained_glass
+
+# a world holding several builds, above a floor plane: one file each
+python3 world_build_to_islands.py path/to/region OutputName \
+    --natural --miny -59 --split
 ```
 
 ### `--hollow`
@@ -82,6 +86,7 @@ large; skip it if you want the solid interior.
 | WoFBateau | 468,448 | 420,077 | 505x239x195 |
 | BigBoat | 31,377 | 29,109 | 65x123x154 |
 | AsianSanctum | 171,401 | 167,037 | 159x170x232 |
+| EarlyWorks1..12 | 819,291 total | — | largest 203x279x235 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

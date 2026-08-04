@@ -12,6 +12,9 @@ the plane off at; everything above is taken as the build.
       --natural    ignore generated terrain (stone, dirt, trees, water, ore)
       --largest    keep only the largest connected structure, so a single build
                    comes out without the dock or scenery around it
+      --split      a world holding several builds: cluster them by position and
+                   write one file each, named OutputName1, OutputName2, ...
+      --min N      with --split, ignore clusters smaller than this (default 3000)
       --hollow     drop blocks whose six neighbours are all filled
 """
 import json, os, sys
@@ -39,6 +42,8 @@ def main():
     hollow = "--hollow" in sys.argv
     skip_natural = "--natural" in sys.argv
     largest = "--largest" in sys.argv
+    split = "--split" in sys.argv
+    minsize = arg("--min", 3000, int)
     drop = {d if d.startswith("minecraft:") else "minecraft:" + d
             for d in sys.argv[sys.argv.index("--drop") + 1:sys.argv.index("--drop") + 2]} \
         if "--drop" in sys.argv else set()
@@ -91,56 +96,91 @@ def main():
         raw = [occ[p] for p in best]
         print("largest structure:", len(raw))
 
-    mnx = min(b[0] for b in raw)
-    mny = min(b[1] for b in raw)
-    mnz = min(b[2] for b in raw)
-
-    blocks = []
-    kept = Counter()
-    unmapped = Counter()
-    for x, y, z, state in raw:
-        got = resolve_any(state)
-        if got is None:
-            name = base_of(state)
-            if name not in DROP and not name.startswith("minecraft:potted_"):
-                unmapped[name] += 1
-            continue
-        target, rot, upper, doubled = got
-        kept[target] += 1
-        px, py, pz = (x - mnx) * 3, (y - mny) * 3, (z - mnz) * 3
-        blocks.append({
-            "blockType": target, "upperBlock": upper,
-            "cframe": [px, py, pz, *rot], "parts": [],
-        })
-        if doubled:
+    def emit(rows, name):
+        mnx = min(b[0] for b in rows)
+        mny = min(b[1] for b in rows)
+        mnz = min(b[2] for b in rows)
+        blocks = []
+        kept = Counter()
+        for x, y, z, state in rows:
+            got = resolve_any(state)
+            if got is None:
+                nm = base_of(state)
+                if nm not in DROP and not nm.startswith("minecraft:potted_"):
+                    unmapped[nm] += 1
+                continue
+            target, rot, upper, doubled = got
             kept[target] += 1
+            px, py, pz = (x - mnx) * 3, (y - mny) * 3, (z - mnz) * 3
             blocks.append({
-                "blockType": target, "upperBlock": True,
+                "blockType": target, "upperBlock": upper,
                 "cframe": [px, py, pz, *rot], "parts": [],
             })
+            if doubled:
+                kept[target] += 1
+                blocks.append({
+                    "blockType": target, "upperBlock": True,
+                    "cframe": [px, py, pz, *rot], "parts": [],
+                })
+        if not blocks:
+            return None
 
-    if hollow:
-        occ = {tuple(v // 3 for v in b["cframe"][:3]) for b in blocks}
-        sides = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
-        before = len(blocks)
-        blocks = [b for b in blocks if not all(
-            (b["cframe"][0] // 3 + dx, b["cframe"][1] // 3 + dy, b["cframe"][2] // 3 + dz) in occ
-            for dx, dy, dz in sides)]
-        print(f"hollowed: {before} -> {len(blocks)}")
+        if hollow:
+            occ = {tuple(v // 3 for v in b["cframe"][:3]) for b in blocks}
+            sides = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
+            blocks = [b for b in blocks if not all(
+                (b["cframe"][0] // 3 + dx, b["cframe"][1] // 3 + dy, b["cframe"][2] // 3 + dz) in occ
+                for dx, dy, dz in sides)]
 
-    os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
-    out = os.path.join(ROOT, "builds", outname + ".json")
-    with open(out, "w") as f:
-        json.dump({"blocks": blocks}, f)
+        os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
+        out = os.path.join(ROOT, "builds", name + ".json")
+        with open(out, "w") as fh:
+            json.dump({"blocks": blocks}, fh)
+        sx = max(b["cframe"][0] for b in blocks) // 3 + 1
+        sy = max(b["cframe"][1] for b in blocks) // 3 + 1
+        sz = max(b["cframe"][2] for b in blocks) // 3 + 1
+        print(f"  {name:24s} {len(blocks):>7d} blocks   {sx}x{sy}x{sz}")
+        return kept
 
-    sx = max(b["cframe"][0] for b in blocks) // 3 + 1
-    sy = max(b["cframe"][1] for b in blocks) // 3 + 1
-    sz = max(b["cframe"][2] for b in blocks) // 3 + 1
-    print("wrote", out)
-    print(f"blocks: {len(blocks)}   size: {sx} x {sy} x {sz}")
-    print("\ntop Islands blocks used:")
-    for n, c in kept.most_common(20):
-        print(f"{c:8d}  {n}")
+    unmapped = Counter()
+
+    if split:
+        # bucket by position, then merge touching dense cells into one build
+        CELL = 32
+        cells = {}
+        for i, b in enumerate(raw):
+            cells.setdefault((b[0] // CELL, b[2] // CELL), []).append(i)
+        dense = {k for k, v in cells.items() if len(v) >= 200}
+        seen, groups = set(), []
+        for k in dense:
+            if k in seen:
+                continue
+            stack, grp = [k], []
+            seen.add(k)
+            while stack:
+                c = stack.pop()
+                grp.append(c)
+                for dx in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        nb = (c[0] + dx, c[1] + dz)
+                        if nb in dense and nb not in seen:
+                            seen.add(nb)
+                            stack.append(nb)
+            groups.append(grp)
+        groups.sort(key=lambda g: -sum(len(cells[c]) for c in g))
+        groups = [g for g in groups if sum(len(cells[c]) for c in g) >= minsize]
+        print("builds found:", len(groups))
+        suffix = "Hollow" if hollow else ""
+        for n, g in enumerate(groups, 1):
+            rows = [raw[i] for c in g for i in cells[c]]
+            emit(rows, f"{outname}{n}{suffix}")
+    else:
+        kept = emit(raw, outname)
+        if kept:
+            print("\ntop Islands blocks used:")
+            for n, c in kept.most_common(20):
+                print(f"{c:8d}  {n}")
+
     if unmapped:
         print("\nUNMAPPED (dropped):", sum(unmapped.values()))
         for n, c in unmapped.most_common(30):
