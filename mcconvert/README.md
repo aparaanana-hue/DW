@@ -89,6 +89,7 @@ large; skip it if you want the solid interior.
 | EarlyWorks1..12 | 819,291 total | — | largest 203x279x235 |
 | GadangBigHouse | 340,590 | 115,957 | 158x116x113 |
 | HeavenlyShelter | 109,375 | 102,984 | 201x77x99 |
+| ViribusUnitis | 17,125 | 16,170 | 153x56x29 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
