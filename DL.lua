@@ -4666,11 +4666,21 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				-- Optional action buttons carried by the input itself, so things
 				-- like "Load" sit on the field instead of as separate controls.
 				if type(TextboxConfig.Actions) == "table" and #TextboxConfig.Actions > 0 then
-					TextboxFrame.Size = UDim2.new(1, 0, 0, 38 + 26)
+					local ROW_H, TOP_H = 24, 38
+					TextboxFrame.Size = UDim2.new(1, 0, 0, TOP_H + ROW_H + 6)
+					-- The label and the entry box centre themselves on the frame,
+					-- which now includes the button row - pin them to the top band
+					-- so they stay put instead of sliding down over the buttons.
+					local lbl = TextboxFrame:FindFirstChild("Content")
+					if lbl then lbl.Size = UDim2.new(1, -130, 0, TOP_H) end
+					TextContainer.Position = UDim2.new(1, -12, 0, TOP_H / 2)
+					-- keep the focus-catcher off the buttons too
+					Click.Size = UDim2.new(1, 0, 0, TOP_H)
+
 					local n = #TextboxConfig.Actions
 					local row = Create("Frame", {
 						BackgroundTransparency = 1, BorderSizePixel = 0,
-						Size = UDim2.new(1, -24, 0, 22), Position = UDim2.new(0, 12, 0, 38),
+						Size = UDim2.new(1, -24, 0, ROW_H - 2), Position = UDim2.new(0, 12, 0, TOP_H),
 						Parent = TextboxFrame,
 					})
 					for i, act in ipairs(TextboxConfig.Actions) do
