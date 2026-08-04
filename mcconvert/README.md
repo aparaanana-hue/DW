@@ -40,6 +40,11 @@ python3 world_to_islands.py --hollow
 
 # one build in a world, cutting off the floor plane below y=-48
 python3 world_build_to_islands.py path/to/region OutputName --miny -48
+
+# one build standing in scenery: skip terrain, keep only the largest
+# connected structure, and drop the blocks the "water" is faked with
+python3 world_build_to_islands.py path/to/region OutputName \
+    --natural --largest --drop blue_stained_glass
 ```
 
 ### `--hollow`
@@ -70,6 +75,7 @@ large; skip it if you want the solid interior.
 | ADragon | 33,408 | 32,769 | 150x118x78 |
 | FDragonV2 | 32,676 | 32,446 | 108x120x87 |
 | Dragon | 241,013 | 237,287 | 704x258x466 |
+| WoFBateau | 468,448 | 420,077 | 505x239x195 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

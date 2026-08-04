@@ -436,6 +436,11 @@ MAP = {
     "minecraft:magenta_stained_glass": "glassBlockPink",
     "minecraft:brown_stained_glass": "glassBlockOrange",
     "minecraft:tinted_glass": "glassBlockBlack",
+    "minecraft:redstone_lamp": "ledLight",
+    "minecraft:light_blue_stained_glass_pane": "glassBlockCyan",
+    "minecraft:acacia_door": "maplePlank",
+    "minecraft:acacia_fence_gate": "maplePlank",
+    "minecraft:jungle_fence_gate": "maplePlank",
     "minecraft:blackstone_slab": "basaltSlab",
     "minecraft:blackstone_stairs": "basaltStair",
     "minecraft:nether_brick_wall": "basaltTiles",
@@ -602,6 +607,7 @@ DROP = {
     "minecraft:rail", "minecraft:redstone_wire", "minecraft:tripwire",
     "minecraft:air", "minecraft:cave_air", "minecraft:void_air",
     "minecraft:light",          # invisible light source, nothing to place
+    "minecraft:fire",
     "minecraft:barrier", "minecraft:structure_void",
 }
 
@@ -686,3 +692,170 @@ def resolve(state):
         doubled = True
 
     return target, rot, upper, doubled
+
+
+# ── legacy numeric ids (1.12 and earlier) ────────────────────────────────────
+WOOL = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+        "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"]
+WOODS = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak"]
+
+LEGACY = {
+    1: {0: "stone", 1: "granite", 2: "polished_granite", 3: "diorite",
+        4: "polished_diorite", 5: "andesite", 6: "polished_andesite"},
+    2: "grass_block", 3: "dirt", 4: "cobblestone",
+    5: {i: w + "_planks" for i, w in enumerate(WOODS)},
+    7: "bedrock", 8: "water", 9: "water", 10: "lava", 11: "lava",
+    12: {0: "sand", 1: "red_sand"}, 13: "gravel",
+    14: "gold_ore", 15: "iron_ore", 16: "coal_ore",
+    17: {i: w + "_log" for i, w in enumerate(WOODS[:4])},
+    18: "oak_leaves", 20: "glass", 21: "lapis_ore", 22: "lapis_block",
+    24: {0: "sandstone", 1: "chiseled_sandstone", 2: "smooth_sandstone"},
+    30: "cobweb",
+    35: {i: c + "_wool" for i, c in enumerate(WOOL)},
+    41: "gold_block", 42: "iron_block",
+    43: {0: "stone", 1: "sandstone", 3: "cobblestone", 4: "bricks",
+         5: "stone_bricks", 6: "nether_bricks", 7: "quartz_block"},
+    44: {0: "smooth_stone_slab", 1: "sandstone_slab", 3: "cobblestone_slab",
+         4: "brick_slab", 5: "stone_brick_slab", 6: "nether_brick_slab",
+         7: "quartz_slab"},
+    45: "bricks", 47: "bookshelf", 48: "mossy_cobblestone", 49: "obsidian",
+    50: "torch", 53: "oak_stairs", 54: "chest", 56: "diamond_ore",
+    57: "diamond_block", 58: "crafting_table", 65: "ladder",
+    67: "cobblestone_stairs", 73: "redstone_ore", 74: "redstone_ore",
+    79: "ice", 80: "snow_block", 82: "clay", 85: "oak_fence",
+    86: "pumpkin", 87: "netherrack", 88: "soul_sand", 89: "glowstone",
+    91: "jack_o_lantern",
+    95: {i: c + "_stained_glass" for i, c in enumerate(WOOL)},
+    98: {0: "stone_bricks", 1: "mossy_stone_bricks", 2: "cracked_stone_bricks",
+         3: "chiseled_stone_bricks"},
+    101: "iron_bars", 102: "glass_pane", 106: "vine",
+    108: "brick_stairs", 109: "stone_brick_stairs", 112: "nether_bricks",
+    113: "nether_brick_fence", 114: "nether_brick_stairs",
+    121: "end_stone", 123: "redstone_lamp", 124: "redstone_lamp",
+    125: {i: w + "_planks" for i, w in enumerate(WOODS)},
+    126: {i: w + "_slab" for i, w in enumerate(WOODS)},
+    128: "sandstone_stairs", 129: "emerald_ore", 133: "emerald_block",
+    134: "spruce_stairs", 135: "birch_stairs", 136: "jungle_stairs",
+    139: {0: "cobblestone_wall", 1: "mossy_cobblestone_wall"},
+    152: "redstone_block",
+    155: {0: "quartz_block", 1: "chiseled_quartz_block", 2: "quartz_pillar"},
+    156: "quartz_stairs",
+    159: {i: c + "_terracotta" for i, c in enumerate(WOOL)},
+    160: {i: c + "_stained_glass_pane" for i, c in enumerate(WOOL)},
+    161: "acacia_leaves",
+    162: {0: "acacia_log", 1: "dark_oak_log"},
+    163: "acacia_stairs", 164: "dark_oak_stairs",
+    168: {0: "prismarine", 1: "prismarine_bricks", 2: "dark_prismarine"},
+    169: "sea_lantern", 170: "hay_block",
+    171: {i: c + "_carpet" for i, c in enumerate(WOOL)},
+    172: "terracotta", 173: "coal_block", 174: "packed_ice",
+    179: "red_sandstone", 180: "red_sandstone_stairs",
+    181: "red_sandstone_slab", 182: "red_sandstone_slab",
+    198: "end_rod", 201: "purpur_block", 202: "quartz_pillar",
+    203: "purpur_stairs", 205: "purpur_slab", 206: "end_stone_bricks",
+    208: "dirt_path", 213: "magma_block", 214: "nether_wart_block",
+    215: "red_nether_bricks", 216: "bone_block",
+    51: "fire", 64: "oak_door", 77: "stone_button",
+    107: "oak_fence_gate", 145: "anvil", 154: "hopper",
+    183: "spruce_fence_gate", 184: "birch_fence_gate", 185: "jungle_fence_gate",
+    186: "dark_oak_fence_gate", 187: "acacia_fence_gate",
+    188: "spruce_fence", 189: "birch_fence", 190: "jungle_fence",
+    191: "dark_oak_fence", 192: "acacia_fence",
+    193: "spruce_door", 194: "birch_door", 195: "jungle_door",
+    196: "acacia_door", 197: "dark_oak_door",
+    251: {i: c + "_concrete" for i, c in enumerate(WOOL)},
+    252: {i: c + "_concrete_powder" for i, c in enumerate(WOOL)},
+}
+
+
+# Pre-1.13 stair metadata: low two bits are the facing, bit 2 flips it upside
+# down. Slab metadata uses bit 3 for the top half.
+STAIR_IDS = {53, 67, 108, 109, 114, 128, 134, 135, 136, 156, 163, 164, 180, 203}
+SLAB_IDS = {44, 126, 182}
+STAIR_FACING = {0: "east", 1: "west", 2: "south", 3: "north"}
+
+
+def legacy_orientation(bid, data):
+    """(rotation, upperBlock, doubled) for a legacy id/metadata pair."""
+    if bid in STAIR_IDS:
+        return FACING_ROT[STAIR_FACING[data & 3]], bool(data & 4), False
+    if bid in SLAB_IDS:
+        return IDENTITY, bool(data & 8), False
+    if bid in (43, 125, 181):          # double slabs fill the whole cell
+        return IDENTITY, False, True
+    if bid in (17, 162):               # logs: bits 2-3 carry the axis
+        axis = (data >> 2) & 3
+        if axis == 1:
+            return (0, 1, 0, 1, 0, 0), False, False
+        if axis == 2:
+            return (1, 0, 0, 0, 0, 1), False, False
+    return IDENTITY, False, False
+
+
+def modern_name(bid, data):
+    e = LEGACY.get(bid)
+    if e is None:
+        return None
+    if isinstance(e, dict):
+        e = e.get(data) or e.get(data & 7) or e.get(0)
+        if e is None:
+            return None
+    return "minecraft:" + e
+
+
+
+def resolve_legacy(token):
+    """'legacy:98:1' -> (islands_name, rotation, upperBlock, doubled)."""
+    _, sid, sdata = token.split(":")
+    bid, data = int(sid), int(sdata)
+    name = modern_name(bid, data)
+    if name is None:
+        return None
+    target = islands_name(name)
+    if target is None:
+        return None
+    rot, upper, doubled = legacy_orientation(bid, data)
+    return target, rot, upper, doubled
+
+
+def resolve_any(state):
+    """resolve() for either format: a 1.13+ state string or a legacy token."""
+    if state.startswith("legacy:"):
+        return resolve_legacy(state)
+    return resolve(state)
+
+
+def base_of(state):
+    """Modern block name for either format, for terrain tests."""
+    if state.startswith("legacy:"):
+        _, sid, sdata = state.split(":")
+        return modern_name(int(sid), int(sdata)) or ""
+    return parse_state(state)[0]
+
+
+# Blocks the world generator makes on its own, shared by the world converters.
+NATURAL = set(BULK) | {
+    "minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:podzol",
+    "minecraft:sand", "minecraft:red_sand", "minecraft:sandstone", "minecraft:gravel",
+    "minecraft:clay", "minecraft:deepslate", "minecraft:cobbled_deepslate",
+    "minecraft:tuff", "minecraft:calcite", "minecraft:dripstone_block",
+    "minecraft:pointed_dripstone", "minecraft:smooth_basalt", "minecraft:netherrack",
+    "minecraft:oak_leaves", "minecraft:birch_leaves", "minecraft:spruce_leaves",
+    "minecraft:jungle_leaves", "minecraft:acacia_leaves", "minecraft:dark_oak_leaves",
+    "minecraft:azalea_leaves", "minecraft:flowering_azalea_leaves",
+    "minecraft:mangrove_leaves", "minecraft:cherry_leaves",
+    "minecraft:oak_log", "minecraft:birch_log", "minecraft:spruce_log",
+    "minecraft:jungle_log", "minecraft:acacia_log", "minecraft:dark_oak_log",
+    "minecraft:grass", "minecraft:short_grass", "minecraft:tall_grass",
+    "minecraft:fern", "minecraft:large_fern", "minecraft:dead_bush",
+    "minecraft:vine", "minecraft:moss_block", "minecraft:snow", "minecraft:snow_block",
+    "minecraft:ice", "minecraft:packed_ice", "minecraft:blue_ice",
+    "minecraft:water", "minecraft:lava", "minecraft:seagrass", "minecraft:kelp",
+    "minecraft:lily_pad", "minecraft:sugar_cane", "minecraft:cactus",
+    "minecraft:dirt_path", "minecraft:mud", "minecraft:rooted_dirt",
+    "minecraft:cobweb", "minecraft:magma_block", "minecraft:obsidian",
+    "minecraft:dandelion", "minecraft:poppy", "minecraft:blue_orchid",
+    "minecraft:allium", "minecraft:azure_bluet", "minecraft:oxeye_daisy",
+    "minecraft:brown_mushroom", "minecraft:red_mushroom",
+    "minecraft:oak_sapling", "minecraft:spruce_sapling", "minecraft:birch_sapling",
+}

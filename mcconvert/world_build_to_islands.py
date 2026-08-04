@@ -9,13 +9,16 @@ the plane off at; everything above is taken as the build.
       --miny N     ignore everything below this Y (default: no limit)
       --maxy N     ignore everything above this Y
       --drop NAME  ignore this block entirely, repeatable (floor material)
+      --natural    ignore generated terrain (stone, dirt, trees, water, ore)
+      --largest    keep only the largest connected structure, so a single build
+                   comes out without the dock or scenery around it
       --hollow     drop blocks whose six neighbours are all filled
 """
 import json, os, sys
 from collections import Counter
 
 import anvil
-from blockmap import DROP, parse_state, resolve
+from blockmap import DROP, NATURAL, base_of, parse_state, resolve_any
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -34,6 +37,8 @@ def main():
     miny = arg("--miny", None, int)
     maxy = arg("--maxy", None, int)
     hollow = "--hollow" in sys.argv
+    skip_natural = "--natural" in sys.argv
+    largest = "--largest" in sys.argv
     drop = {d if d.startswith("minecraft:") else "minecraft:" + d
             for d in sys.argv[sys.argv.index("--drop") + 1:sys.argv.index("--drop") + 2]} \
         if "--drop" in sys.argv else set()
@@ -50,13 +55,41 @@ def main():
             continue
         if maxy is not None and y > maxy:
             continue
-        if parse_state(state)[0] in drop:
+        base = base_of(state)
+        if base in drop:
+            continue
+        if skip_natural and base in NATURAL:
             continue
         raw.append((x, y, z, state))
     if not raw:
         print("nothing found in that range")
         return
     print("blocks in range:", len(raw))
+
+    if largest:
+        # 26-connectivity, so railings and props resting on a deck stay with it
+        occ = {(b[0], b[1], b[2]): b for b in raw}
+        nbrs = [(dx, dy, dz)
+                for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+                if (dx, dy, dz) != (0, 0, 0)]
+        seen, best = set(), None
+        for start in occ:
+            if start in seen:
+                continue
+            stack, comp = [start], []
+            seen.add(start)
+            while stack:
+                cx, cy, cz = stack.pop()
+                comp.append((cx, cy, cz))
+                for dx, dy, dz in nbrs:
+                    n = (cx + dx, cy + dy, cz + dz)
+                    if n in occ and n not in seen:
+                        seen.add(n)
+                        stack.append(n)
+            if best is None or len(comp) > len(best):
+                best = comp
+        raw = [occ[p] for p in best]
+        print("largest structure:", len(raw))
 
     mnx = min(b[0] for b in raw)
     mny = min(b[1] for b in raw)
@@ -66,9 +99,9 @@ def main():
     kept = Counter()
     unmapped = Counter()
     for x, y, z, state in raw:
-        got = resolve(state)
+        got = resolve_any(state)
         if got is None:
-            name = parse_state(state)[0]
+            name = base_of(state)
             if name not in DROP and not name.startswith("minecraft:potted_"):
                 unmapped[name] += 1
             continue

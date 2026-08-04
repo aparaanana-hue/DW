@@ -85,6 +85,12 @@ def unpack_states(longs, bits, count=4096, spanning=True):
 AIR = {"minecraft:air", "minecraft:cave_air", "minecraft:void_air"}
 
 
+def nibble(arr, i):
+    """Read entry i from a packed nibble array (two per byte, low then high)."""
+    v = arr[i >> 1] & 0xFF
+    return (v & 0x0F) if (i & 1) == 0 else (v >> 4)
+
+
 def state_string(entry):
     """Palette entry -> 'minecraft:oak_stairs[facing=north,half=bottom]'.
 
@@ -118,6 +124,24 @@ def chunk_blocks(root):
         return
 
     for sec in sections:
+        # 1.12 and earlier: numeric ids in a flat byte array, with a parallel
+        # nibble array for metadata and an optional one for ids above 255.
+        if not new_layout and "Blocks" in sec:
+            raw = bytes(bytearray(b & 0xFF for b in sec["Blocks"]))
+            data = sec["Data"]
+            add = sec.get("Add")
+            ybase = int(sec["Y"]) * 16
+            for i, bid in enumerate(raw):
+                if add is not None:
+                    hi = nibble(add, i)
+                    bid |= hi << 8
+                if bid == 0:
+                    continue
+                yield (cx * 16 + (i & 15), ybase + (i >> 8),
+                       cz * 16 + ((i >> 4) & 15),
+                       ("legacy:%d:%d" % (bid, nibble(data, i))))
+            continue
+
         if new_layout:
             bs = sec.get("block_states")
             if bs is None or "palette" not in bs:
