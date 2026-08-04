@@ -1819,6 +1819,12 @@ local function previewBuild(blocks)
         local blockType = effectiveType(tostring(block.blockType))
         local base = baseTransform * arrayToCFrame(block.cframe)
         local targetCF = CFrame.new(snapGridVec(base.Position)) * base.Rotation
+        -- upperBlock puts a slab or stair in the top half of its cell. The
+        -- placement remote gets told, but the ghost was drawn low regardless,
+        -- so the preview disagreed with what actually got built.
+        if block.upperBlock == true then
+            targetCF = targetCF + Vector3.new(0, 1.5, 0)
+        end
         local rendered = false
 
         if previewRealModels and not previewMinimized and isModelType(blockType) then

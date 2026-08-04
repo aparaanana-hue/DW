@@ -107,6 +107,11 @@ equivalent and were skipped — add them to `MAP` in `blockmap.py`.
 - **Stair corner shapes.** Facing and upside-down are carried over, but
   Minecraft's inner/outer corner stairs become straight ones — Islands has no
   corner variant.
+
+If stairs come out consistently turned the wrong way, `FACING_OFFSET` in
+`blockmap.py` rotates every facing block together: 1 is a quarter turn, 2 a
+half turn. It is derived from vanilla's blockstate files (which rotate stairs
+from an east-facing base), so 0 should be right.
 - **Shapes Islands lacks.** Walls, fences, panes, doors and carpets become the
   nearest full block or slab (carpets -> slabs, panes -> glass blocks, torches
   and lanterns -> LED light).

@@ -911,11 +911,26 @@ def islands_name(mc):
 # so a stair's `facing` becomes a rotation about Y.
 IDENTITY = (1, 0, 0, 0, 1, 0)
 
+# Vanilla's own blockstate files rotate stairs from an EAST-facing base model:
+# east y=0, south y=90, west y=180, north y=270. Minecraft turns clockwise seen
+# from above and Roblox turns counter-clockwise, so the sign flips on the way
+# across. Treating north as the base (the obvious-looking choice) puts every
+# stair in a build a quarter turn out.
+QUARTER_TURNS = [
+    (1, 0, 0, 0, 1, 0),     # 0
+    (0, 0, 1, 0, 1, 0),     # 90
+    (-1, 0, 0, 0, 1, 0),    # 180
+    (0, 0, -1, 0, 1, 0),    # 270
+]
+
+# Turn the whole build if Islands' stair model faces some other way than the
+# vanilla base: 1 adds 90 degrees, 2 adds 180, and so on.
+FACING_OFFSET = 0
+
+_FACING_STEPS = {"east": 0, "south": 1, "west": 2, "north": 3}
 FACING_ROT = {
-    "north": (1, 0, 0, 0, 1, 0),
-    "east":  (0, 0, 1, 0, 1, 0),
-    "south": (-1, 0, 0, 0, 1, 0),
-    "west":  (0, 0, -1, 0, 1, 0),
+    name: QUARTER_TURNS[(step + FACING_OFFSET) % 4]
+    for name, step in _FACING_STEPS.items()
 }
 
 # Logs and pillars lie along their axis; tip the up-vector to match.
