@@ -23,12 +23,16 @@ double slab is written as both halves so it fills its cell.
 | `schem_to_islands.py` | Converts a **Sponge `.schem`** schematic. Simpler — a schematic is already just the build. |
 | `legacy_schematic_to_islands.py` | Converts an **old MCEdit `.schematic`**, which stores numeric block ids plus 4-bit metadata instead of a name palette. |
 | `world_build_to_islands.py` | Converts one build sitting in a world — a flat "build world" with a floor plane, say. Takes the region folder plus `--miny`/`--maxy` to cut the floor off. |
+| `litematic_to_islands.py` | Converts a **Litematica `.litematic`**. Same packing as pre-1.16, and a region's Size sign only says which corner `Position` is. |
 | `castleworld_to_islands.py` | Castle World holds several builds in one world, so it clusters the placed blocks and writes one file per castle. |
 
 ## Usage
 
 ```sh
 cd mcconvert
+
+# litematica
+python3 litematic_to_islands.py path/to/build.litematic OutputName
 
 # schematic (preferred when you have one)
 python3 schem_to_islands.py path/to/build.schem OutputName
@@ -76,6 +80,7 @@ large; skip it if you want the solid interior.
 | FDragonV2 | 32,676 | 32,446 | 108x120x87 |
 | Dragon | 241,013 | 237,287 | 704x258x466 |
 | WoFBateau | 468,448 | 420,077 | 505x239x195 |
+| BigBoat | 31,377 | 29,109 | 65x123x154 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
