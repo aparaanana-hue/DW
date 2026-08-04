@@ -45,6 +45,7 @@ large; skip it if you want the solid interior.
 | SapphireLobby | 723,652 | 107,137 | 137x165x162 |
 | ShenronDragon | 20,202 | 20,177 | 135x124x88 |
 | Phoenix | 24,912 | 24,572 | 124x131x38 |
+| Angel | 23,828 | 23,802 | 188x118x48 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
