@@ -22,6 +22,7 @@ double slab is written as both halves so it fills its cell.
 | `world_to_islands.py` | Converts a **world save**. Has to isolate the build from generated terrain, so it uses a hard-coded bounding box. |
 | `schem_to_islands.py` | Converts a **Sponge `.schem`** schematic. Simpler — a schematic is already just the build. |
 | `legacy_schematic_to_islands.py` | Converts an **old MCEdit `.schematic`**, which stores numeric block ids plus 4-bit metadata instead of a name palette. |
+| `world_build_to_islands.py` | Converts one build sitting in a world — a flat "build world" with a floor plane, say. Takes the region folder plus `--miny`/`--maxy` to cut the floor off. |
 | `castleworld_to_islands.py` | Castle World holds several builds in one world, so it clusters the placed blocks and writes one file per castle. |
 
 ## Usage
@@ -36,6 +37,9 @@ python3 schem_to_islands.py path/to/build.schem OutputName --hollow
 # world save (bounding box is set at the top of the script)
 python3 world_to_islands.py
 python3 world_to_islands.py --hollow
+
+# one build in a world, cutting off the floor plane below y=-48
+python3 world_build_to_islands.py path/to/region OutputName --miny -48
 ```
 
 ### `--hollow`
@@ -63,6 +67,9 @@ large; skip it if you want the solid interior.
 | Castle3 | 222,855 | 214,481 | 655x265x768 |
 | Castle4 | 102,462 | 94,012 | 173x333x225 |
 | Castle5 | 33,047 | 30,773 | 104x126x117 |
+| ADragon | 33,408 | 32,769 | 150x118x78 |
+| FDragonV2 | 32,676 | 32,446 | 108x120x87 |
+| Dragon | 241,013 | 237,287 | 704x258x466 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
