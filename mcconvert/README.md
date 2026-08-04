@@ -34,8 +34,20 @@ python3 world_to_islands.py --hollow
 
 Drops every block whose six neighbours are all filled. Those are invisible from
 outside, so the build looks the same while costing far fewer blocks — on
-Sapphire Lobby that is 582,730 -> 170,200 (70% off). Worth using for anything
+Sapphire Lobby that is 723,652 -> 107,137 (85% off). Worth using for anything
 large; skip it if you want the solid interior.
+
+## Converted builds
+
+| build | blocks | hollow | size |
+|---|---|---|---|
+| IvyWoodManor | 45,638 | 36,796 | 88x38x148 |
+| SapphireLobby | 723,652 | 107,137 | 137x165x162 |
+| ShenronDragon | 20,202 | 20,177 | 135x124x88 |
+
+`world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
+does not, because in a schematic every block was placed on purpose. Only air and
+bedrock are skipped there.
 
 ## Adding a build
 

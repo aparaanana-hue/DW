@@ -13,7 +13,7 @@ import gzip, io, json, os, sys
 from collections import Counter
 
 import nbtlib
-from blockmap import BULK, DROP, islands_name
+from blockmap import DROP, islands_name
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -82,8 +82,11 @@ def main():
         if name in ("minecraft:air", "minecraft:cave_air", "minecraft:void_air"):
             skipped_air += 1
             continue
-        if name in BULK:
+        # bedrock is an unplaceable barrier layer, never part of the build
+        if name == "minecraft:bedrock":
             continue
+        # No BULK filter here: a schematic is only what the builder placed, so
+        # stone and andesite are part of the build, not terrain to strip.
         target = islands_name(name)
         if target is None:
             if name not in DROP and not name.startswith("minecraft:potted_"):
