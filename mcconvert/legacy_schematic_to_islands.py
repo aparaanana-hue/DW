@@ -11,7 +11,7 @@ import gzip, io, json, os, sys
 from collections import Counter
 
 import nbtlib
-from blockmap import DROP, islands_name
+from blockmap import DROP, islands_name, IDENTITY, FACING_ROT
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -82,6 +82,30 @@ LEGACY = {
 }
 
 
+# Pre-1.13 stair metadata: low two bits are the facing, bit 2 flips it upside
+# down. Slab metadata uses bit 3 for the top half.
+STAIR_IDS = {53, 67, 108, 109, 114, 128, 134, 135, 136, 156, 163, 164, 180, 203}
+SLAB_IDS = {44, 126, 182}
+STAIR_FACING = {0: "east", 1: "west", 2: "south", 3: "north"}
+
+
+def orientation(bid, data):
+    """(rotation, upperBlock, doubled) for a legacy id/metadata pair."""
+    if bid in STAIR_IDS:
+        return FACING_ROT[STAIR_FACING[data & 3]], bool(data & 4), False
+    if bid in SLAB_IDS:
+        return IDENTITY, bool(data & 8), False
+    if bid in (43, 125, 181):          # double slabs fill the whole cell
+        return IDENTITY, False, True
+    if bid in (17, 162):               # logs: bits 2-3 carry the axis
+        axis = (data >> 2) & 3
+        if axis == 1:
+            return (0, 1, 0, 1, 0, 0), False, False
+        if axis == 2:
+            return (1, 0, 0, 0, 0, 1), False, False
+    return IDENTITY, False, False
+
+
 def modern_name(bid, data):
     e = LEGACY.get(bid)
     if e is None:
@@ -134,12 +158,18 @@ def main():
         z = rem // W
         x = rem % W
         kept[target] += 1
+        rot, upper, doubled = orientation(bid, meta[i] & 0xF)
+        px, py, pz = x * 3, y * 3, z * 3
         blocks.append({
-            "blockType": target,
-            "upperBlock": False,
-            "cframe": [x * 3, y * 3, z * 3, 1, 0, 0, 0, 1, 0],
-            "parts": [],
+            "blockType": target, "upperBlock": upper,
+            "cframe": [px, py, pz, *rot], "parts": [],
         })
+        if doubled:
+            kept[target] += 1
+            blocks.append({
+                "blockType": target, "upperBlock": True,
+                "cframe": [px, py, pz, *rot], "parts": [],
+            })
 
     if not blocks:
         print("nothing converted")

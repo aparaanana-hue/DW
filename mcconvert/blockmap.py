@@ -29,17 +29,17 @@ MAP = {
     "minecraft:white_concrete": "whiteBlock",
     "minecraft:black_concrete": "blackBlock",
     "minecraft:gray_concrete": "slateSmooth",
-    "minecraft:smooth_quartz": "marbleBlock",
+    "minecraft:smooth_quartz": "marbleTiles",
     "minecraft:quartz_block": "marbleBlock",
     "minecraft:coal_block": "coalBlock",
     "minecraft:iron_block": "ironBlock",
     "minecraft:glowstone": "ledLight",
-    "minecraft:sea_lantern": "ledLight",
+    "minecraft:sea_lantern": "opalBlock",
     "minecraft:bricks": "brick",
-    "minecraft:nether_bricks": "basaltBrick",
-    "minecraft:nether_brick_stairs": "basaltBrickStair",
-    "minecraft:nether_brick_slab": "basaltBrickSlab",
-    "minecraft:nether_brick_fence": "basaltBrick",
+    "minecraft:nether_bricks": "basaltTiles",
+    "minecraft:nether_brick_stairs": "basaltStair",
+    "minecraft:nether_brick_slab": "basaltSlab",
+    "minecraft:nether_brick_fence": "basaltTiles",
 
     # sandstone
     "minecraft:smooth_sandstone": "sandstoneSmooth",
@@ -201,7 +201,7 @@ MAP = {
     "minecraft:iron_bars": "ironBlock",
     "minecraft:cauldron": "ironBlock",
     "minecraft:anvil": "ironBlock",
-    "minecraft:furnace": "cobblestoneBlock",
+    "minecraft:furnace": "stoneTiles",
     "minecraft:smoker": "pinePlank",
     "minecraft:blast_furnace": "ironBlock",
     "minecraft:stonecutter": "stoneSmooth",
@@ -233,10 +233,10 @@ MAP = {
     "minecraft:birch_wood": "woodBirch",
     "minecraft:dark_oak_wood": "woodHickory",
     "minecraft:gold_block": "goldBlock",
-    "minecraft:emerald_block": "amethystBlock",
+    "minecraft:emerald_block": "slimeBlockGreen",
     "minecraft:diamond_block": "diamondBlock",
-    "minecraft:redstone_block": "redBlock",
-    "minecraft:lapis_block": "blueBlock",
+    "minecraft:redstone_block": "rubyBlock",
+    "minecraft:lapis_block": "buffalkorCrystalBlock",
     "minecraft:smooth_quartz_slab": "marbleSlab",
     "minecraft:quartz_slab": "marbleSlab",
     "minecraft:jungle_door": "maplePlank",
@@ -284,13 +284,22 @@ MAP = {
     "minecraft:magenta_concrete": "pinkBlock",
     "minecraft:pink_concrete": "pinkBlock",
     "minecraft:brown_concrete": "clayOrange",
-    "minecraft:white_concrete_powder": "sand",
+    "minecraft:white_concrete_powder": "clayWhite",
     "minecraft:light_gray_concrete_powder": "clayWhite",
     "minecraft:gray_concrete_powder": "clayBlack",
-    "minecraft:brown_concrete_powder": "sand",
+    "minecraft:brown_concrete_powder": "pastelOrangeBlock",
     "minecraft:black_concrete_powder": "clayBlack",
-    "minecraft:red_concrete_powder": "clayRed",
-    "minecraft:yellow_concrete_powder": "sand",
+    "minecraft:red_concrete_powder": "pastelRedBlock",
+    "minecraft:orange_concrete_powder": "pastelOrangeBlock",
+    "minecraft:lime_concrete_powder": "pastelGreenBlock",
+    "minecraft:green_concrete_powder": "pastelGreenBlock",
+    "minecraft:blue_concrete_powder": "pastelBlueBlock",
+    "minecraft:light_blue_concrete_powder": "pastelBlueBlock",
+    "minecraft:purple_concrete_powder": "pastelPurpleBlock",
+    "minecraft:magenta_concrete_powder": "pastelPurpleBlock",
+    "minecraft:pink_concrete_powder": "pastelPinkBlock",
+    "minecraft:cyan_concrete_powder": "pastelBlueBlock",
+    "minecraft:yellow_concrete_powder": "pastelYellowBlock",
 
     # ── nether / 1.16 woods ───────────────────────────────────────────────
     "minecraft:warped_planks": "spiritPlank",
@@ -342,8 +351,8 @@ MAP = {
     "minecraft:polished_andesite": "andesiteSmooth",
     "minecraft:polished_andesite_stairs": "andesiteStair",
     "minecraft:polished_andesite_slab": "andesiteSlab",
-    "minecraft:andesite_stairs": "andesiteStair",
-    "minecraft:andesite_slab": "andesiteSlab",
+    "minecraft:andesite_stairs": "andesiteBrickStair",
+    "minecraft:andesite_slab": "andesiteBrickSlab",
     "minecraft:polished_granite": "graniteSmooth",
     "minecraft:polished_granite_stairs": "graniteStair",
     "minecraft:polished_granite_slab": "graniteSlab",
@@ -429,13 +438,13 @@ MAP = {
     "minecraft:tinted_glass": "glassBlockBlack",
     "minecraft:blackstone_slab": "basaltSlab",
     "minecraft:blackstone_stairs": "basaltStair",
-    "minecraft:nether_brick_wall": "basaltBrick",
+    "minecraft:nether_brick_wall": "basaltTiles",
     "minecraft:redstone_torch": "ledLight",
     "minecraft:soul_torch": "ledLight",
     "minecraft:soul_wall_torch": "ledLight",
     "minecraft:redstone_wall_torch": "ledLight",
-    "minecraft:ochre_froglight": "ledLight",
-    "minecraft:verdant_froglight": "ledLight",
+    "minecraft:ochre_froglight": "glowingMushroomGreenBlock",
+    "minecraft:verdant_froglight": "glowingMushroomBlueBlock",
     "minecraft:pearlescent_froglight": "ledLight",
     "minecraft:shroomlight": "ledLight",
     "minecraft:deepslate": "slateBlock",
@@ -444,8 +453,8 @@ MAP = {
     "minecraft:deepslate_tiles": "slateTiles",
     "minecraft:chiseled_deepslate": "slateCarved",
     "minecraft:cobbled_deepslate": "slateBlock",
-    "minecraft:calcite": "marbleBlock",
-    "minecraft:tuff": "andesite",
+    "minecraft:calcite": "pearlBlock",
+    "minecraft:tuff": "andesiteTiles",
     "minecraft:dripstone_block": "sandstoneSmooth",
     "minecraft:moss_block": "mossyBlock",
     "minecraft:rooted_dirt": "mudBlock",
@@ -472,7 +481,7 @@ MAP = {
     "minecraft:packed_ice": "iceCompact",
     "minecraft:blue_ice": "iceCompact",
     "minecraft:snow_block": "snowCompact",
-    "minecraft:water": "glassBlockBlue",
+    "minecraft:water": "slimeBlockBlue",
     "minecraft:coal_ore": "coalBlock",
     "minecraft:iron_ore": "ironBlock",
     "minecraft:gold_ore": "goldBlock",
@@ -504,7 +513,7 @@ MAP = {
     "minecraft:cracked_polished_blackstone_bricks": "basaltBrick",
     "minecraft:chiseled_polished_blackstone": "basaltCarved",
     "minecraft:gilded_blackstone": "basaltBrick",
-    "minecraft:cracked_nether_bricks": "basaltBrick",
+    "minecraft:cracked_nether_bricks": "basaltTiles",
     "minecraft:chiseled_nether_bricks": "basaltCarved",
     "minecraft:cracked_deepslate_bricks": "slateBrick",
     "minecraft:cracked_deepslate_tiles": "slateTiles",
@@ -557,9 +566,11 @@ MAP = {
     "minecraft:oxidized_cut_copper_stairs": "prismarineStair",
 
     # ── misc walls and odds ───────────────────────────────────────────────
-    "minecraft:tuff_wall": "andesite",
-    "minecraft:tuff_slab": "andesiteSlab",
-    "minecraft:tuff_stairs": "andesiteStair",
+    "minecraft:tuff_wall": "andesiteTiles",
+    "minecraft:tuff_bricks": "andesiteBrick",
+    "minecraft:polished_tuff": "andesiteSmooth",
+    "minecraft:tuff_slab": "andesiteBrickSlab",
+    "minecraft:tuff_stairs": "andesiteBrickStair",
     "minecraft:prismarine_wall": "prismarineBlock",
     "minecraft:granite_wall": "granite",
     "minecraft:sandstone_wall_red": "sandstoneRed",
@@ -606,3 +617,72 @@ def islands_name(mc):
     return None
 
 
+
+
+# ── orientation ─────────────────────────────────────────────────────────────
+# An Islands cframe is [x, y, z, Rx, Ry, Rz, Ux, Uy, Uz]: position, then the
+# RightVector and UpVector. Identity looks toward -Z, which is Minecraft north,
+# so a stair's `facing` becomes a rotation about Y.
+IDENTITY = (1, 0, 0, 0, 1, 0)
+
+FACING_ROT = {
+    "north": (1, 0, 0, 0, 1, 0),
+    "east":  (0, 0, 1, 0, 1, 0),
+    "south": (-1, 0, 0, 0, 1, 0),
+    "west":  (0, 0, -1, 0, 1, 0),
+}
+
+# Logs and pillars lie along their axis; tip the up-vector to match.
+AXIS_ROT = {
+    "y": (1, 0, 0, 0, 1, 0),
+    "x": (0, 1, 0, 1, 0, 0),
+    "z": (1, 0, 0, 0, 0, 1),
+}
+
+
+def parse_state(state):
+    """'minecraft:oak_stairs[facing=north,half=top]' -> (name, {props})."""
+    if "[" not in state:
+        return state, {}
+    base, rest = state.split("[", 1)
+    props = {}
+    for kv in rest.rstrip("]").split(","):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            props[k] = v
+    return base, props
+
+
+def resolve(state):
+    """Full block state -> (islands_name, rotation, upperBlock, doubled).
+
+    `doubled` marks a double slab, which needs both halves placing to fill the
+    cell. Returns None when the block has no Islands equivalent.
+    """
+    base, props = parse_state(state)
+    target = islands_name(base)
+    if target is None:
+        return None
+
+    rot = IDENTITY
+    upper = False
+    doubled = False
+
+    facing = props.get("facing")
+    if facing in FACING_ROT:
+        rot = FACING_ROT[facing]
+    else:
+        axis = props.get("axis")
+        if axis in AXIS_ROT:
+            rot = AXIS_ROT[axis]
+
+    # stairs sit in the upper half when half=top; slabs when type=top
+    if props.get("half") == "top":
+        upper = True
+    slab = props.get("type")
+    if slab == "top":
+        upper = True
+    elif slab == "double":
+        doubled = True
+
+    return target, rot, upper, doubled

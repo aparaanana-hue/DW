@@ -11,7 +11,7 @@ import json, os, sys
 from collections import Counter
 
 import anvil
-from blockmap import BULK, DROP, islands_name
+from blockmap import BULK, DROP, islands_name, parse_state, resolve
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGION = ("/Users/johnlawrencepena/Documents/Rice Hub /price-logger-bot/"
@@ -65,10 +65,10 @@ def main():
     hollow = "--hollow" in sys.argv[1:]
 
     placed = []
-    for x, y, z, name in anvil.iter_world(REGION):
-        if name in NATURAL:
+    for x, y, z, state in anvil.iter_world(REGION):
+        if parse_state(state)[0] in NATURAL:
             continue
-        placed.append((x, y, z, name))
+        placed.append((x, y, z, state))
     print("placed blocks:", len(placed))
 
     # bucket into cells, then merge touching dense cells into clusters
@@ -105,18 +105,24 @@ def main():
         idxs = [i for c in group for i in cells[c]]
         blocks = []
         for i in idxs:
-            x, y, z, name = placed[i]
-            target = islands_name(name)
-            if target is None:
+            x, y, z, state = placed[i]
+            got = resolve(state)
+            if got is None:
+                name = parse_state(state)[0]
                 if name not in DROP and not name.startswith("minecraft:potted_"):
                     total_unmapped[name] += 1
                 continue
+            target, rot, upper, doubled = got
+            px, py, pz = x * 3, y * 3, z * 3
             blocks.append({
-                "blockType": target,
-                "upperBlock": False,
-                "cframe": [x * 3, y * 3, z * 3, 1, 0, 0, 0, 1, 0],
-                "parts": [],
+                "blockType": target, "upperBlock": upper,
+                "cframe": [px, py, pz, *rot], "parts": [],
             })
+            if doubled:
+                blocks.append({
+                    "blockType": target, "upperBlock": True,
+                    "cframe": [px, py, pz, *rot], "parts": [],
+                })
         if not blocks:
             continue
 

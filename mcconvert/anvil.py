@@ -85,6 +85,20 @@ def unpack_states(longs, bits, count=4096, spanning=True):
 AIR = {"minecraft:air", "minecraft:cave_air", "minecraft:void_air"}
 
 
+def state_string(entry):
+    """Palette entry -> 'minecraft:oak_stairs[facing=north,half=bottom]'.
+
+    Properties carry stair facing and slab halves, so they have to survive the
+    read or every block comes out unrotated.
+    """
+    name = str(entry["Name"])
+    props = entry.get("Properties")
+    if not props:
+        return name
+    parts = ",".join(f"{k}={str(props[k])}" for k in sorted(props.keys()))
+    return f"{name}[{parts}]"
+
+
 def chunk_blocks(root):
     """Yield (x, y, z, block_name) in world coords for one chunk."""
     dv = int(root.get("DataVersion", 0))
@@ -108,12 +122,12 @@ def chunk_blocks(root):
             bs = sec.get("block_states")
             if bs is None or "palette" not in bs:
                 continue
-            pal = [str(p["Name"]) for p in bs["palette"]]
+            pal = [state_string(p) for p in bs["palette"]]
             data = bs.get("data")
         else:
             if "Palette" not in sec or "BlockStates" not in sec:
                 continue
-            pal = [str(p["Name"]) for p in sec["Palette"]]
+            pal = [state_string(p) for p in sec["Palette"]]
             data = sec["BlockStates"]
 
         n = len(pal)
@@ -124,7 +138,7 @@ def chunk_blocks(root):
         # A single-entry palette carries no data array: the whole section is
         # that one block.
         if n == 1 or data is None or len(data) == 0:
-            if pal[0] in AIR:
+            if pal[0].split("[", 1)[0] in AIR:
                 continue
             for i in range(4096):
                 yield (cx * 16 + (i & 15), ybase + (i >> 8), cz * 16 + ((i >> 4) & 15), pal[0])
@@ -135,7 +149,7 @@ def chunk_blocks(root):
             if v >= n:
                 continue
             name = pal[v]
-            if name in AIR:
+            if name.split("[", 1)[0] in AIR:
                 continue
             yield (cx * 16 + (i & 15), ybase + (i >> 8), cz * 16 + ((i >> 4) & 15), name)
 

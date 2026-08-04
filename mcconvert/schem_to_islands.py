@@ -13,7 +13,7 @@ import gzip, io, json, os, sys
 from collections import Counter
 
 import nbtlib
-from blockmap import DROP, islands_name
+from blockmap import DROP, islands_name, parse_state, resolve
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -59,10 +59,11 @@ def main():
     root = load_schem(src)
     W, H, L = int(root["Width"]), int(root["Height"]), int(root["Length"])
 
-    # palette maps blockstate string -> index; invert it
+    # palette maps blockstate string -> index; invert it, keeping the full
+    # state so stair facing and slab halves survive
     by_index = {}
     for state, idx in root["Palette"].items():
-        by_index[int(idx)] = base_name(str(state))
+        by_index[int(idx)] = str(state)
 
     indices = read_varints(bytes(root["BlockData"]))
     expected = W * H * L
@@ -76,9 +77,10 @@ def main():
 
     # Sponge v2 order: index = y*W*L + z*W + x
     for i, pi in enumerate(indices):
-        name = by_index.get(pi)
-        if name is None:
+        state = by_index.get(pi)
+        if state is None:
             continue
+        name = base_name(state)
         if name in ("minecraft:air", "minecraft:cave_air", "minecraft:void_air"):
             skipped_air += 1
             continue
@@ -87,23 +89,34 @@ def main():
             continue
         # No BULK filter here: a schematic is only what the builder placed, so
         # stone and andesite are part of the build, not terrain to strip.
-        target = islands_name(name)
-        if target is None:
+        got = resolve(state)
+        if got is None:
             if name not in DROP and not name.startswith("minecraft:potted_"):
                 unmapped[name] += 1
             continue
+        target, rot, upper, doubled = got
         y = i // (W * L)
         rem = i % (W * L)
         z = rem // W
         x = rem % W
         kept[target] += 1
-        # 1 Minecraft block = 3 studs; identity rotation
+        # 1 Minecraft block = 3 studs
+        px, py, pz = x * 3, y * 3, z * 3
         blocks.append({
             "blockType": target,
-            "upperBlock": False,
-            "cframe": [x * 3, y * 3, z * 3, 1, 0, 0, 0, 1, 0],
+            "upperBlock": upper,
+            "cframe": [px, py, pz, *rot],
             "parts": [],
         })
+        if doubled:
+            # a double slab fills the cell, so place the other half too
+            kept[target] += 1
+            blocks.append({
+                "blockType": target,
+                "upperBlock": True,
+                "cframe": [px, py, pz, *rot],
+                "parts": [],
+            })
 
     if not blocks:
         print("nothing converted")

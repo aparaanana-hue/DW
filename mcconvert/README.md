@@ -4,8 +4,14 @@ Turns Minecraft builds into Islands build files (`{ "blocks": [...] }` with
 `cframe` arrays), ready to drop into `autoBuilder` and preview/build like any
 other file. Output lands in `../builds/`.
 
-1 Minecraft block = 3 studs. Every block is written with identity rotation and
-anchored at the build's own corner, so a file drops in anywhere.
+1 Minecraft block = 3 studs. Blocks are anchored at the build's own corner, so
+a file drops in anywhere.
+
+Orientation carries over: an Islands cframe is `[x, y, z, Rx,Ry,Rz, Ux,Uy,Uz]`
+— position, then the RightVector and UpVector. Identity looks toward -Z, which
+is Minecraft north, so a stair's `facing` becomes a rotation about Y, a log's
+`axis` tips the up-vector, and `half=top` / `type=top` set `upperBlock`. A
+double slab is written as both halves so it fills its cell.
 
 ## Files
 
@@ -43,20 +49,20 @@ large; skip it if you want the solid interior.
 
 | build | blocks | hollow | size |
 |---|---|---|---|
-| IvyWoodManor | 45,638 | 36,796 | 88x38x148 |
-| SapphireLobby | 723,652 | 107,137 | 137x165x162 |
+| IvyWoodManor | 45,643 | 36,800 | 88x38x148 |
+| SapphireLobby | 723,939 | 107,238 | 137x165x162 |
 | ShenronDragon | 20,202 | 20,177 | 135x124x88 |
 | Phoenix | 24,912 | 24,572 | 124x131x38 |
 | Angel | 23,828 | 23,802 | 188x118x48 |
 | Luffy | 13,624 | 13,584 | 82x118x46 |
 | DragonSlayer | 32,473 | 32,185 | 148x124x79 |
 | AngelV14 | 58,112 | 57,687 | 168x160x66 |
-| Epsilon | 34,042 | — | 91x164x103 |
-| Castle1 | 696,512 | 635,273 | 245x384x245 |
-| Castle2 | 560,358 | 490,453 | 238x380x247 |
-| Castle3 | 220,857 | 212,798 | 655x265x768 |
-| Castle4 | 100,463 | 92,332 | 173x333x225 |
-| Castle5 | 32,270 | 30,066 | 104x126x117 |
+| Epsilon | 34,135 | — | 91x164x103 |
+| Castle1 | 707,563 | 644,472 | 245x384x245 |
+| Castle2 | 567,097 | 496,312 | 238x380x247 |
+| Castle3 | 222,855 | 214,481 | 655x265x768 |
+| Castle4 | 102,462 | 94,012 | 173x333x225 |
+| Castle5 | 33,047 | 30,773 | 104x126x117 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
@@ -73,8 +79,9 @@ equivalent and were skipped — add them to `MAP` in `blockmap.py`.
 
 ## What does not carry over
 
-- **Rotation.** Stairs, logs and pillars all face one way; shape and colour are
-  right, facing is not.
+- **Stair corner shapes.** Facing and upside-down are carried over, but
+  Minecraft's inner/outer corner stairs become straight ones — Islands has no
+  corner variant.
 - **Shapes Islands lacks.** Walls, fences, panes, doors and carpets become the
   nearest full block or slab (carpets -> slabs, panes -> glass blocks, torches
   and lanterns -> LED light).
