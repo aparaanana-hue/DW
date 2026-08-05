@@ -98,6 +98,9 @@ local function wrapTab(container)
             Color = cfg.Color,
             ShowKeybind = cfg.Keybind,
             Options = cfg.Gear,
+            -- icon button on the toggle row, for an action that should not
+            -- require flipping the toggle
+            GearAction = cfg.GearAction,
             Callback = cfg.Callback or function() end,
         })
     end
