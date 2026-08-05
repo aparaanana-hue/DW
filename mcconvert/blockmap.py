@@ -806,6 +806,10 @@ MAP = {
     "minecraft:bamboo_pressure_plate": "trapDoorMapleFlipped",
     "minecraft:repeater": "stoneSmooth",
     "minecraft:comparator": "stoneSmooth",
+    "minecraft:kelp": "tallGrass",
+    "minecraft:kelp_plant": "tallGrass",
+    "minecraft:big_dripleaf_stem": "tallGrass",
+    "minecraft:tall_seagrass": "tallGrass",
 
     # ── gaps found by auditing the map against vanilla ────────────────────
     "minecraft:magenta_carpet": "carpetPink",
