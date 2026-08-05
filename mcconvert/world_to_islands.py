@@ -69,7 +69,7 @@ def main():
     name = "IvyWoodManorHollow" if "--hollow" in sys.argv[1:] else "IvyWoodManor"
     out = os.path.join(ROOT, "builds", name + ".json")
     with open(out, "w") as f:
-        json.dump({"blocks": blocks}, f)
+        json.dump({"blocks": blocks}, f, separators=(",", ":"))
 
     print("wrote", out)
     print("blocks:", len(blocks))

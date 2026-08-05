@@ -96,7 +96,7 @@ def main():
     os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
     out = os.path.join(ROOT, "builds", outname + ".json")
     with open(out, "w") as fh:
-        json.dump({"blocks": blocks}, fh)
+        json.dump({"blocks": blocks}, fh, separators=(",", ":"))
 
     print("wrote", out)
     print("blocks:", len(blocks))

@@ -810,6 +810,7 @@ MAP = {
     "minecraft:kelp_plant": "tallGrass",
     "minecraft:big_dripleaf_stem": "tallGrass",
     "minecraft:tall_seagrass": "tallGrass",
+    "minecraft:end_portal_frame": "voidStoneCarved",
 
     # ── gaps found by auditing the map against vanilla ────────────────────
     "minecraft:magenta_carpet": "carpetPink",
@@ -1207,6 +1208,9 @@ LEGACY = {
     128: "sandstone_stairs", 129: "emerald_ore", 133: "emerald_block",
     134: "spruce_stairs", 135: "birch_stairs", 136: "jungle_stairs",
     139: {0: "cobblestone_wall", 1: "mossy_cobblestone_wall"},
+    25: "note_block", 33: "piston", 34: "piston_head",
+    66: "rail", 71: "iron_door", 97: "infested_stone_bricks",
+    120: "end_portal_frame", 138: "beacon",
     152: "redstone_block",
     155: {0: "quartz_block", 1: "chiseled_quartz_block", 2: "quartz_pillar"},
     156: "quartz_stairs",

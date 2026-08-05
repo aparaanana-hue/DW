@@ -124,7 +124,7 @@ def main():
     os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
     out = os.path.join(ROOT, "builds", outname + ".json")
     with open(out, "w") as fh:
-        json.dump({"blocks": blocks}, fh)
+        json.dump({"blocks": blocks}, fh, separators=(",", ":"))
 
     sxx = max(b["cframe"][0] for b in blocks) // 3 + 1
     syy = max(b["cframe"][1] for b in blocks) // 3 + 1
