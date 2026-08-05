@@ -3245,6 +3245,17 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
     end
 })
 
+-- A plain button as well as the icon on the row above: the icon depends on the
+-- glyph font loading, and this is meant to be the reliable way in.
+previewTab:CreateButton({
+    Name = "Preview Panel",
+    Tooltip = "Open the panel: move handles, ghost settings, stair and slab filters, and the required-blocks list. Does not turn the preview on.",
+    Callback = function()
+        local ok = pcall(function() BuilderAPI.previewPanel:Toggle() end)
+        if not ok then notifyWarn("Preview Panel", "Panel not ready yet", 3) end
+    end
+})
+
 
 -- Objects controls live on the Auto Build tab; this tab used an identical copy.
 
@@ -3269,6 +3280,11 @@ end)
 
 -- Exposed so the Preview panel's button can run the same scan.
 BuilderAPI.scanRequired = function()
+    -- open the panel so the result is actually visible when this is fired
+    -- from the tab rather than from inside the panel
+    pcall(function()
+        if not BuilderAPI.previewPanel:IsOpen() then BuilderAPI.previewPanel:Show() end
+    end)
     local blocks = lastPreviewBlocks
     if not blocks then
         local data = loadSelectedBuild()
