@@ -90,6 +90,7 @@ large; skip it if you want the solid interior.
 | GadangBigHouse | 340,590 | 115,957 | 158x116x113 |
 | HeavenlyShelter | 109,375 | 102,984 | 201x77x99 |
 | ViribusUnitis | 17,125 | 16,170 | 153x56x29 |
+| SquidGame | 286,481 | 279,200 | 351x120x341 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

@@ -803,6 +803,9 @@ MAP = {
     "minecraft:large_fern": "tallGrass",
     "minecraft:seagrass": "tallGrass",
     "minecraft:dead_bush": "saplingHickory",
+    "minecraft:bamboo_pressure_plate": "trapDoorMapleFlipped",
+    "minecraft:repeater": "stoneSmooth",
+    "minecraft:comparator": "stoneSmooth",
 
     # ── gaps found by auditing the map against vanilla ────────────────────
     "minecraft:magenta_carpet": "carpetPink",
