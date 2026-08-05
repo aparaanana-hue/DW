@@ -319,6 +319,28 @@ local previewBlockSize = 3
 local previewTransparency = 0.5
 local previewPulse = false
 local lastPreviewBlocks = nil
+-- Optional filters: drop stairs or slabs from a build before previewing or
+-- placing it, for people who would rather not chase those shapes down.
+local includeStairs = true
+local includeSlabs = true
+
+-- A build's blocks with the excluded shapes stripped out.
+function filterShapes(blocks)
+    if includeStairs and includeSlabs then return blocks end
+    local out = {}
+    for _, b in ipairs(blocks) do
+        local t = tostring(b.blockType)
+        local isStair = t:find("[Ss]tair") ~= nil
+        local isSlab = (not isStair) and t:find("[Ss]lab") ~= nil
+        if (isStair and not includeStairs) or (isSlab and not includeSlabs) then
+            -- skipped
+        else
+            out[#out + 1] = b
+        end
+    end
+    return out
+end
+
 local previewRealModels = true
 local previewMinimized = false
 
@@ -2592,7 +2614,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
                 local src = data.blocks
                 task.spawn(function()
                     notify("Building", "Building where the ghost sits", 3, "info")
-                    local transformed = transformBlocks(src, previewTransform)
+                    local transformed = filterShapes(transformBlocks(src, previewTransform))
                     if buildMode == "Turbo Print" then
                         turboPrint(transformed)
                     else
@@ -2600,10 +2622,11 @@ BuilderAPI.toggles.build = auto:CreateToggle({
                     end
                 end)
             else
+                local blocks = filterShapes(data.blocks)
                 if buildMode == "Turbo Print" then
-                    task.spawn(function() turboPrint(data.blocks) end)
+                    task.spawn(function() turboPrint(blocks) end)
                 else
-                    runBuild(data.blocks, missingOnly)
+                    runBuild(blocks, missingOnly)
                 end
             end
         else
@@ -3194,12 +3217,15 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
     Name = "Preview Build",
     CurrentValue = false,
     Flag = "PreviewToggle",
-    -- Settings live on the Preview panel rather than behind a gear, so the
-    -- move handles sit alongside them instead of on the tab.
+    -- The panel opens from the icon on this row rather than with the toggle,
+    -- so the required-blocks list can be read without rendering a preview.
+    GearAction = {
+        Icon = "layout-fluid",
+        OnClick = function()
+            pcall(function() BuilderAPI.previewPanel:Toggle() end)
+        end,
+    },
     Callback = function(v)
-        pcall(function()
-            if v then BuilderAPI.previewPanel:Show() else BuilderAPI.previewPanel:Hide() end
-        end)
         if v then
             local data = loadSelectedBuild()
             if not data then
@@ -3207,7 +3233,7 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
                 return
             end
             task.spawn(function()
-                previewBuild(data.blocks)
+                previewBuild(filterShapes(data.blocks))
             end)
         else
             clearPreview()
@@ -12137,6 +12163,16 @@ previewPanel:AddToggle({
     Name = "Low-Lag Preview", Default = false,
     Callback = function(v) previewMinimized = v end })
 
+previewPanel:AddToggle({
+    Name = "Include Stairs", Default = true,
+    Tooltip = "Off leaves every stair out of the preview and the build.",
+    Callback = function(v) includeStairs = v end })
+
+previewPanel:AddToggle({
+    Name = "Include Slabs", Default = true,
+    Tooltip = "Off leaves every slab out of the preview and the build.",
+    Callback = function(v) includeSlabs = v end })
+
 previewPanel:AddSlider({
     Name = "Transparency", Min = 0, Max = 90, Increment = 5, Default = 50, ValueName = "%",
     Callback = function(v)
@@ -12166,48 +12202,57 @@ previewPanel:AddLabel("Required Blocks")
 
 previewPanel:AddButton({
     Name = "Show Required Blocks",
-    Tooltip = "Scan the build and list what you still need. Click a row to drop it.",
+    Tooltip = "Scan the build and list what you still need.",
     Callback = function()
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
 local reqSummary = previewPanel:AddParagraph("Required", "Tap Show Required Blocks.")
 
--- A fixed pool of rows, shown or hidden as the list changes: elements cannot be
--- destroyed once created, so they are reused instead.
-local REQ_ROWS = 22
-local reqRows = {}
-for i = 1, REQ_ROWS do
-    local row = previewPanel:AddButton({
-        Name = "",
-        Tooltip = "Click to remove this entry.",
-        Callback = function()
-            local e = requiredBlocksList and requiredBlocksList[i]
-            if not e then return end
-            if e.from then
-                -- this type is here because of a replacement; clicking undoes it
-                confirm("Remove Replacement",
-                    "Stop replacing " .. resolveBlockDisplayName(e.from)
-                        .. " with " .. e.name .. "?",
-                    "Remove", function()
-                        blockReplacements[e.from] = nil
-                        notifyOK("Replacement Removed", resolveBlockDisplayName(e.from) .. " left as-is", 4)
-                        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
-                    end)
-            else
-                -- no replacement to undo, so hide it from the list instead
-                confirm("Hide Entry",
-                    "Hide " .. e.name .. " from the required list?",
-                    "Hide", function()
-                        requiredHidden[e.id] = true
-                        notify("Hidden", e.name .. " hidden from the list", 3, "info")
-                        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
-                    end)
-            end
-        end })
-    row:SetVisible(false)
-    reqRows[i] = row
-end
+-- One dropdown of the listed entries plus a Remove button, rather than a row of
+-- buttons per entry - that filled the panel with controls.
+local reqPick = nil
+local reqDrop = previewPanel:AddDropdown({
+    Name = "Pick Entry",
+    Options = { "Scan first" }, Default = "Scan first", Search = true,
+    Tooltip = "Choose a line from the list above to act on.",
+    Callback = function(v) reqPick = (typeof(v) == "table") and v[1] or v end })
+
+previewPanel:AddButton({
+    Name = "Remove Entry",
+    Tooltip = "Drops the chosen line: undoes its replacement, or hides it when there is none.",
+    Callback = function()
+        if not reqPick or reqPick == "Scan first" then
+            notifyWarn("Required Blocks", "Pick an entry first", 3)
+            return
+        end
+        local e
+        for _, r in ipairs(requiredBlocksList or {}) do
+            if r.label == reqPick then e = r break end
+        end
+        if not e then
+            notifyWarn("Required Blocks", "That entry is no longer listed", 3)
+            return
+        end
+        if e.from then
+            confirm("Remove Replacement",
+                "Stop replacing " .. resolveBlockDisplayName(e.from)
+                    .. " with " .. e.name .. "?",
+                "Remove", function()
+                    blockReplacements[e.from] = nil
+                    notifyOK("Replacement Removed", resolveBlockDisplayName(e.from) .. " left as-is", 4)
+                    if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+                end)
+        else
+            confirm("Hide Entry",
+                "Hide " .. e.name .. " from the required list?",
+                "Hide", function()
+                    requiredHidden[e.id] = true
+                    notify("Hidden", e.name .. " hidden from the list", 3, "info")
+                    if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+                end)
+        end
+    end })
 
 previewPanel:AddButton({
     Name = "Unhide All",
@@ -12218,26 +12263,23 @@ previewPanel:AddButton({
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
--- Paints the pooled rows from requiredBlocksList; summary carries the tail text.
+-- Fills the summary and the picker from requiredBlocksList.
 BuilderAPI.renderRequired = function(summaryText)
     pcall(function()
         local list = requiredBlocksList or {}
-        for i = 1, REQ_ROWS do
-            local e, row = list[i], reqRows[i]
-            if e then
-                local label = e.name
-                if e.from then label = resolveBlockDisplayName(e.from) .. " -> " .. e.name end
-                row:Set(label .. "   " .. e.have .. "/" .. e.need)
-                row:SetVisible(true)
-            else
-                row:SetVisible(false)
-            end
+        local opts = {}
+        for _, e in ipairs(list) do
+            local label = e.name
+            if e.from then label = resolveBlockDisplayName(e.from) .. " -> " .. e.name end
+            label = label .. "   " .. e.have .. "/" .. e.need
+            e.label = label
+            opts[#opts + 1] = label
         end
-        local extra = (#list > REQ_ROWS) and ("\n(" .. (#list - REQ_ROWS) .. " more not shown)") or ""
-        reqSummary:Set(tostring(summaryText or "") .. extra)
+        if #opts == 0 then opts = { "Nothing listed" } end
+        reqDrop:Refresh(opts, true)
+        reqSummary:Set(tostring(summaryText or ""))
     end)
 end
-
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

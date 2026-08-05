@@ -3976,6 +3976,30 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				
+				-- A small icon button on the toggle row, for an action that should
+				-- not require flipping the toggle itself.
+				if ToggleConfig.GearAction then
+					local actBtn = Create("TextButton", {
+						Text = "", BackgroundColor3 = Color3.fromRGB(30, 10, 55),
+						BorderSizePixel = 0, Size = UDim2.new(0, 24, 0, 24),
+						Position = UDim2.new(1, ToggleConfig.Options and -106 or -78, 0.5, -12),
+						ZIndex = 5, Parent = ToggleFrame,
+					})
+					AddThemeObject(actBtn, "Second")
+					AddThemeObject(Create("TextLabel", {
+						Text = ToggleConfig.GearAction.Icon or "layout-fluid",
+						FontFace = MakeBIconFont(), TextSize = 13,
+						BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+						ZIndex = 6, Parent = actBtn,
+					}), "TextDark")
+					Create("UICorner", {CornerRadius = UDim.new(0, 5), Parent = actBtn})
+					actBtn.MouseButton1Click:Connect(function()
+						if ToggleConfig.GearAction.OnClick then
+							pcall(ToggleConfig.GearAction.OnClick)
+						end
+					end)
+				end
+
 				if ToggleConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
