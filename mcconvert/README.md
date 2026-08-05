@@ -94,6 +94,9 @@ large; skip it if you want the solid interior.
 | Bellagio | 180,381 | 177,509 | 251x140x184 |
 | Airship | 1,026,835 | 253,961 | 263x207x699 |
 | RebirthEaster | 12,423 | 11,136 | 50x51x94 |
+| SomethingSomething | 43,932 | 28,828 | 95x103x95 |
+| Lavria | 730,123 | 339,754 | 331x107x331 |
+| DreamSpawn | 25,687 | 22,514 | 79x151x79 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
