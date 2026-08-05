@@ -93,6 +93,7 @@ large; skip it if you want the solid interior.
 | SquidGame | 286,481 | 279,200 | 351x120x341 |
 | Bellagio | 180,381 | 177,509 | 251x140x184 |
 | Airship | 1,026,835 | 253,961 | 263x207x699 |
+| RebirthEaster | 12,423 | 11,136 | 50x51x94 |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
