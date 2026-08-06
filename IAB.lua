@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 02 15:51"
+local IAB_BUILD = "Aug 06 10:12"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -326,6 +326,31 @@ local lastPreviewBlocks = nil
 -- placing it, for people who would rather not chase those shapes down.
 local includeStairs = true
 local includeSlabs = true
+
+-- Trimming a build from the preview. The brush can point at the ghost instead
+-- of the island, and whatever it deletes is remembered here so the real build
+-- skips those blocks too. Keyed on the block's position in the *file*, which
+-- survives moving or rotating the ghost.
+-- Globals, like the other brush state below - the main chunk is already at
+-- Luau's 200-local ceiling.
+brushPreview = false
+previewOmitted = {}
+previewOmittedCount = 0
+
+function blockSrcKey(b)
+    local c = b.cframe
+    return tostring(b.blockType) .. "@" .. c[1] .. "," .. c[2] .. "," .. c[3]
+end
+
+-- A build's blocks with anything deleted from the preview taken back out.
+function dropOmittedBlocks(blocks)
+    if previewOmittedCount == 0 then return blocks end
+    local out = {}
+    for _, b in ipairs(blocks) do
+        if not previewOmitted[blockSrcKey(b)] then out[#out + 1] = b end
+    end
+    return out
+end
 
 -- A build's blocks with the excluded shapes stripped out.
 function filterShapes(blocks)
@@ -666,6 +691,16 @@ local function getBlocksFolder()
     end
 
     return island:FindFirstChild("Blocks")
+end
+
+-- Where the block brush is pointing: the ghost preview while Brush Preview is
+-- on, the island otherwise. Every brush helper goes through this, so the two
+-- modes share one set of selection code.
+function brushScopeFolder()
+    if brushPreview and previewModel and previewModel.Parent then
+        return previewModel
+    end
+    return getBlocksFolder()
 end
 
 local gridPhaseIsland = nil
@@ -1683,6 +1718,29 @@ local function ghostifyClone(inst, transparency)
     end
 end
 
+-- Stamp a rendered ghost with the file position it came from, so deleting it
+-- can take the matching entry out of the build. `queryable` decides whether the
+-- brush's raycast can see it at all - ghosts ignore rays the rest of the time.
+function tagGhost(inst, key, queryable)
+    inst:SetAttribute("SrcKey", key)
+    if inst:IsA("BasePart") then inst.CanQuery = queryable end
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("BasePart") then d.CanQuery = queryable end
+    end
+end
+
+-- Flip every ghost between "solid to the brush" and "invisible to rays".
+function setPreviewQueryable(on)
+    if not previewModel or not previewModel.Parent then return end
+    for _, d in ipairs(previewModel:GetDescendants()) do
+        if d:IsA("BasePart") and d.Name ~= "PreviewRoot" and d.Name ~= "PreviewBBox" then
+            d.CanQuery = on
+        end
+    end
+end
+
+BuilderAPI.setPreviewQueryable = setPreviewQueryable
+
 local function getBuildBounds(blocks)
     local minV = Vector3.new(math.huge, math.huge, math.huge)
     local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
@@ -1866,6 +1924,7 @@ local function previewBuild(blocks)
                     elseif clone:IsA("BasePart") then
                         clone.CFrame = targetCF
                     end
+                    tagGhost(clone, blockSrcKey(block), brushPreview)
                     clone.Parent = model
                     rendered = true
                     work = work + 8
@@ -1887,6 +1946,7 @@ local function previewBuild(blocks)
             part.CFrame = targetCF
             part.Color = colorForBlockType(blockType)
             part:SetAttribute("GhostPreview", true)
+            tagGhost(part, blockSrcKey(block), brushPreview)
             part.Parent = model
             work = work + 1
         end
@@ -2465,7 +2525,70 @@ local function getRequiredBlocksText(blocks)
     return table.concat(lines, "\n")
 end
 
-auto:CreateSection("Build")
+-- These two drive everything else on the tab, so they sit above the sections
+-- rather than inside one.
+auto:CreateToggle({
+    Name = "Show Selection Box",
+    CurrentValue = false,
+    Flag = "ShowSelBox",
+    Tooltip = "Shows the box and limits Save Island Build to what is inside it.",
+    Callback = function(v)
+        selBoxOnly = v
+        if v then
+            pcall(function() BuilderAPI.showSelBox() end)
+            notify("Box Shown", "Drag the face handles to resize it", 3)
+        else
+            pcall(function() BuilderAPI.hideSelBox() end)
+        end
+    end
+})
+
+BuilderAPI.toggles.brush = auto:CreateToggle({
+    Name = "Block Brush",
+    Tooltip = "Hold click and drag over blocks to add them to the selection. The icon opens the brush settings without arming the brush.",
+    CurrentValue = false,
+    Flag = "BlockBrush",
+    -- The panel used to open with the toggle, which meant arming the brush just
+    -- to change its settings. It opens from the icon on this row instead.
+    GearAction = {
+        Icon = "gear",
+        OnClick = function()
+            local ok = pcall(function() BuilderAPI.brushPanel:Toggle() end)
+            if not ok then notifyWarn("Brush", "Panel not ready yet", 3) end
+        end,
+    },
+    Callback = function(v)
+        blockSelMode = v
+        if v then
+            if blockSelConn then blockSelConn.Disconnect() end
+            local downC = UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = true end
+            end)
+            local upC = UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = false end
+            end)
+            local paintC = RunService.Heartbeat:Connect(function()
+                if not blockSelMode or not blockSelDown then return end
+                local part, normal = blockUnderCursor()
+                if part then
+                    local erase = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                    for _, b in ipairs(brushTargets(part, normal)) do
+                        if erase then unhighlightBlock(b) else highlightBlock(b) end
+                    end
+                end
+            end)
+            blockSelConn = { Disconnect = function() downC:Disconnect() upC:Disconnect() paintC:Disconnect() end }
+            notify("Block Brush On", "Hold left-click to select, hold Shift to erase", 6)
+        else
+            if blockSelConn then blockSelConn.Disconnect() blockSelConn = nil end
+            blockSelDown = false
+            notify("Block Brush Off", blockSelCount .. " blocks still selected", 3)
+        end
+    end
+})
+
+auto:CreateSection("Build", { Collapsible = true })
 
 progressParagraph = auto:CreateParagraph({
     Title = "Build Progress",
@@ -2524,6 +2647,8 @@ fileDropdown = auto:CreateDropdown({
             selectedFile = option
         end
         savedPreviewTransform = nil
+        -- deletions belong to the build they were made on
+        restorePreviewDeletions()
     end
 })
 
@@ -2614,7 +2739,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
             end
             local missingOnly = placeMissingOnly
             if previewTransform then
-                local src = data.blocks
+                local src = dropOmittedBlocks(data.blocks)
                 task.spawn(function()
                     notify("Building", "Building where the ghost sits", 3, "info")
                     local transformed = filterShapes(transformBlocks(src, previewTransform))
@@ -2625,7 +2750,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
                     end
                 end)
             else
-                local blocks = filterShapes(data.blocks)
+                local blocks = filterShapes(dropOmittedBlocks(data.blocks))
                 if buildMode == "Turbo Print" then
                     task.spawn(function() turboPrint(blocks) end)
                 else
@@ -2798,7 +2923,7 @@ brushSurface = false   -- click selects the connected flat surface
 brushConnected = false -- click selects everything touching, in 3D
 
 function resolveBlockRoot(part)
-    local folder = getBlocksFolder()
+    local folder = brushScopeFolder()
     local node = part
     while node and node.Parent and node.Parent ~= folder and node.Parent ~= Workspace do
         node = node.Parent
@@ -2857,7 +2982,7 @@ end
 --   "x" / "z" - a wall, spreading along the wall and vertically
 --   nil - free in all six directions
 function floodSelect(part, plane, limit)
-    local folder = getBlocksFolder()
+    local folder = brushScopeFolder()
     if not folder then return {} end
     -- Clicks land on whatever sub-part the ray hit ("Top" on grass, a branch on
     -- a tree). Everything below works in whole blocks, which is why picking a
@@ -2922,7 +3047,7 @@ function brushTargets(part, normal)
     if brushSurface then return floodSelect(part, planeFromNormal(normal)) end
     local root = resolveBlockRoot(part)
     if brushRadius <= 0 then return { root } end
-    local folder = getBlocksFolder()
+    local folder = brushScopeFolder()
     local out = {}
     if not folder then return { root } end
     local origin = blockOrigin(root)
@@ -2979,6 +3104,44 @@ function clearBlockSelection()
     blockSelCount = 0
 end
 
+-- Take the current selection out of the ghost. The parts go now so the change
+-- is visible, and the file positions are remembered so Start Build leaves them
+-- out too. Returns how many blocks were dropped.
+function deleteSelectedFromPreview()
+    local gone = 0
+    for part in pairs(selectedBlocks) do
+        local key = part:GetAttribute("SrcKey")
+        if key then
+            if not previewOmitted[key] then
+                previewOmitted[key] = true
+                previewOmittedCount = previewOmittedCount + 1
+            end
+            gone = gone + 1
+        end
+    end
+    clearBlockSelection()
+    -- destroy after clearing, so the SelectionBoxes parented to them are
+    -- already gone and nothing is left adorning a dead part
+    if previewModel and previewModel.Parent then
+        for _, d in ipairs(previewModel:GetChildren()) do
+            local key = d:GetAttribute("SrcKey")
+            if key and previewOmitted[key] then pcall(function() d:Destroy() end) end
+        end
+    end
+    if lastPreviewBlocks then
+        lastPreviewBlocks = dropOmittedBlocks(lastPreviewBlocks)
+    end
+    return gone
+end
+
+-- Put everything deleted from the preview back into the build.
+function restorePreviewDeletions()
+    local n = previewOmittedCount
+    previewOmitted = {}
+    previewOmittedCount = 0
+    return n
+end
+
 task.spawn(function()
     while true do
         local a = (math.sin(tick() * 1.8) + 1) / 2
@@ -2997,13 +3160,15 @@ function blockUnderCursor()
     local ray = cam:ViewportPointToRay(mp.X, mp.Y)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Include
-    local folder = getBlocksFolder()
+    local folder = brushScopeFolder()
     if not folder then return nil end
     params.FilterDescendantsInstances = { folder }
     local hit = Workspace:Raycast(ray.Origin, ray.Direction * 5000, params)
     if hit and hit.Instance and hit.Instance:IsA("BasePart") then
         local n = resolveBlockRoot(hit.Instance).Name
-        if n ~= "bedrock" and n ~= "portalToSpawn" then
+        -- the ghost's own scaffolding is not a block you can paint
+        if n ~= "bedrock" and n ~= "portalToSpawn"
+            and n ~= "PreviewRoot" and n ~= "PreviewBBox" then
             -- the face normal tells Surface Select whether it is looking at a
             -- floor or a wall
             return hit.Instance, hit.Normal
@@ -3212,6 +3377,11 @@ local function showSelBox()
     end)
 end
 
+-- The Show Selection Box toggle is built at the top of the tab, above these
+-- definitions, so it reaches them through here.
+BuilderAPI.showSelBox = showSelBox
+BuilderAPI.hideSelBox = hideSelBox
+
 -- Right column runs Preview, Image, Save; Image is built last but sits above
 -- Save, so all three are ordered explicitly.
 previewTab:CreateSection("Preview", { Collapsible = true, Column = "right", Order = 0 })
@@ -3223,9 +3393,10 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
     -- The panel opens from the icon on this row rather than with the toggle,
     -- so the required-blocks list can be read without rendering a preview.
     GearAction = {
-        Icon = "layout-fluid",
+        Icon = "gear",
         OnClick = function()
-            pcall(function() BuilderAPI.previewPanel:Toggle() end)
+            local ok = pcall(function() BuilderAPI.previewPanel:Toggle() end)
+            if not ok then notifyWarn("Preview Panel", "Panel not ready yet", 3) end
         end,
     },
     Callback = function(v)
@@ -3236,24 +3407,29 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
                 return
             end
             task.spawn(function()
-                previewBuild(filterShapes(data.blocks))
+                previewBuild(filterShapes(dropOmittedBlocks(data.blocks)))
             end)
         else
             clearPreview()
+            -- the ghost the brush was painting is gone with it
+            if brushPreview then
+                brushPreview = false
+                clearBlockSelection()
+                pcall(function() BuilderAPI.toggles.brushPreview:Set(false) end)
+            end
             notify("Preview Off", "Ghost blocks removed", 2)
         end
     end
 })
 
--- A plain button as well as the icon on the row above: the icon depends on the
--- glyph font loading, and this is meant to be the reliable way in.
-previewTab:CreateButton({
-    Name = "Preview Panel",
-    Tooltip = "Open the panel: move handles, ghost settings, stair and slab filters, and the required-blocks list. Does not turn the preview on.",
-    Callback = function()
-        local ok = pcall(function() BuilderAPI.previewPanel:Toggle() end)
-        if not ok then notifyWarn("Preview Panel", "Panel not ready yet", 3) end
-    end
+-- Move Handles rides directly under the toggle it belongs to, rather than being
+-- buried in the panel.
+BuilderAPI.toggles.handles = previewTab:CreateToggle({
+    Name = "Move Handles",
+    CurrentValue = false,
+    Flag = "PreviewDrag",
+    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
+    Callback = function(v) setDragMode(v) end
 })
 
 
@@ -3445,7 +3621,7 @@ previewTab:CreateButton({
 saveTab:CreateSection("Save", { Collapsible = true, Column = "right", Order = 2 })
 
 saveTab:CreateInput({
-    Name = "Save As",
+    Name = "Build Name",
     PlaceholderText = "MyBuild",
     RemoveTextAfterFocusLost = false,
     Callback = function(text)
@@ -3454,65 +3630,6 @@ saveTab:CreateInput({
         end
     end
 })
-
-saveTab:CreateToggle({
-    Name = "Show Selection Box",
-    CurrentValue = false,
-    Flag = "ShowSelBox",
-    Tooltip = "Shows the box and limits Save Island Build to what is inside it.",
-    Callback = function(v)
-        selBoxOnly = v
-        if v then
-            showSelBox()
-            notify("Box Shown", "Drag the face handles to resize it", 3)
-        else
-            hideSelBox()
-        end
-    end
-})
-
-
-
-BuilderAPI.toggles.brush = saveTab:CreateToggle({
-    Name = "Block Brush",
-    Tooltip = "Hold click and drag over blocks in the world to add them to the selection.",
-    CurrentValue = false,
-    Flag = "BlockBrush",
-    Callback = function(v)
-        blockSelMode = v
-        -- the panel holds this tool's settings, so it follows the toggle
-        pcall(function()
-            if v then BuilderAPI.brushPanel:Show() else BuilderAPI.brushPanel:Hide() end
-        end)
-        if v then
-            if blockSelConn then blockSelConn.Disconnect() end
-            local downC = UserInputService.InputBegan:Connect(function(input, gp)
-                if gp then return end
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = true end
-            end)
-            local upC = UserInputService.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then blockSelDown = false end
-            end)
-            local paintC = RunService.Heartbeat:Connect(function()
-                if not blockSelMode or not blockSelDown then return end
-                local part, normal = blockUnderCursor()
-                if part then
-                    local erase = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-                    for _, b in ipairs(brushTargets(part, normal)) do
-                        if erase then unhighlightBlock(b) else highlightBlock(b) end
-                    end
-                end
-            end)
-            blockSelConn = { Disconnect = function() downC:Disconnect() upC:Disconnect() paintC:Disconnect() end }
-            notify("Block Brush On", "Hold left-click to select, hold Shift to erase", 6)
-        else
-            if blockSelConn then blockSelConn.Disconnect() blockSelConn = nil end
-            blockSelDown = false
-            notify("Block Brush Off", blockSelCount .. " blocks still selected", 3)
-        end
-    end
-})
-
 
 saveTab:CreateDropdown({
     Name = "Save Mode",
@@ -3572,7 +3689,7 @@ saveTab:CreateDropdown({
 
 saveTab:CreateButton({
     Name = "Save",
-    Tooltip = "Saves the chosen target to a build file using the Save As name.",
+    Tooltip = "Saves the chosen target to a build file using the Build Name.",
     Callback = function()
         task.spawn(function()
             if saveTarget == "Selected Only" then
@@ -11238,7 +11355,7 @@ auto:CreateSection("Image", { Collapsible = true, Column = "right", Order = 1 })
 -- each control has its own hover tooltip.
 imgPara = auto:CreateParagraph({
     Title = "Image",
-    Content = "Load a direct .png link to begin.",
+    Content = "",
 })
 
 -- Load and Check ride on the URL field itself rather than being separate
@@ -11287,7 +11404,7 @@ auto:CreateDropdown({
 })
 
 auto:CreateDropdown({
-    Name = "Block Palette",
+    Name = "Palette",
     Options = IMAGE_GROUPS,
     CurrentOption = {},
     MultipleOptions = true,
@@ -11306,7 +11423,7 @@ auto:CreateDropdown({
 })
 
 auto:CreateSlider({
-    Name = "Simplify (max blocks)", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
+    Name = "Simplify", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
     Suffix = "types", Flag = "IMGSimple",
     Tooltip = "Cap how many different blocks the whole image uses. 0 is off. Low values give a poster look.",
     Callback = function(v)
@@ -11339,7 +11456,7 @@ auto:CreateSlider({
 
 -- One toggle owns the preview: on shows it at the cursor, off clears it.
 BuilderAPI.toggles.imagePreview = auto:CreateToggle({
-    Name = "Preview Image at Cursor",
+    Name = "Preview Image",
     CurrentValue = false,
     Flag = "IMGPreview",
     Tooltip = "Shows the image as the real blocks it will use, where you are pointing. Turn off to remove it.",
@@ -11354,7 +11471,7 @@ BuilderAPI.toggles.imagePreview = auto:CreateToggle({
 })
 
 -- Saving the image build file is driven from the Save section's dropdown now,
--- so it can share the one "Save As" name box. Exposed for that button to call.
+-- so it can share the one Build Name box. Exposed for that button to call.
 BuilderAPI.generateImage = function(nameOverride)
     if nameOverride and nameOverride ~= "" then IMG.file = nameOverride end
     generateImageFile()
@@ -12167,58 +12284,7 @@ do
 local previewPanel = Duvome:MakeSidePanel({ Name = "Preview", Width = 200, Height = 320, Side = "right" })
 BuilderAPI.previewPanel = previewPanel
 
-BuilderAPI.toggles.handles = previewPanel:AddToggle({
-    Name = "Move Handles", Default = false, Flag = "PreviewDrag",
-    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
-    Callback = function(v) setDragMode(v) end })
-
-previewPanel:AddDivider()
-
-previewPanel:AddToggle({
-    Name = "Use Real Models", Default = true,
-    Callback = function(v) previewRealModels = v end })
-
-previewPanel:AddToggle({
-    Name = "Low-Lag Preview", Default = false,
-    Callback = function(v) previewMinimized = v end })
-
-previewPanel:AddToggle({
-    Name = "Include Stairs", Default = true,
-    Tooltip = "Off leaves every stair out of the preview and the build.",
-    Callback = function(v) includeStairs = v end })
-
-previewPanel:AddToggle({
-    Name = "Include Slabs", Default = true,
-    Tooltip = "Off leaves every slab out of the preview and the build.",
-    Callback = function(v) includeSlabs = v end })
-
-previewPanel:AddSlider({
-    Name = "Transparency", Min = 0, Max = 90, Increment = 5, Default = 50, ValueName = "%",
-    Callback = function(v)
-        previewTransparency = v / 100
-        local folder = Workspace:FindFirstChild(previewFolderName)
-        if folder then
-            for _, part in ipairs(folder:GetDescendants()) do
-                if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
-                    part.Transparency = previewTransparency
-                end
-            end
-        end
-    end })
-
-previewPanel:AddButton({ Name = "Rotate 90", Callback = function()
-        if not previewModel or not previewModel.Parent then
-            notify("No Preview", "Preview a build first", 3)
-            return
-        end
-        rotatePreview(90)
-        notify("Rotated", "Turned 90 degrees", 2)
-    end })
-
 -- ── Required blocks ────────────────────────────────────────────────────────
-previewPanel:AddDivider()
-previewPanel:AddLabel("Required Blocks")
-
 previewPanel:AddButton({
     Name = "Show Required Blocks",
     Tooltip = "Scan the build and list what you still need.",
@@ -12282,6 +12348,57 @@ previewPanel:AddButton({
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
+previewPanel:AddDivider()
+
+previewPanel:AddToggle({
+    Name = "Use Real Models", Default = true,
+    Callback = function(v) previewRealModels = v end })
+
+previewPanel:AddToggle({
+    Name = "Low-Lag Preview", Default = false,
+    Callback = function(v) previewMinimized = v end })
+
+previewPanel:AddToggle({
+    Name = "Include Stairs", Default = true,
+    Tooltip = "Off leaves every stair out of the preview and the build.",
+    Callback = function(v) includeStairs = v end })
+
+previewPanel:AddToggle({
+    Name = "Include Slabs", Default = true,
+    Tooltip = "Off leaves every slab out of the preview and the build.",
+    Callback = function(v) includeSlabs = v end })
+
+previewPanel:AddSlider({
+    Name = "Transparency", Min = 0, Max = 90, Increment = 5, Default = 50, ValueName = "%",
+    Callback = function(v)
+        previewTransparency = v / 100
+        local folder = Workspace:FindFirstChild(previewFolderName)
+        if folder then
+            for _, part in ipairs(folder:GetDescendants()) do
+                if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
+                    part.Transparency = previewTransparency
+                end
+            end
+        end
+        -- The brush only reaches a solid ghost, so making it see-through again
+        -- stands Brush Preview down rather than leaving it armed and useless.
+        if previewTransparency > 0 and brushPreview then
+            brushPreview = false
+            pcall(function() BuilderAPI.setPreviewQueryable(false) end)
+            pcall(function() BuilderAPI.toggles.brushPreview:Set(false) end)
+            notifyWarn("Brush Preview", "Off - the ghost is see-through again", 4)
+        end
+    end })
+
+previewPanel:AddButton({ Name = "Rotate 90", Callback = function()
+        if not previewModel or not previewModel.Parent then
+            notify("No Preview", "Preview a build first", 3)
+            return
+        end
+        rotatePreview(90)
+        notify("Rotated", "Turned 90 degrees", 2)
+    end })
+
 -- Fills the summary and the picker from requiredBlocksList.
 BuilderAPI.renderRequired = function(summaryText)
     pcall(function()
@@ -12306,7 +12423,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 do
 
-local brushPanel = Duvome:MakeSidePanel({ Name = "Brush", Width = 200, Height = 340, Side = "right" })
+local brushPanel = Duvome:MakeSidePanel({ Name = "Brush", Width = 200, Height = 420, Side = "right" })
 BuilderAPI.brushPanel = brushPanel
 
 local surfaceT, connectedT
@@ -12330,6 +12447,73 @@ brushPanel:AddSlider({
     Name = "Brush Size", Min = 0, Max = 8, Increment = 1, Default = 0, ValueName = "blk",
     Callback = function(v) brushRadius = v end })
 
+-- ── Editing the preview ────────────────────────────────────────────────────
+-- Point the brush at the ghost instead of the island, so a build can be
+-- trimmed before a single block is placed. Surface and Connected Select work
+-- here exactly as they do on the island.
+brushPanel:AddDivider()
+
+BuilderAPI.toggles.brushPreview = brushPanel:AddToggle({
+    Name = "Brush Preview", Default = false,
+    Tooltip = "Paint on the ghost rather than the island. Needs Transparency at 0 - a see-through ghost lets the brush's ray straight through.",
+    Callback = function(v)
+        if v then
+            if not previewModel or not previewModel.Parent then
+                notifyWarn("Brush Preview", "Preview a build first", 4)
+                pcall(function() BuilderAPI.toggles.brushPreview:Set(false) end)
+                return
+            end
+            if previewTransparency > 0 then
+                notifyWarn("Brush Preview", "Set Transparency to 0 first, then turn this on", 6)
+                pcall(function() BuilderAPI.toggles.brushPreview:Set(false) end)
+                return
+            end
+            clearBlockSelection()
+            brushPreview = true
+            setPreviewQueryable(true)
+            notify("Brush Preview On", "Paint the ghost, then Delete Selected", 6)
+        else
+            clearBlockSelection()
+            brushPreview = false
+            setPreviewQueryable(false)
+            notify("Brush Preview Off", "The brush is back on the island", 3, "info")
+        end
+    end })
+
+brushPanel:AddButton({
+    Name = "Delete Selected",
+    Tooltip = "Removes the painted blocks from the ghost and leaves them out of the build.",
+    Callback = function()
+        if not brushPreview then
+            notifyWarn("Delete", "Turn Brush Preview on first", 4)
+            return
+        end
+        if blockSelCount == 0 then
+            notifyWarn("Delete", "Paint some ghost blocks first", 4)
+            return
+        end
+        local n = blockSelCount
+        confirm("Delete From Preview",
+            "Remove " .. n .. " block(s) from this build? Start Build will skip them.",
+            "Delete", function()
+                local gone = deleteSelectedFromPreview()
+                notifyOK("Deleted", gone .. " block(s) removed from the build", 4)
+            end)
+    end })
+
+brushPanel:AddButton({
+    Name = "Restore Deleted",
+    Tooltip = "Puts every block you deleted from the preview back into the build.",
+    Callback = function()
+        local n = restorePreviewDeletions()
+        if n == 0 then
+            notify("Restore", "Nothing was deleted", 3, "info")
+            return
+        end
+        notifyOK("Restored", n .. " block(s) back in - re-run Preview Build to see them", 5)
+    end })
+
+-- ── Selection ──────────────────────────────────────────────────────────────
 brushPanel:AddDivider()
 brushPanel:AddButton({ Name = "Clear Selection", Callback = function()
         clearBlockSelection()
@@ -12337,6 +12521,10 @@ brushPanel:AddButton({ Name = "Clear Selection", Callback = function()
     end })
 brushPanel:AddButton({ Name = "Save Selected Blocks", Callback = function()
         task.spawn(function()
+            if brushPreview then
+                notifyWarn("Save", "Brush Preview paints the ghost, not real blocks", 4)
+                return
+            end
             if blockSelCount == 0 then
                 notify("Nothing Selected", "Use the Block Brush to select blocks first", 4)
                 return
