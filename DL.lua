@@ -4256,7 +4256,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						for _,v in ipairs(DropdownConfig.Default) do Dropdown.Selected[v] = true end
 					end
 				end
-				local MaxElements = 5
+				-- Long lists (the required-blocks picker) can ask for a taller window.
+				local MaxElements = DropdownConfig.MaxElements or 5
 				if not Dropdown.Multi and not table.find(Dropdown.Options, Dropdown.Value) then Dropdown.Value = "..." end
 				local DropdownList      = MakeElement("List")
 				local DropdownContainer = AddThemeObject(SetProps(SetChildren(MakeElement("ScrollFrame", Color3.fromRGB(40, 40, 40), 4), {
@@ -4416,8 +4417,17 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						Dropdown.Value = "..."
 						DropdownFrame.F.Selected.Text = Dropdown.Value
 					end
-					-- the new buttons are not laid out yet, so measure on the next frame
-					if Dropdown.Toggled then task.defer(ApplyDropdownSize) end
+					-- The buttons are not laid out yet, so measure next frame. The
+					-- canvas is set from the option count rather than waiting on the
+					-- AbsoluteContentSize signal, which does not fire when a refresh
+					-- happens to end up the same height - that left the list stuck at
+					-- whatever it could show and refusing to scroll.
+					task.defer(function()
+						if not DropdownContainer.Parent then return end
+						DropdownContainer.CanvasSize =
+							UDim2.new(0, 0, 0, math.max(DropdownList.AbsoluteContentSize.Y, #Dropdown.Options * 28))
+						if Dropdown.Toggled then ApplyDropdownSize() end
+					end)
 				end
 				function Dropdown:Set(Value)
 					if Dropdown.Multi then

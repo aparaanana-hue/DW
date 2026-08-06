@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 11:34"
+local IAB_BUILD = "Aug 06 12:20"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -614,83 +614,73 @@ function dropOmittedBlocks(blocks)
     return out
 end
 
--- ── No Interior ─────────────────────────────────────────────────────────────
--- Keep the shell and throw away everything sealed inside it. Rather than asking
--- "is this block surrounded on all six sides", which only catches solid fill,
--- this floods the empty space inwards from outside the build's bounding box: a
--- block survives only if some air you could actually walk to touches one of its
--- faces. That is what empties a house of its furniture and leaves a hollow
--- sphere's contents behind while keeping the sphere.
-local INTERIOR_CELL_CAP = 4000000
+-- ── Overlap ────────────────────────────────────────────────────────────────
+-- One block per cell per half is all Islands can hold, so two entries landing
+-- on the same spot is a fault in the file, not a feature. Left alone they
+-- z-fight in the preview and fight over the same slot during a build, which is
+-- what the flickering and the doubled-up stairs were.
+function dedupeBlocks(blocks)
+    local seen, out, dropped = {}, {}, 0
+    for i, b in ipairs(blocks) do
+        local p = arrayToCFrame(b.cframe).Position
+        local k = math.floor(p.X / 3 + 0.5) .. "," .. math.floor(p.Y / 3 + 0.5)
+            .. "," .. math.floor(p.Z / 3 + 0.5) .. "," .. tostring(b.upperBlock == true)
+        if seen[k] then
+            dropped = dropped + 1
+        else
+            seen[k] = true
+            out[#out + 1] = b
+        end
+        if i % 20000 == 0 then task.wait() end
+    end
+    if dropped > 0 then
+        notify("Overlap", dropped .. " block(s) sharing a slot dropped", 4, "info")
+    end
+    return out
+end
 
+-- ── No Interior ─────────────────────────────────────────────────────────────
+-- Keep the outer skin and nothing else. A block survives only when it is the
+-- first thing you would meet coming in along one of the six axes: the lowest or
+-- highest occupied cell in its row, its column, or its depth line.
+--
+-- The first version of this flooded air inwards from outside the bounding box
+-- and kept whatever that air touched. It answers "can you reach this", which
+-- sounds right but is not what is wanted here - one doorway, window or open
+-- roof and the flood pours in, lighting up every interior floor and platform
+-- behind it. Working from the outside in ignores openings entirely.
 function hollowExterior(blocks)
     if not noInterior or #blocks == 0 then return blocks end
 
-    local function cellOf(b)
-        local p = arrayToCFrame(b.cframe).Position
-        return math.floor(p.X / 3 + 0.5), math.floor(p.Y / 3 + 0.5), math.floor(p.Z / 3 + 0.5)
-    end
-    local function key(x, y, z) return x .. "," .. y .. "," .. z end
-
-    local occupied = {}
-    local minx, miny, minz = math.huge, math.huge, math.huge
-    local maxx, maxy, maxz = -math.huge, -math.huge, -math.huge
     local cells = {}
+    -- extremes along each axis, keyed by the two coordinates held fixed
+    local xLo, xHi, yLo, yHi, zLo, zHi = {}, {}, {}, {}, {}, {}
+    local function stretch(lo, hi, k, v)
+        if lo[k] == nil or v < lo[k] then lo[k] = v end
+        if hi[k] == nil or v > hi[k] then hi[k] = v end
+    end
+
     for i, b in ipairs(blocks) do
-        local x, y, z = cellOf(b)
+        local p = arrayToCFrame(b.cframe).Position
+        local x = math.floor(p.X / 3 + 0.5)
+        local y = math.floor(p.Y / 3 + 0.5)
+        local z = math.floor(p.Z / 3 + 0.5)
         cells[i] = { x, y, z }
-        occupied[key(x, y, z)] = true
-        if x < minx then minx = x end
-        if y < miny then miny = y end
-        if z < minz then minz = z end
-        if x > maxx then maxx = x end
-        if y > maxy then maxy = y end
-        if z > maxz then maxz = z end
+        stretch(xLo, xHi, y .. "," .. z, x)
+        stretch(yLo, yHi, x .. "," .. z, y)
+        stretch(zLo, zHi, x .. "," .. y, z)
         if i % 20000 == 0 then task.wait() end
-    end
-
-    -- one cell of air all the way round, so the flood has somewhere to start
-    local lox, loy, loz = minx - 1, miny - 1, minz - 1
-    local hix, hiy, hiz = maxx + 1, maxy + 1, maxz + 1
-    local volume = (hix - lox + 1) * (hiy - loy + 1) * (hiz - loz + 1)
-    if volume > INTERIOR_CELL_CAP then
-        notifyWarn("No Interior", "Build is too large to hollow safely - left as-is", 6)
-        return blocks
-    end
-
-    local DIRS = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} }
-    local outside = { [key(lox, loy, loz)] = true }
-    local queue, head = { { lox, loy, loz } }, 1
-    local steps = 0
-    while head <= #queue do
-        local c = queue[head]
-        head = head + 1
-        for _, d in ipairs(DIRS) do
-            local nx, ny, nz = c[1] + d[1], c[2] + d[2], c[3] + d[3]
-            if nx >= lox and nx <= hix and ny >= loy and ny <= hiy
-                and nz >= loz and nz <= hiz then
-                local nk = key(nx, ny, nz)
-                if not outside[nk] and not occupied[nk] then
-                    outside[nk] = true
-                    queue[#queue + 1] = { nx, ny, nz }
-                end
-            end
-        end
-        steps = steps + 1
-        if steps % 20000 == 0 then task.wait() end
     end
 
     local out = {}
     for i, b in ipairs(blocks) do
-        local c = cells[i]
-        local exposed = false
-        for _, d in ipairs(DIRS) do
-            if outside[key(c[1] + d[1], c[2] + d[2], c[3] + d[3])] then
-                exposed = true
-                break
-            end
+        local x, y, z = cells[i][1], cells[i][2], cells[i][3]
+        local kx, ky, kz = y .. "," .. z, x .. "," .. z, x .. "," .. y
+        if x == xLo[kx] or x == xHi[kx]
+            or y == yLo[ky] or y == yHi[ky]
+            or z == zLo[kz] or z == zHi[kz] then
+            out[#out + 1] = b
         end
-        if exposed then out[#out + 1] = b end
         if i % 20000 == 0 then task.wait() end
     end
 
@@ -2846,7 +2836,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
                 task.spawn(function()
                     notify("Building", "Building where the ghost sits", 3, "info")
                     -- hollowExterior yields, so it belongs in here
-                    local src = hollowExterior(raw)
+                    local src = hollowExterior(dedupeBlocks(raw))
                     local transformed = filterShapes(transformBlocks(src, previewTransform))
                     if buildMode == "Turbo Print" then
                         turboPrint(transformed)
@@ -2857,7 +2847,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
             else
                 -- hollowExterior yields, so this runs off the toggle callback
                 task.spawn(function()
-                    local blocks = filterShapes(hollowExterior(dropOmittedBlocks(data.blocks)))
+                    local blocks = filterShapes(hollowExterior(dedupeBlocks(dropOmittedBlocks(data.blocks))))
                     if buildMode == "Turbo Print" then
                         turboPrint(blocks)
                     else
@@ -3515,7 +3505,7 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
                 return
             end
             task.spawn(function()
-                previewBuild(filterShapes(hollowExterior(dropOmittedBlocks(data.blocks))))
+                previewBuild(filterShapes(hollowExterior(dedupeBlocks(dropOmittedBlocks(data.blocks)))))
             end)
         else
             clearPreview()
@@ -12402,12 +12392,22 @@ previewPanel:AddButton({
 
 local reqSummary = previewPanel:AddParagraph("Required", "Tap Show Required Blocks.")
 
+previewPanel:AddSlider({
+    Name = "Hide Under", Min = 1, Max = 64, Increment = 1, Default = 1, ValueName = "blk",
+    Tooltip = "Leave out any block the build needs fewer of than this. 1 shows everything.",
+    Callback = function(v)
+        requiredMinCount = v
+        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+    end })
+
 -- One dropdown of the listed entries plus a Remove button, rather than a row of
 -- buttons per entry - that filled the panel with controls.
 local reqPick = nil
 local reqDrop = previewPanel:AddDropdown({
     Name = "Pick Entry",
     Options = { "Scan first" }, Default = "Scan first", Search = true,
+    -- the required list runs long; five visible rows was not enough to work with
+    MaxElements = 12,
     Tooltip = "Choose a line from the list above to act on.",
     Callback = function(v) reqPick = (typeof(v) == "table") and v[1] or v end })
 
