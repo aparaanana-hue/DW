@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 12:20"
+local IAB_BUILD = "Aug 06 13:05"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1991,13 +1991,11 @@ local function previewBuild(blocks)
 
         local blockType = effectiveType(tostring(block.blockType))
         local base = baseTransform * arrayToCFrame(block.cframe)
-        local targetCF = CFrame.new(snapGridVec(base.Position)) * base.Rotation
-        -- upperBlock puts a slab or stair in the top half of its cell. The
-        -- placement remote gets told, but the ghost was drawn low regardless,
-        -- so the preview disagreed with what actually got built.
-        if block.upperBlock == true then
-            targetCF = targetCF + Vector3.new(0, 1.5, 0)
-        end
+        local cellCF = CFrame.new(snapGridVec(base.Position)) * base.Rotation
+        local upper = block.upperBlock == true
+        -- upperBlock puts a slab or stair in the top half of its cell. A real
+        -- model is already the right shape, so it just moves up into that half.
+        local targetCF = upper and (cellCF + Vector3.new(0, 1.5, 0)) or cellCF
         local rendered = false
 
         if previewRealModels and not previewMinimized and isModelType(blockType) then
@@ -2032,8 +2030,20 @@ local function previewBuild(blocks)
             part.CastShadow = false
             part.Material = Enum.Material.SmoothPlastic
             part.Transparency = previewTransparency
-            part.Size = Vector3.new(previewBlockSize, previewBlockSize, previewBlockSize)
-            part.CFrame = targetCF
+            -- The stand-in is a plain cube, so it cannot be shifted a half cell
+            -- up the way a real model can - a full cube moved up by half its
+            -- height juts into the cell above and overlaps whatever is there.
+            -- Half-height blocks are drawn half height instead, seated in
+            -- whichever half of the cell they belong to.
+            local half = upper or blockType:find("[Ss]lab") ~= nil
+            local h = half and (previewBlockSize / 2) or previewBlockSize
+            part.Size = Vector3.new(previewBlockSize, h, previewBlockSize)
+            if half then
+                local dy = upper and (previewBlockSize / 4) or -(previewBlockSize / 4)
+                part.CFrame = cellCF + Vector3.new(0, dy, 0)
+            else
+                part.CFrame = cellCF
+            end
             part.Color = colorForBlockType(blockType)
             part:SetAttribute("GhostPreview", true)
             tagGhost(part, blockSrcKey(block), brushPreview)
