@@ -2,7 +2,9 @@
 
 Turns Minecraft builds into Islands build files (`{ "blocks": [...] }` with
 `cframe` arrays), ready to drop into `autoBuilder` and preview/build like any
-other file. Output lands in `../builds/`.
+other file. Output lands in `../builds/solid/` (hollowed-out versions of the
+same builds live alongside it in `../builds/hollow/`, without the `Hollow`
+name suffix).
 
 1 Minecraft block = 3 studs. Blocks are anchored at the build's own corner, so
 a file drops in anywhere.
