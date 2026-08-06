@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 13:05"
+local IAB_BUILD = "Aug 06 13:48"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1993,9 +1993,20 @@ local function previewBuild(blocks)
         local base = baseTransform * arrayToCFrame(block.cframe)
         local cellCF = CFrame.new(snapGridVec(base.Position)) * base.Rotation
         local upper = block.upperBlock == true
-        -- upperBlock puts a slab or stair in the top half of its cell. A real
-        -- model is already the right shape, so it just moves up into that half.
-        local targetCF = upper and (cellCF + Vector3.new(0, 1.5, 0)) or cellCF
+        local isSlab = blockType:find("[Ss]lab") ~= nil
+        local isStair = blockType:find("[Ss]tair") ~= nil
+
+        -- upperBlock means two different things and they were being treated as
+        -- one. A top slab really does sit in the upper half of its cell, so it
+        -- moves half a cell up. A top stair is an upside-down stair: it still
+        -- fills its own cell, and is rolled over about the way it faces so the
+        -- step ends up at the top. Moving that one up as well pushed a
+        -- full-height stair straight through the block above it, which is the
+        -- overlap you could see everywhere stairs met slabs.
+        local targetCF = cellCF
+        if upper and isStair then
+            targetCF = cellCF * CFrame.Angles(0, 0, math.pi)
+        end
         local rendered = false
 
         if previewRealModels and not previewMinimized and isModelType(blockType) then
@@ -2011,6 +2022,30 @@ local function previewBuild(blocks)
                         pcall(function() clone:PivotTo(targetCF) end)
                     elseif clone:IsA("BasePart") then
                         clone.CFrame = targetCF
+                    end
+                    -- A top slab sits flush with the top of its cell. Work the
+                    -- lift out from the model's own height instead of assuming
+                    -- a half cell: templates are not all built around their
+                    -- pivot the same way, and guessing left them poking into
+                    -- the cell above.
+                    if upper and isSlab then
+                        pcall(function()
+                            local topY
+                            if clone:IsA("Model") then
+                                local bcf, bsize = clone:GetBoundingBox()
+                                topY = bcf.Position.Y + bsize.Y / 2
+                            else
+                                topY = clone.Position.Y + clone.Size.Y / 2
+                            end
+                            local lift = (cellCF.Position.Y + previewBlockSize / 2) - topY
+                            if math.abs(lift) > 0.01 then
+                                if clone:IsA("Model") then
+                                    clone:PivotTo(clone:GetPivot() + Vector3.new(0, lift, 0))
+                                else
+                                    clone.CFrame = clone.CFrame + Vector3.new(0, lift, 0)
+                                end
+                            end
+                        end)
                     end
                     tagGhost(clone, blockSrcKey(block), brushPreview)
                     clone.Parent = model
@@ -2030,18 +2065,16 @@ local function previewBuild(blocks)
             part.CastShadow = false
             part.Material = Enum.Material.SmoothPlastic
             part.Transparency = previewTransparency
-            -- The stand-in is a plain cube, so it cannot be shifted a half cell
-            -- up the way a real model can - a full cube moved up by half its
-            -- height juts into the cell above and overlaps whatever is there.
-            -- Half-height blocks are drawn half height instead, seated in
-            -- whichever half of the cell they belong to.
-            local half = upper or blockType:find("[Ss]lab") ~= nil
-            local h = half and (previewBlockSize / 2) or previewBlockSize
-            part.Size = Vector3.new(previewBlockSize, h, previewBlockSize)
-            if half then
-                local dy = upper and (previewBlockSize / 4) or -(previewBlockSize / 4)
+            -- A slab fills half its cell, so the stand-in is drawn half height
+            -- and seated in the half it belongs to. Everything else, stairs
+            -- included, fills the whole cell and is left alone: a full-height
+            -- cube nudged up or down only ends up inside its neighbour.
+            if isSlab then
+                local dy = (upper and 1 or -1) * (previewBlockSize / 4)
+                part.Size = Vector3.new(previewBlockSize, previewBlockSize / 2, previewBlockSize)
                 part.CFrame = cellCF + Vector3.new(0, dy, 0)
             else
+                part.Size = Vector3.new(previewBlockSize, previewBlockSize, previewBlockSize)
                 part.CFrame = cellCF
             end
             part.Color = colorForBlockType(blockType)
