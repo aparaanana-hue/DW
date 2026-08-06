@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 10:12"
+local IAB_BUILD = "Aug 06 10:41"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -336,6 +336,12 @@ local includeSlabs = true
 brushPreview = false
 previewOmitted = {}
 previewOmittedCount = 0
+-- Whole block types dropped from the build, from Remove Entry on the required
+-- list: a type you cannot get is better left out than left missing.
+omittedTypes = {}
+omittedTypeCount = 0
+-- Keep only what can be seen from outside.
+noInterior = false
 
 function blockSrcKey(b)
     local c = b.cframe
@@ -344,11 +350,103 @@ end
 
 -- A build's blocks with anything deleted from the preview taken back out.
 function dropOmittedBlocks(blocks)
-    if previewOmittedCount == 0 then return blocks end
+    if previewOmittedCount == 0 and omittedTypeCount == 0 then return blocks end
     local out = {}
     for _, b in ipairs(blocks) do
-        if not previewOmitted[blockSrcKey(b)] then out[#out + 1] = b end
+        local keep = not previewOmitted[blockSrcKey(b)]
+        if keep and omittedTypeCount > 0 then
+            keep = not omittedTypes[effectiveType(tostring(b.blockType))]
+        end
+        if keep then out[#out + 1] = b end
     end
+    return out
+end
+
+-- ── No Interior ─────────────────────────────────────────────────────────────
+-- Keep the shell and throw away everything sealed inside it. Rather than asking
+-- "is this block surrounded on all six sides", which only catches solid fill,
+-- this floods the empty space inwards from outside the build's bounding box: a
+-- block survives only if some air you could actually walk to touches one of its
+-- faces. That is what empties a house of its furniture and leaves a hollow
+-- sphere's contents behind while keeping the sphere.
+local INTERIOR_CELL_CAP = 4000000
+
+function hollowExterior(blocks)
+    if not noInterior or #blocks == 0 then return blocks end
+
+    local function cellOf(b)
+        local p = arrayToCFrame(b.cframe).Position
+        return math.floor(p.X / 3 + 0.5), math.floor(p.Y / 3 + 0.5), math.floor(p.Z / 3 + 0.5)
+    end
+    local function key(x, y, z) return x .. "," .. y .. "," .. z end
+
+    local occupied = {}
+    local minx, miny, minz = math.huge, math.huge, math.huge
+    local maxx, maxy, maxz = -math.huge, -math.huge, -math.huge
+    local cells = {}
+    for i, b in ipairs(blocks) do
+        local x, y, z = cellOf(b)
+        cells[i] = { x, y, z }
+        occupied[key(x, y, z)] = true
+        if x < minx then minx = x end
+        if y < miny then miny = y end
+        if z < minz then minz = z end
+        if x > maxx then maxx = x end
+        if y > maxy then maxy = y end
+        if z > maxz then maxz = z end
+        if i % 20000 == 0 then task.wait() end
+    end
+
+    -- one cell of air all the way round, so the flood has somewhere to start
+    local lox, loy, loz = minx - 1, miny - 1, minz - 1
+    local hix, hiy, hiz = maxx + 1, maxy + 1, maxz + 1
+    local volume = (hix - lox + 1) * (hiy - loy + 1) * (hiz - loz + 1)
+    if volume > INTERIOR_CELL_CAP then
+        notifyWarn("No Interior", "Build is too large to hollow safely - left as-is", 6)
+        return blocks
+    end
+
+    local DIRS = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} }
+    local outside = { [key(lox, loy, loz)] = true }
+    local queue, head = { { lox, loy, loz } }, 1
+    local steps = 0
+    while head <= #queue do
+        local c = queue[head]
+        head = head + 1
+        for _, d in ipairs(DIRS) do
+            local nx, ny, nz = c[1] + d[1], c[2] + d[2], c[3] + d[3]
+            if nx >= lox and nx <= hix and ny >= loy and ny <= hiy
+                and nz >= loz and nz <= hiz then
+                local nk = key(nx, ny, nz)
+                if not outside[nk] and not occupied[nk] then
+                    outside[nk] = true
+                    queue[#queue + 1] = { nx, ny, nz }
+                end
+            end
+        end
+        steps = steps + 1
+        if steps % 20000 == 0 then task.wait() end
+    end
+
+    local out = {}
+    for i, b in ipairs(blocks) do
+        local c = cells[i]
+        local exposed = false
+        for _, d in ipairs(DIRS) do
+            if outside[key(c[1] + d[1], c[2] + d[2], c[3] + d[3])] then
+                exposed = true
+                break
+            end
+        end
+        if exposed then out[#out + 1] = b end
+        if i % 20000 == 0 then task.wait() end
+    end
+
+    if #out == 0 then
+        notifyWarn("No Interior", "That would remove every block - left as-is", 5)
+        return blocks
+    end
+    notify("No Interior", (#blocks - #out) .. " interior block(s) dropped", 4, "info")
     return out
 end
 
@@ -2649,6 +2747,9 @@ fileDropdown = auto:CreateDropdown({
         savedPreviewTransform = nil
         -- deletions belong to the build they were made on
         restorePreviewDeletions()
+        omittedTypes = {}
+        omittedTypeCount = 0
+        requiredHidden = {}
     end
 })
 
@@ -2739,9 +2840,11 @@ BuilderAPI.toggles.build = auto:CreateToggle({
             end
             local missingOnly = placeMissingOnly
             if previewTransform then
-                local src = dropOmittedBlocks(data.blocks)
+                local raw = dropOmittedBlocks(data.blocks)
                 task.spawn(function()
                     notify("Building", "Building where the ghost sits", 3, "info")
+                    -- hollowExterior yields, so it belongs in here
+                    local src = hollowExterior(raw)
                     local transformed = filterShapes(transformBlocks(src, previewTransform))
                     if buildMode == "Turbo Print" then
                         turboPrint(transformed)
@@ -2750,12 +2853,15 @@ BuilderAPI.toggles.build = auto:CreateToggle({
                     end
                 end)
             else
-                local blocks = filterShapes(dropOmittedBlocks(data.blocks))
-                if buildMode == "Turbo Print" then
-                    task.spawn(function() turboPrint(blocks) end)
-                else
-                    runBuild(blocks, missingOnly)
-                end
+                -- hollowExterior yields, so this runs off the toggle callback
+                task.spawn(function()
+                    local blocks = filterShapes(hollowExterior(dropOmittedBlocks(data.blocks)))
+                    if buildMode == "Turbo Print" then
+                        turboPrint(blocks)
+                    else
+                        runBuild(blocks, missingOnly)
+                    end
+                end)
             end
         else
             isBuilding = false
@@ -3407,7 +3513,7 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
                 return
             end
             task.spawn(function()
-                previewBuild(filterShapes(dropOmittedBlocks(data.blocks)))
+                previewBuild(filterShapes(hollowExterior(dropOmittedBlocks(data.blocks))))
             end)
         else
             clearPreview()
@@ -12305,7 +12411,7 @@ local reqDrop = previewPanel:AddDropdown({
 
 previewPanel:AddButton({
     Name = "Remove Entry",
-    Tooltip = "Drops the chosen line: undoes its replacement, or hides it when there is none.",
+    Tooltip = "Drops the chosen line: undoes its replacement, or removes that block from the build entirely when there is none.",
     Callback = function()
         if not reqPick or reqPick == "Scan first" then
             notifyWarn("Required Blocks", "Pick an entry first", 3)
@@ -12329,11 +12435,29 @@ previewPanel:AddButton({
                     if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
                 end)
         else
-            confirm("Hide Entry",
-                "Hide " .. e.name .. " from the required list?",
-                "Hide", function()
+            confirm("Remove Entry",
+                "Drop every " .. e.name .. " from this build? It leaves the list"
+                    .. " and the preview, and will not be placed.",
+                "Remove", function()
                     requiredHidden[e.id] = true
-                    notify("Hidden", e.name .. " hidden from the list", 3, "info")
+                    if not omittedTypes[e.id] then
+                        omittedTypes[e.id] = true
+                        omittedTypeCount = omittedTypeCount + 1
+                    end
+                    -- clear it out of the ghost that is already on screen, so
+                    -- the preview matches the build without a re-render
+                    if previewModel and previewModel.Parent then
+                        for _, d in ipairs(previewModel:GetChildren()) do
+                            if d.Name ~= "PreviewRoot" and d.Name ~= "PreviewBBox"
+                                and effectiveType(d.Name) == e.id then
+                                pcall(function() d:Destroy() end)
+                            end
+                        end
+                    end
+                    if lastPreviewBlocks then
+                        lastPreviewBlocks = dropOmittedBlocks(lastPreviewBlocks)
+                    end
+                    notifyOK("Removed", e.name .. " dropped from the build", 4)
                     if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
                 end)
         end
@@ -12341,10 +12465,12 @@ previewPanel:AddButton({
 
 previewPanel:AddButton({
     Name = "Unhide All",
-    Tooltip = "Bring back any rows you hid from the required list.",
+    Tooltip = "Bring back every row you removed, and the blocks with them.",
     Callback = function()
         requiredHidden = {}
-        notify("Required Blocks", "Hidden rows restored", 3, "info")
+        omittedTypes = {}
+        omittedTypeCount = 0
+        notify("Required Blocks", "Removed rows and their blocks restored", 4, "info")
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
@@ -12367,6 +12493,16 @@ previewPanel:AddToggle({
     Name = "Include Slabs", Default = true,
     Tooltip = "Off leaves every slab out of the preview and the build.",
     Callback = function(v) includeSlabs = v end })
+
+previewPanel:AddToggle({
+    Name = "No Interior", Default = false,
+    Tooltip = "Keeps only what you can see from outside. A house loses its contents, a solid shape becomes a shell. Re-run Preview Build to apply it.",
+    Callback = function(v)
+        noInterior = v
+        if v then
+            notify("No Interior", "Re-run Preview Build to hollow it out", 5, "info")
+        end
+    end })
 
 previewPanel:AddSlider({
     Name = "Transparency", Min = 0, Max = 90, Increment = 5, Default = 50, ValueName = "%",
