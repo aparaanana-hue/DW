@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 10:41"
+local IAB_BUILD = "Aug 06 11:05"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -342,113 +342,8 @@ omittedTypes = {}
 omittedTypeCount = 0
 -- Keep only what can be seen from outside.
 noInterior = false
-
-function blockSrcKey(b)
-    local c = b.cframe
-    return tostring(b.blockType) .. "@" .. c[1] .. "," .. c[2] .. "," .. c[3]
-end
-
--- A build's blocks with anything deleted from the preview taken back out.
-function dropOmittedBlocks(blocks)
-    if previewOmittedCount == 0 and omittedTypeCount == 0 then return blocks end
-    local out = {}
-    for _, b in ipairs(blocks) do
-        local keep = not previewOmitted[blockSrcKey(b)]
-        if keep and omittedTypeCount > 0 then
-            keep = not omittedTypes[effectiveType(tostring(b.blockType))]
-        end
-        if keep then out[#out + 1] = b end
-    end
-    return out
-end
-
--- ── No Interior ─────────────────────────────────────────────────────────────
--- Keep the shell and throw away everything sealed inside it. Rather than asking
--- "is this block surrounded on all six sides", which only catches solid fill,
--- this floods the empty space inwards from outside the build's bounding box: a
--- block survives only if some air you could actually walk to touches one of its
--- faces. That is what empties a house of its furniture and leaves a hollow
--- sphere's contents behind while keeping the sphere.
-local INTERIOR_CELL_CAP = 4000000
-
-function hollowExterior(blocks)
-    if not noInterior or #blocks == 0 then return blocks end
-
-    local function cellOf(b)
-        local p = arrayToCFrame(b.cframe).Position
-        return math.floor(p.X / 3 + 0.5), math.floor(p.Y / 3 + 0.5), math.floor(p.Z / 3 + 0.5)
-    end
-    local function key(x, y, z) return x .. "," .. y .. "," .. z end
-
-    local occupied = {}
-    local minx, miny, minz = math.huge, math.huge, math.huge
-    local maxx, maxy, maxz = -math.huge, -math.huge, -math.huge
-    local cells = {}
-    for i, b in ipairs(blocks) do
-        local x, y, z = cellOf(b)
-        cells[i] = { x, y, z }
-        occupied[key(x, y, z)] = true
-        if x < minx then minx = x end
-        if y < miny then miny = y end
-        if z < minz then minz = z end
-        if x > maxx then maxx = x end
-        if y > maxy then maxy = y end
-        if z > maxz then maxz = z end
-        if i % 20000 == 0 then task.wait() end
-    end
-
-    -- one cell of air all the way round, so the flood has somewhere to start
-    local lox, loy, loz = minx - 1, miny - 1, minz - 1
-    local hix, hiy, hiz = maxx + 1, maxy + 1, maxz + 1
-    local volume = (hix - lox + 1) * (hiy - loy + 1) * (hiz - loz + 1)
-    if volume > INTERIOR_CELL_CAP then
-        notifyWarn("No Interior", "Build is too large to hollow safely - left as-is", 6)
-        return blocks
-    end
-
-    local DIRS = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} }
-    local outside = { [key(lox, loy, loz)] = true }
-    local queue, head = { { lox, loy, loz } }, 1
-    local steps = 0
-    while head <= #queue do
-        local c = queue[head]
-        head = head + 1
-        for _, d in ipairs(DIRS) do
-            local nx, ny, nz = c[1] + d[1], c[2] + d[2], c[3] + d[3]
-            if nx >= lox and nx <= hix and ny >= loy and ny <= hiy
-                and nz >= loz and nz <= hiz then
-                local nk = key(nx, ny, nz)
-                if not outside[nk] and not occupied[nk] then
-                    outside[nk] = true
-                    queue[#queue + 1] = { nx, ny, nz }
-                end
-            end
-        end
-        steps = steps + 1
-        if steps % 20000 == 0 then task.wait() end
-    end
-
-    local out = {}
-    for i, b in ipairs(blocks) do
-        local c = cells[i]
-        local exposed = false
-        for _, d in ipairs(DIRS) do
-            if outside[key(c[1] + d[1], c[2] + d[2], c[3] + d[3])] then
-                exposed = true
-                break
-            end
-        end
-        if exposed then out[#out + 1] = b end
-        if i % 20000 == 0 then task.wait() end
-    end
-
-    if #out == 0 then
-        notifyWarn("No Interior", "That would remove every block - left as-is", 5)
-        return blocks
-    end
-    notify("No Interior", (#blocks - #out) .. " interior block(s) dropped", 4, "info")
-    return out
-end
+-- The functions using this state need arrayToCFrame and effectiveType,
+-- so they are defined further down, just after those.
 
 -- A build's blocks with the excluded shapes stripped out.
 function filterShapes(blocks)
@@ -698,6 +593,113 @@ local blockReplacements = {}
 local requiredMinCount = 1
 local function effectiveType(blockType)
     return blockReplacements[blockType] or blockType
+end
+
+function blockSrcKey(b)
+    local c = b.cframe
+    return tostring(b.blockType) .. "@" .. c[1] .. "," .. c[2] .. "," .. c[3]
+end
+
+-- A build's blocks with anything deleted from the preview taken back out.
+function dropOmittedBlocks(blocks)
+    if previewOmittedCount == 0 and omittedTypeCount == 0 then return blocks end
+    local out = {}
+    for _, b in ipairs(blocks) do
+        local keep = not previewOmitted[blockSrcKey(b)]
+        if keep and omittedTypeCount > 0 then
+            keep = not omittedTypes[effectiveType(tostring(b.blockType))]
+        end
+        if keep then out[#out + 1] = b end
+    end
+    return out
+end
+
+-- ── No Interior ─────────────────────────────────────────────────────────────
+-- Keep the shell and throw away everything sealed inside it. Rather than asking
+-- "is this block surrounded on all six sides", which only catches solid fill,
+-- this floods the empty space inwards from outside the build's bounding box: a
+-- block survives only if some air you could actually walk to touches one of its
+-- faces. That is what empties a house of its furniture and leaves a hollow
+-- sphere's contents behind while keeping the sphere.
+local INTERIOR_CELL_CAP = 4000000
+
+function hollowExterior(blocks)
+    if not noInterior or #blocks == 0 then return blocks end
+
+    local function cellOf(b)
+        local p = arrayToCFrame(b.cframe).Position
+        return math.floor(p.X / 3 + 0.5), math.floor(p.Y / 3 + 0.5), math.floor(p.Z / 3 + 0.5)
+    end
+    local function key(x, y, z) return x .. "," .. y .. "," .. z end
+
+    local occupied = {}
+    local minx, miny, minz = math.huge, math.huge, math.huge
+    local maxx, maxy, maxz = -math.huge, -math.huge, -math.huge
+    local cells = {}
+    for i, b in ipairs(blocks) do
+        local x, y, z = cellOf(b)
+        cells[i] = { x, y, z }
+        occupied[key(x, y, z)] = true
+        if x < minx then minx = x end
+        if y < miny then miny = y end
+        if z < minz then minz = z end
+        if x > maxx then maxx = x end
+        if y > maxy then maxy = y end
+        if z > maxz then maxz = z end
+        if i % 20000 == 0 then task.wait() end
+    end
+
+    -- one cell of air all the way round, so the flood has somewhere to start
+    local lox, loy, loz = minx - 1, miny - 1, minz - 1
+    local hix, hiy, hiz = maxx + 1, maxy + 1, maxz + 1
+    local volume = (hix - lox + 1) * (hiy - loy + 1) * (hiz - loz + 1)
+    if volume > INTERIOR_CELL_CAP then
+        notifyWarn("No Interior", "Build is too large to hollow safely - left as-is", 6)
+        return blocks
+    end
+
+    local DIRS = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} }
+    local outside = { [key(lox, loy, loz)] = true }
+    local queue, head = { { lox, loy, loz } }, 1
+    local steps = 0
+    while head <= #queue do
+        local c = queue[head]
+        head = head + 1
+        for _, d in ipairs(DIRS) do
+            local nx, ny, nz = c[1] + d[1], c[2] + d[2], c[3] + d[3]
+            if nx >= lox and nx <= hix and ny >= loy and ny <= hiy
+                and nz >= loz and nz <= hiz then
+                local nk = key(nx, ny, nz)
+                if not outside[nk] and not occupied[nk] then
+                    outside[nk] = true
+                    queue[#queue + 1] = { nx, ny, nz }
+                end
+            end
+        end
+        steps = steps + 1
+        if steps % 20000 == 0 then task.wait() end
+    end
+
+    local out = {}
+    for i, b in ipairs(blocks) do
+        local c = cells[i]
+        local exposed = false
+        for _, d in ipairs(DIRS) do
+            if outside[key(c[1] + d[1], c[2] + d[2], c[3] + d[3])] then
+                exposed = true
+                break
+            end
+        end
+        if exposed then out[#out + 1] = b end
+        if i % 20000 == 0 then task.wait() end
+    end
+
+    if #out == 0 then
+        notifyWarn("No Interior", "That would remove every block - left as-is", 5)
+        return blocks
+    end
+    notify("No Interior", (#blocks - #out) .. " interior block(s) dropped", 4, "info")
+    return out
 end
 
 local function getFiles()
