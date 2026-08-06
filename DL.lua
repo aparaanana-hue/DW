@@ -4378,10 +4378,46 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						Dropdown.Buttons[Option] = OptionBtn
 					end
 				end
+				-- One place that decides how tall the frame should be, because Refresh
+				-- needs it as much as the click does. Rebuilding the list while the
+				-- dropdown was open left the frame at its old height, so a shorter list
+				-- sat in an empty box and a longer one spilled out of it.
+				local function ApplyDropdownSize()
+					local _extra = 0
+					if SearchBox then _extra = _extra + 30 end
+					if DropdownConfig.SelectAll and DropdownConfig.MultiSelect then _extra = _extra + 28 end
+					if DropdownConfig.Actions then _extra = _extra + 28 end
+					local _ddSize
+					if #Dropdown.Options > MaxElements then
+						_ddSize = Dropdown.Toggled and UDim2.new(1,0,0,38+_extra+(MaxElements*28)) or UDim2.new(1,0,0,38)
+					else
+						_ddSize = Dropdown.Toggled and UDim2.new(1,0,0,DropdownList.AbsoluteContentSize.Y+38) or UDim2.new(1,0,0,38)
+					end
+					TweenService:Create(DropdownFrame,TweenInfo.new(.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=_ddSize}):Play()
+				end
+
 				function Dropdown:Refresh(Options, Delete)
 					if Delete then for _,v in pairs(Dropdown.Buttons) do v:Destroy() end table.clear(Dropdown.Options) table.clear(Dropdown.Buttons) end
 					Dropdown.Options = Options
 					AddOptions(Dropdown.Options)
+					-- Drop anything the caller just took off the list, so the readout
+					-- cannot go on naming an option that is no longer there.
+					if Dropdown.Multi then
+						for opt in pairs(Dropdown.Selected) do
+							if not table.find(Dropdown.Options, opt) then Dropdown.Selected[opt] = nil end
+						end
+						local kept = {}
+						for _, opt in ipairs(Dropdown.Options) do
+							if Dropdown.Selected[opt] then table.insert(kept, opt) end
+						end
+						Dropdown.Value = kept
+						DropdownFrame.F.Selected.Text = #kept > 0 and table.concat(kept, ", ") or "None"
+					elseif not table.find(Dropdown.Options, Dropdown.Value) then
+						Dropdown.Value = "..."
+						DropdownFrame.F.Selected.Text = Dropdown.Value
+					end
+					-- the new buttons are not laid out yet, so measure on the next frame
+					if Dropdown.Toggled then task.defer(ApplyDropdownSize) end
 				end
 				function Dropdown:Set(Value)
 					if Dropdown.Multi then
@@ -4425,17 +4461,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					DropdownContainer.Visible = Dropdown.Toggled
 					local _rot = Dropdown.Toggled and 180 or 0
 					TweenService:Create(DropdownFrame.F.Ico,TweenInfo.new(.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Rotation=_rot}):Play()
-					local _extra = 0
-					if SearchBox then _extra = _extra + 30 end
-					if DropdownConfig.SelectAll and DropdownConfig.MultiSelect then _extra = _extra + 28 end
-					if DropdownConfig.Actions then _extra = _extra + 28 end
-					if #Dropdown.Options > MaxElements then
-						local _ddSize = Dropdown.Toggled and UDim2.new(1,0,0,38+_extra+(MaxElements*28)) or UDim2.new(1,0,0,38)
-						TweenService:Create(DropdownFrame,TweenInfo.new(.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=_ddSize}):Play()
-					else
-						local _ddSize2 = Dropdown.Toggled and UDim2.new(1,0,0,DropdownList.AbsoluteContentSize.Y+38) or UDim2.new(1,0,0,38)
-						TweenService:Create(DropdownFrame,TweenInfo.new(.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=_ddSize2}):Play()
-					end
+					ApplyDropdownSize()
 				end)
 				Dropdown:Refresh(Dropdown.Options, false)
 

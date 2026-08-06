@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 11:05"
+local IAB_BUILD = "Aug 06 11:34"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -12550,6 +12550,9 @@ BuilderAPI.renderRequired = function(summaryText)
             opts[#opts + 1] = label
         end
         if #opts == 0 then opts = { "Nothing listed" } end
+        -- the entry that was just acted on is gone from the list, so stop
+        -- pointing Remove Entry at it
+        if reqPick and not table.find(opts, reqPick) then reqPick = nil end
         reqDrop:Refresh(opts, true)
         reqSummary:Set(tostring(summaryText or ""))
     end)
