@@ -1137,6 +1137,25 @@ AXIS_ROT = {
 }
 
 
+def is_slab(target):
+    """Islands slabs are the only half-height blocks."""
+    return "slab" in target.lower()
+
+
+def _sanitise(target, upper, doubled):
+    """Only a slab can sit in half a cell.
+
+    Minecraft says `half=top` for an upside-down stair, and a legacy double
+    slab of stone maps to plain stone here. Neither is half-height in Islands,
+    and a full block flagged upperBlock gets shoved into the cell above - the
+    stairs and blocks that looked embedded in each other. A doubled entry is
+    only a second half when there is a half to double.
+    """
+    if not is_slab(target):
+        return False, False
+    return upper, doubled
+
+
 def parse_state(state):
     """'minecraft:oak_stairs[facing=north,half=top]' -> (name, {props})."""
     if "[" not in state:
@@ -1182,6 +1201,7 @@ def resolve(state):
     elif slab == "double":
         doubled = True
 
+    upper, doubled = _sanitise(target, upper, doubled)
     return target, rot, upper, doubled
 
 
@@ -1313,6 +1333,7 @@ def resolve_legacy(token):
     if target is None:
         return None
     rot, upper, doubled = legacy_orientation(bid, data)
+    upper, doubled = _sanitise(target, upper, doubled)
     return target, rot, upper, doubled
 
 
