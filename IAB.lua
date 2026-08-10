@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 09:30"
+local IAB_BUILD = "Aug 10 10:15"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -333,6 +333,10 @@ local includeSlabs = true
 -- survives moving or rotating the ghost.
 -- Globals, like the other brush state below - the main chunk is already at
 -- Luau's 200-local ceiling.
+-- .glb models voxelised on the way in. Declared up here because the Model
+-- section is built on the build tab, long before the reader itself.
+MODEL = { grid = 96, cache = {}, lastName = nil }
+
 brushPreview = false
 previewOmitted = {}
 previewOmittedCount = 0
@@ -2969,6 +2973,45 @@ auto:CreateRangeSlider({
     Callback = function(mn, mx)
         BuilderAPI.destroyer.minDelay = mn
         BuilderAPI.destroyer.maxDelay = mx
+    end
+})
+
+
+-- ── Models ─────────────────────────────────────────────────────────────────
+-- Sits under Build because a .glb in autoBuilder is picked from the same file
+-- list as a build file; these are the settings for turning one into blocks.
+auto:CreateSection("Model", { Collapsible = true, Column = "left", Order = 1 })
+
+local modelStatus = auto:CreateParagraph({
+    Title = "Model",
+    Content = "Drop a .glb into autoBuilder and pick it in the file list, like a build file.",
+})
+BuilderAPI.setModelStatus = function(text)
+    pcall(function()
+        modelStatus:Set({ Title = "Model", Content = tostring(text) })
+    end)
+end
+
+auto:CreateSlider({
+    Name = "Model Detail", Range = { 16, 256 }, Increment = 8, CurrentValue = 96,
+    Suffix = "cells", Flag = "ModelDetail",
+    Tooltip = "How many blocks a .glb gets along its longest side. Higher is a closer likeness and a lot more blocks. Re-run Preview Build after changing it.",
+    Callback = function(v)
+        if not MODEL then return end
+        MODEL.grid = v
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus("Detail " .. v ..
+                " - re-run Preview Build to rebuild the model at this size.")
+        end
+    end
+})
+
+auto:CreateButton({
+    Name = "Forget Model Cache",
+    Tooltip = "A voxelised model is kept so previewing it again is instant. Drop this if you have replaced the .glb file.",
+    Callback = function()
+        if MODEL then MODEL.cache = {} end
+        notify("Model", "Cached models dropped", 3, "info")
     end
 })
 
@@ -11270,8 +11313,6 @@ end
 -- solid fill, block budgets, huge models. This is for dropping a model in and
 -- seeing it, without leaving the game.
 
-MODEL = { grid = 96, cache = {}, lastName = nil }
-
 do
 
 local GLB_MAGIC = 0x46546C67
@@ -12978,37 +13019,6 @@ previewPanel:AddToggle({
     Name = "Include Slabs", Default = true,
     Tooltip = "Off leaves every slab out of the preview and the build.",
     Callback = function(v) includeSlabs = v end })
-
--- ── Models ─────────────────────────────────────────────────────────────────
-previewPanel:AddDivider()
-
-local modelStatus = previewPanel:AddParagraph("Model",
-    "Drop a .glb into autoBuilder and pick it in the file list.")
-BuilderAPI.setModelStatus = function(text)
-    pcall(function() modelStatus:Set(tostring(text)) end)
-end
-
-previewPanel:AddSlider({
-    Name = "Model Detail", Min = 16, Max = 256, Increment = 8, Default = 96,
-    ValueName = "cells",
-    Tooltip = "How many blocks a .glb gets along its longest side. Higher is a closer likeness and a lot more blocks. Re-run Preview Build after changing it.",
-    Callback = function(v)
-        MODEL.grid = v
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus("Detail " .. v ..
-                " - re-run Preview Build to rebuild the model at this size.")
-        end
-    end })
-
-previewPanel:AddButton({
-    Name = "Forget Model Cache",
-    Tooltip = "A voxelised model is kept so previewing it again is instant. Drop this if you have replaced the .glb file.",
-    Callback = function()
-        MODEL.cache = {}
-        notify("Model", "Cached models dropped", 3, "info")
-    end })
-
-previewPanel:AddDivider()
 
 previewPanel:AddToggle({
     Name = "No Interior", Default = false,
