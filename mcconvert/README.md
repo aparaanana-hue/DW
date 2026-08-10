@@ -1,6 +1,6 @@
-# Minecraft -> Islands converter
+# Islands build-file converters
 
-Turns Minecraft builds into Islands build files (`{ "blocks": [...] }` with
+Turns Minecraft builds — and 3D models — into Islands build files (`{ "blocks": [...] }` with
 `cframe` arrays), ready to drop into `autoBuilder` and preview/build like any
 other file. Output lands in `../builds/solid/` (hollowed-out versions of the
 same builds live alongside it in `../builds/hollow/`, without the `Hollow`
@@ -26,6 +26,9 @@ double slab is written as both halves so it fills its cell.
 | `legacy_schematic_to_islands.py` | Converts an **old MCEdit `.schematic`**, which stores numeric block ids plus 4-bit metadata instead of a name palette. |
 | `world_build_to_islands.py` | Converts one build sitting in a world — a flat "build world" with a floor plane, say. Takes the region folder plus `--miny`/`--maxy` to cut the floor off. |
 | `litematic_to_islands.py` | Converts a **Litematica `.litematic`**. Same packing as pre-1.16, and a region's Size sign only says which corner `Position` is. |
+| `model_to_islands.py` | Converts a **3D model** (`.glb`). Voxelises the mesh and colours each block by sampling the model's own textures. Sized by a block budget rather than a scale factor. |
+| `glb.py` | Reads a `.glb` — the chunk header, the glTF JSON, node transforms, vertex accessors and the embedded textures. Hand-parsed like `anvil.py`, so the only dependency is numpy. |
+| `islands_palette.py` | The 91 flat Islands blocks with their real colours, and nearest-colour matching in OKLab. A port of `IMAGE_PALETTE` in `IAB.lua`, so a converted model is coloured like a converted image. `--check` re-reads IAB.lua and asserts the two still agree. |
 | `castleworld_to_islands.py` | Castle World holds several builds in one world, so it clusters the placed blocks and writes one file per castle. |
 
 ## Usage
@@ -55,7 +58,44 @@ python3 world_build_to_islands.py path/to/region OutputName \
 # a world holding several builds, above a floor plane: one file each
 python3 world_build_to_islands.py path/to/region OutputName \
     --natural --miny -59 --split
+
+# a 3D model, sized to a block budget
+python3 model_to_islands.py ../models/thing.glb OutputName --blocks 80000
+
+# ...or to an exact height, filled solid, from one block type
+python3 model_to_islands.py ../models/thing.glb OutputName \
+    --height 120 --solid --single slateBrick
+
+# muted stone only, capped at 12 distinct blocks
+python3 model_to_islands.py ../models/thing.glb OutputName \
+    --palette Stone,Clay --simplify 12
 ```
+
+## 3D models
+
+`model_to_islands.py` takes **GLB**. It is one self-contained binary file with
+the mesh, materials and textures inside, and its container is simple enough to
+read with `struct` and `json`. A `.gltf` scatters the same data across external
+`.bin` and image files; `.fbx` has no dependable pure-Python reader. If a site
+offers several texture sizes, take the 1k one — 2k detail is finer than a block
+grid can show.
+
+Unlike the Minecraft converters this one writes **both** files itself:
+`../builds/solid/<Name>.json` and `../builds/hollow/<Name>.json`.
+
+Sizing is a budget, not a scale. `--blocks 80000` measures the model at one
+resolution, extrapolates (a surface grows with the square of the grid, a solid
+volume with the cube), and refines — four passes, landing within a percent or
+two. Ask for fewer blocks to get a coarser model of the same thing; that is the
+accuracy dial.
+
+Every block it writes is a full cube with identity rotation, placed through a
+map keyed on the cell, so its output cannot contain overlapping blocks.
+
+Textures: PNG works out of the box. **JPEG needs Pillow** (`pip install
+Pillow`) — without it those materials fall back to their flat base colour and
+it says so. Draco- or meshopt-compressed meshes are refused by name rather than
+silently producing nothing; re-export without compression.
 
 ### `--hollow`
 
@@ -66,8 +106,8 @@ large; skip it if you want the solid interior.
 
 ## Converted builds
 
-| build | blocks | hollow | size |
-|---|---|---|---|
+| build | blocks | hollow | size | source |
+|---|---|---|---|---|
 | IvyWoodManor | 45,643 | 36,800 | 88x38x148 |
 | SapphireLobby | 723,939 | 107,238 | 137x165x162 |
 | ShenronDragon | 20,202 | 20,177 | 135x124x88 |
@@ -99,6 +139,8 @@ large; skip it if you want the solid interior.
 | SomethingSomething | 43,932 | 28,828 | 95x103x95 |
 | Lavria | 730,123 | 339,754 | 331x107x331 |
 | DreamSpawn | 25,687 | 22,514 | 79x151x79 |
+| PinkPalace | 83,717 | 31,843 | 160x128x181 | generated, not converted |
+| FemaleTitan | 79,864 | 43,552 | 292x315x53 | from a .glb model |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
