@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 12:05"
+local IAB_BUILD = "Aug 10 14:40"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -732,8 +732,14 @@ local function getFiles()
         end
     end
 
-    -- models sit in autoBuilder/models; they show up in the same list because
-    -- they are picked and previewed exactly like a build file
+    table.sort(files)
+    return files
+end
+
+-- Models keep their own list and their own dropdown. Mixing them into the
+-- build list meant scrolling past models to reach a build and vice versa.
+local function getModelFiles()
+    local files = {}
     if isfolder(MODEL_DIR) then
         for _, file in ipairs(listfiles(MODEL_DIR)) do
             if string.lower(file):sub(-4) == ".glb" then
@@ -741,8 +747,8 @@ local function getFiles()
             end
         end
     end
-
     table.sort(files)
+    if #files == 0 then files[1] = "No models in autoBuilder/models" end
     return files
 end
 
@@ -3016,6 +3022,8 @@ auto:CreateRangeSlider({
 -- list as a build file; these are the settings for turning one into blocks.
 auto:CreateSection("Model", { Collapsible = true, Column = "left", Order = 1 })
 
+-- declared before use: its own Actions refresh it
+
 local modelStatus = auto:CreateParagraph({
     Title = "Model",
     Content = "Put .glb models in autoBuilder/models, then Refresh the file list"
@@ -3028,8 +3036,55 @@ BuilderAPI.setModelStatus = function(text)
     end)
 end
 
+modelDropdown = auto:CreateDropdown({
+    Name = "Select Model",
+    Actions = {
+        { Text = "Refresh", OnClick = function()
+            pcall(function() modelDropdown:Refresh(getModelFiles(), true) end)
+            notify("Models", "List refreshed", 2, "info")
+        end },
+        { Text = "Delete", OnClick = function()
+            if not MODEL or not MODEL.selected then
+                notifyWarn("No Model", "Pick a model first", 3)
+                return
+            end
+            local target = MODEL.selected
+            confirm("Delete Model", "Permanently delete '" .. target .. "'?",
+                "Delete", function()
+                    pcall(function()
+                        local path = filePathFor(target)
+                        if isfile(path) then delfile(path) end
+                    end)
+                    MODEL.selected = nil
+                    MODEL.cache = {}
+                    pcall(function() modelDropdown:Refresh(getModelFiles(), true) end)
+                    notifyOK("Deleted", "'" .. target .. "' removed", 4)
+                end)
+        end },
+    },
+    Options = getModelFiles(),
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "ModelDropdown",
+    Tooltip = "Models live in autoBuilder/models. Picking one makes it what Preview Build and Start Build use.",
+    Callback = function(option)
+        local name = (typeof(option) == "table") and option[1] or option
+        if not name or not isModelFile(name) then return end
+        if not MODEL then return end
+        MODEL.selected = name
+        -- the rest of the hub works off selectedFile, so a model simply
+        -- becomes the selected file; the build dropdown does the same
+        selectedFile = name
+        savedPreviewTransform = nil
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus(name .. " selected at detail " .. MODEL.grid
+                .. ".\nTurn on Preview Build to see it.")
+        end
+    end
+})
+
 auto:CreateSlider({
-    Name = "Model Detail", Range = { 16, 256 }, Increment = 8, CurrentValue = 96,
+    Name = "Model Detail", Range = { 16, 512 }, Increment = 8, CurrentValue = 96,
     Suffix = "cells", Flag = "ModelDetail",
     Tooltip = "How many blocks a .glb gets along its longest side. Higher is a closer likeness and a lot more blocks. Re-run Preview Build after changing it.",
     Callback = function(v)
@@ -11487,6 +11542,14 @@ local function accessorReader(m, index)
             local v = string.unpack(fmt, m.bin, at)
             return norm and v * scale or v
         end
+        if n > 4 then
+            -- MAT4 and friends. string.unpack returns the values *and* the
+            -- position it stopped at, so that trailing index has to go or the
+            -- caller sees 17 numbers where it wanted 16.
+            local vals = { string.unpack(fmt, m.bin, at) }
+            vals[#vals] = nil
+            return table.unpack(vals)
+        end
         local a, b, c, d = string.unpack(fmt, m.bin, at)
         if norm then
             a = a * scale
@@ -11529,29 +11592,69 @@ local function materialColour(m, index)
     return { f[1] or 1, f[2] or 1, f[3] or 1 }, tex
 end
 
+-- ── skinning ───────────────────────────────────────────────────────────────
+-- A rigged model stores POSITION in its bind pose - arms out, the T-pose - and
+-- keeps the pose you actually see in the joint nodes. Reading POSITION alone
+-- gives you a T-pose however the model looks in a viewer. Each vertex belongs
+-- to up to four joints by weight:
+--
+--   p' = sum_j  w_j * (globalTransform(joint_j) * inverseBindMatrix_j) * p
+--
+-- The mesh node's own transform is deliberately left out: for a skinned mesh
+-- glTF says the joint matrices already carry it.
+local function skinMatrices(m, skinIndex, globals)
+    local skin = m.gltf.skins and m.gltf.skins[skinIndex + 1]
+    if not skin or not skin.joints then return nil end
+
+    local ibmRead
+    if skin.inverseBindMatrices ~= nil then
+        ibmRead = accessorReader(m, skin.inverseBindMatrices)
+    end
+
+    local mats = {}
+    for i, nodeIndex in ipairs(skin.joints) do
+        local ibm = matIdentity()
+        if ibmRead then
+            -- MAT4 comes back column-major, sixteen at a time
+            local c = { ibmRead(i - 1) }
+            if #c == 16 then
+                for r = 0, 3 do
+                    for col = 1, 4 do ibm[r * 4 + col] = c[(col - 1) * 4 + r + 1] end
+                end
+            end
+        end
+        mats[i] = matMul(globals[nodeIndex] or matIdentity(), ibm)
+    end
+    return mats
+end
+
 -- ── voxelising ─────────────────────────────────────────────────────────────
 -- Samples every triangle on a barycentric lattice fine enough that no cell it
 -- crosses is missed. A rasteriser would be faster but needs a special case for
 -- every skinny or edge-on triangle; this one has none.
-local MODEL_MAX_CELLS = 200000
+local MODEL_MAX_CELLS = 600000
 
 local function glbToBlocks(data, gridCells, onProgress)
     local m, err = parseGLB(data)
     if not m then return nil, err end
     local gltf = m.gltf
 
-    -- flatten the node tree into (primitive, world matrix) pairs
+    -- Flatten the node tree into (primitive, world matrix) jobs, keeping every
+    -- node's world transform as we go: a joint can live in a different branch
+    -- from the mesh it drives, so skinning needs all of them.
     local jobs = {}
+    local globals = {}
     local function walk(nodeIndex, parent)
         local node = gltf.nodes[nodeIndex + 1]
         if not node then return end
         local world = matMul(parent, nodeMatrix(node))
+        globals[nodeIndex] = world
         if node.mesh ~= nil then
             local mesh = gltf.meshes[node.mesh + 1]
             for _, prim in ipairs(mesh and mesh.primitives or {}) do
                 if (prim.mode or 4) == 4 and prim.attributes
                     and prim.attributes.POSITION ~= nil then
-                    jobs[#jobs + 1] = { prim = prim, world = world }
+                    jobs[#jobs + 1] = { prim = prim, world = world, skin = node.skin }
                 end
             end
         end
@@ -11568,12 +11671,53 @@ local function glbToBlocks(data, gridCells, onProgress)
     -- pass one: world-space vertices and the bounding box
     local minX, minY, minZ = math.huge, math.huge, math.huge
     local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    local posedAny = false
     for _, job in ipairs(jobs) do
-        local read, count = accessorReader(m, job.prim.attributes.POSITION)
+        local attrs = job.prim.attributes
+        local read, count = accessorReader(m, attrs.POSITION)
         if not read then return nil, "Unsupported vertex data in that file" end
+
+        -- a rigged mesh is posed by its skeleton, not by its own node
+        local jointMats, jointRead, weightRead
+        if job.skin ~= nil and attrs.JOINTS_0 ~= nil and attrs.WEIGHTS_0 ~= nil then
+            jointMats = skinMatrices(m, job.skin, globals)
+            if jointMats then
+                jointRead = accessorReader(m, attrs.JOINTS_0)
+                weightRead = accessorReader(m, attrs.WEIGHTS_0)
+                if not jointRead or not weightRead then jointMats = nil end
+            end
+        end
+        if jointMats then posedAny = true end
+
         local verts = table.create(count)
         for i = 0, count - 1 do
-            local x, y, z = matApply(job.world, read(i))
+            local px, py, pz = read(i)
+            local x, y, z
+            if jointMats then
+                local j1, j2, j3, j4 = jointRead(i)
+                local w1, w2, w3, w4 = weightRead(i)
+                local js = { j1, j2, j3, j4 }
+                local ws = { w1 or 0, w2 or 0, w3 or 0, w4 or 0 }
+                local total = ws[1] + ws[2] + ws[3] + ws[4]
+                if total > 1e-8 then
+                    x, y, z = 0, 0, 0
+                    for k = 1, 4 do
+                        local w = ws[k] / total
+                        if w > 1e-8 then
+                            local mat = jointMats[(js[k] or 0) + 1]
+                            if mat then
+                                local ax, ay, az = matApply(mat, px, py, pz)
+                                x, y, z = x + ax * w, y + ay * w, z + az * w
+                            end
+                        end
+                    end
+                else
+                    -- an unweighted vertex would otherwise collapse to the origin
+                    x, y, z = matApply(job.world, px, py, pz)
+                end
+            else
+                x, y, z = matApply(job.world, px, py, pz)
+            end
             verts[i + 1] = { x, y, z }
             if x < minX then minX = x end
             if y < minY then minY = y end
@@ -11708,6 +11852,7 @@ local function glbToBlocks(data, gridCells, onProgress)
     end
 
     return blocks, nil, {
+        posed = posedAny,
         stopped = stopped,
         jpeg = m.jpegSeen,
         zUp = zUp,
@@ -11748,6 +11893,7 @@ BuilderAPI.loadModelFile = function(name, data)
     MODEL.cache[key] = blocks
     local msg = ("%d blocks, %dx%dx%d"):format(#blocks, info.size[1], info.size[2], info.size[3])
     if info.zUp then msg = msg .. "\nStood it up: the model was authored Z-up." end
+    if info.posed then msg = msg .. "\nPosed from its skeleton." end
     if info.jpeg then
         msg = msg .. "\nSome textures are JPEG, which cannot be decoded in game -"
             .. " those parts use their flat material colour."

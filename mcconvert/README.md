@@ -92,6 +92,12 @@ accuracy dial.
 Every block it writes is a full cube with identity rotation, placed through a
 map keyed on the cell, so its output cannot contain overlapping blocks.
 
+A rigged model is posed from its skeleton. `POSITION` in a glTF holds the
+*bind* pose - arms out, the T-pose - and the pose you see in a viewer lives in
+the joint node transforms. Reading positions alone gives a T-pose no matter
+what the model looks like, so `JOINTS_0`/`WEIGHTS_0` and the inverse bind
+matrices are applied.
+
 Textures: PNG works out of the box. **JPEG needs Pillow** (`pip install
 Pillow`) — without it those materials fall back to their flat base colour and
 it says so. Draco- or meshopt-compressed meshes are refused by name rather than
@@ -140,7 +146,7 @@ large; skip it if you want the solid interior.
 | Lavria | 730,123 | 339,754 | 331x107x331 |
 | DreamSpawn | 25,687 | 22,514 | 79x151x79 |
 | PinkPalace | 83,717 | 31,843 | 160x128x181 | generated, not converted |
-| FemaleTitan | 79,864 | 43,552 | 292x315x53 | from a .glb model |
+| FemaleTitan | 79,860 | 42,361 | 108x290x113 | from a .glb model, posed from its skeleton |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

@@ -86,7 +86,8 @@ class Texture:
 
 
 class Primitive:
-    def __init__(self, positions, uvs, colors, indices, material):
+    def __init__(self, positions, uvs, colors, indices, material, skinned=False):
+        self.skinned = skinned
         self.positions = positions
         self.uvs = uvs
         self.colors = colors
@@ -328,6 +329,55 @@ class _Reader:
         return out
 
 
+def skin_positions(reader, gltf, skin_index, attrs, bind):
+    """Move vertices from the bind pose into the pose the skeleton describes.
+
+    A rigged model stores POSITION in its bind pose - arms out, the T-pose -
+    and carries the real pose in the joint nodes. Reading POSITION alone gets
+    you the T-pose no matter what the model looks like in a viewer. Each vertex
+    belongs to up to four joints by weight:
+
+        p' = sum_j  w_j * (globalTransform(joint_j) @ inverseBindMatrix_j) @ p
+
+    The mesh node's own transform is deliberately not applied: for a skinned
+    mesh glTF says the joint matrices already carry it.
+    """
+    skin = gltf["skins"][skin_index]
+    joints = skin["joints"]
+
+    ibm = np.tile(np.eye(4), (len(joints), 1, 1))
+    if "inverseBindMatrices" in skin:
+        raw = reader.accessor(skin["inverseBindMatrices"]).astype(np.float64)
+        # glTF matrices are column-major
+        ibm = raw.reshape(-1, 4, 4).transpose(0, 2, 1)
+
+    joint_mats = np.empty((len(joints), 4, 4))
+    for i, node_index in enumerate(joints):
+        joint_mats[i] = reader.globals[node_index] @ ibm[i]
+
+    idx = reader.accessor(attrs["JOINTS_0"]).astype(np.int64)
+    w = reader.accessor(attrs["WEIGHTS_0"]).astype(np.float64)
+    total = w.sum(axis=1, keepdims=True)
+    w = np.divide(w, total, out=np.zeros_like(w), where=total > 1e-8)
+
+    homo = np.concatenate([bind, np.ones((len(bind), 1))], axis=1)
+    out = np.zeros((len(bind), 3))
+    for k in range(w.shape[1]):
+        wk = w[:, k]
+        hit = wk > 1e-8
+        if not hit.any():
+            continue
+        m = joint_mats[np.clip(idx[hit, k], 0, len(joints) - 1)]
+        moved = np.einsum("nij,nj->ni", m, homo[hit])[:, :3]
+        out[hit] += wk[hit, None] * moved
+
+    # a vertex with no weights at all would collapse to the origin
+    dead = total[:, 0] <= 1e-8
+    if dead.any():
+        out[dead] = bind[dead]
+    return out
+
+
 def load(path):
     """Read a .glb and return a Model whose positions are in world space."""
     data = pathlib.Path(path).read_bytes()
@@ -364,6 +414,18 @@ def load(path):
     prims = []
     skipped_modes = {}
 
+    r.globals = {}
+
+    # Pass one: every node's world transform. A joint can sit in a different
+    # branch of the tree from the mesh it drives, so all of them must be known
+    # before any skinned primitive is read.
+    def transforms(node_index, parent):
+        node = gltf["nodes"][node_index]
+        world = parent @ _node_matrix(node)
+        r.globals[node_index] = world
+        for child in node.get("children", []):
+            transforms(child, world)
+
     def walk(node_index, parent):
         node = gltf["nodes"][node_index]
         world = parent @ _node_matrix(node)
@@ -381,10 +443,17 @@ def load(path):
                 if "POSITION" not in attrs:
                     continue
 
-                pos_local = r.accessor(attrs["POSITION"]).astype(np.float64)
-                homo = np.concatenate(
-                    [pos_local, np.ones((len(pos_local), 1))], axis=1)
-                positions = (homo @ world.T)[:, :3].astype(np.float32)
+                bind = r.accessor(attrs["POSITION"]).astype(np.float64)
+                skinned = ("skin" in node and "JOINTS_0" in attrs
+                           and "WEIGHTS_0" in attrs
+                           and gltf.get("skins"))
+                if skinned:
+                    # the pose lives in the skeleton, not in POSITION
+                    positions = skin_positions(
+                        r, gltf, node["skin"], attrs, bind).astype(np.float32)
+                else:
+                    homo = np.concatenate([bind, np.ones((len(bind), 1))], axis=1)
+                    positions = (homo @ world.T)[:, :3].astype(np.float32)
 
                 uvs = None
                 if "TEXCOORD_0" in attrs:
@@ -406,7 +475,8 @@ def load(path):
                     continue
 
                 prims.append(Primitive(positions, uvs, colors, tris,
-                                       r.material(prim.get("material"))))
+                                       r.material(prim.get("material")),
+                                       bool(skinned)))
         for child in node.get("children", []):
             walk(child, world)
 
@@ -414,6 +484,8 @@ def load(path):
     roots = gltf.get("scenes", [{}])[scene].get("nodes")
     if roots is None:
         roots = range(len(gltf.get("nodes", [])))
+    for n in roots:
+        transforms(n, np.eye(4))
     for n in roots:
         walk(n, np.eye(4))
 
@@ -431,5 +503,9 @@ if __name__ == "__main__":
     textured = sum(1 for p in m.primitives
                    if p.material and p.material.texture and p.material.texture.usable)
     print(f"{textured} primitives with a usable base colour texture")
+    sk = sum(1 for p in m.primitives if p.skinned)
+    if sk:
+        print(f"{sk} primitives posed from their skeleton "
+              f"(reading POSITION alone would give the bind pose)")
     for n in m.notes:
         print("note:", n)
