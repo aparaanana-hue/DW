@@ -1,4 +1,9 @@
-local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
+-- The "?t=" is not decoration: raw.githubusercontent is behind a CDN that
+-- serves a stale copy for minutes after a push, so without it you can
+-- re-execute all day and still get the old library.
+local Duvome = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"
+        .. "?t=" .. tostring(os.time())))()
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 10:15"
+local IAB_BUILD = "Aug 10 11:20"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2502,7 +2507,7 @@ function objCombineToFile(fileName)
     sendSaveWebhook(name)
     selectedFile = name
     pcall(function() saveAlignment(name, CFrame.new()) end)
-    pcall(function() fileDropdown:Refresh(getFiles()) fileDropdown:Set({ name }) end)
+    pcall(function() fileDropdown:Refresh(getFiles(), true) fileDropdown:Set({ name }) end)
     notify("Saved", #out .. " blocks -> " .. name, 6)
 end
 
@@ -2759,7 +2764,7 @@ fileDropdown = auto:CreateDropdown({
     -- actions was more chrome than they deserve.
     Actions = {
         { Text = "Refresh", OnClick = function()
-            pcall(function() fileDropdown:Refresh(getFiles()) end)
+            pcall(function() fileDropdown:Refresh(getFiles(), true) end)
             notify("Files", "List refreshed", 2, "info")
         end },
         { Text = "Delete", OnClick = function()
@@ -2778,7 +2783,7 @@ fileDropdown = auto:CreateDropdown({
                     pcall(function() clearAlignment(target) end)
                     if ok then
                         selectedFile = nil
-                        fileDropdown:Refresh(getFiles())
+                        fileDropdown:Refresh(getFiles(), true)
                         notifyOK("Deleted", "'" .. target .. "' removed", 4)
                     else
                         notifyErr("Delete Failed", "Couldn't delete the file", 4)
@@ -3468,7 +3473,7 @@ function finishSaveBlocks(blocks)
     if ok then
         sendSaveWebhook(name)
         saveAlignment(name, CFrame.new())
-        fileDropdown:Refresh(getFiles())
+        fileDropdown:Refresh(getFiles(), true)
         notify("Build Saved", #blocks .. " blocks -> " .. name, 6)
     else
         notify("Save Failed", "Could not write file: " .. tostring(err), 5)
@@ -3680,8 +3685,8 @@ BuilderAPI.scanRequired = function()
         if BuilderAPI.renderRequired then BuilderAPI.renderRequired(text) end
         -- fill the replace pickers now, so Refresh is not a separate step
         pcall(function()
-            buildTypeDropdown:Refresh(getBuildTypeOptions())
-            invBlockDropdown:Refresh(getInventoryOptions())
+            buildTypeDropdown:Refresh(getBuildTypeOptions(), true)
+            invBlockDropdown:Refresh(getInventoryOptions(), true)
         end)
         notify("Done", "Still need " .. #missing .. " block(s)", 4)
     end)
@@ -3755,8 +3760,8 @@ buildTypeDropdown = previewTab:CreateDropdown({
     Name = "Replace Block",
     -- refresh belongs with the list it refreshes, not behind a gear
     Actions = { { Text = "Refresh", OnClick = function()
-        buildTypeDropdown:Refresh(getBuildTypeOptions())
-        invBlockDropdown:Refresh(getInventoryOptions())
+        buildTypeDropdown:Refresh(getBuildTypeOptions(), true)
+        invBlockDropdown:Refresh(getInventoryOptions(), true)
         notify("Refreshed", "Build & inventory lists updated", 2)
     end } },
     Options = getBuildTypeOptions(),
@@ -3771,8 +3776,8 @@ buildTypeDropdown = previewTab:CreateDropdown({
 invBlockDropdown = previewTab:CreateDropdown({
     Name = "With Block",
     Actions = { { Text = "Refresh", OnClick = function()
-        buildTypeDropdown:Refresh(getBuildTypeOptions())
-        invBlockDropdown:Refresh(getInventoryOptions())
+        buildTypeDropdown:Refresh(getBuildTypeOptions(), true)
+        invBlockDropdown:Refresh(getInventoryOptions(), true)
         notify("Refreshed", "Build & inventory lists updated", 2)
     end } },
     Options = getInventoryOptions(),
@@ -4408,7 +4413,7 @@ local structBlockDropdown = structTab:CreateDropdown({
     -- action lives in the list rather than behind a gear
     Actions = { { Text = "Refresh", OnClick = function()
         local list = structFetchBlocks()
-        structBlockDropdown:Refresh(list)
+        structBlockDropdown:Refresh(list, true)
         notify("Refreshed", #list .. " blocks found", 3)
     end } },
     Options = structFetchBlocks(),
@@ -4976,7 +4981,7 @@ cityTab:CreateButton({
                 Title = "City Stats",
                 Content = (cityLotsX * cityLotsZ) .. " houses · " .. #blocks .. " blocks"
             })
-            pcall(function() fileDropdown:Refresh(getFiles()) end)
+            pcall(function() fileDropdown:Refresh(getFiles(), true) end)
         end)
     end
 })
@@ -5166,7 +5171,7 @@ platTab:CreateButton({
             selectedFile = name
             savedPreviewTransform = nil
             saveAlignment(name, CFrame.new())
-            pcall(function() fileDropdown:Refresh(getFiles()) fileDropdown:Set({ name }) end)
+            pcall(function() fileDropdown:Refresh(getFiles(), true) fileDropdown:Set({ name }) end)
             platStats:Set({ Title = "Pattern Stats", Content = platStyle .. " · " .. #blocks .. " blocks -> " .. name })
             notify("Platform Saved", #blocks .. " blocks -> " .. name .. " (selected)", 6)
         end)
@@ -5260,7 +5265,7 @@ structTab:CreateButton({
             selectedFile = name
             savedPreviewTransform = nil
             pcall(function()
-                fileDropdown:Refresh(getFiles())
+                fileDropdown:Refresh(getFiles(), true)
                 fileDropdown:Set({ name })
             end)
 
@@ -6258,7 +6263,7 @@ toolTab:CreateButton({
             selectedFile = name
             savedPreviewTransform = nil
             pcall(function()
-                fileDropdown:Refresh(getFiles())
+                fileDropdown:Refresh(getFiles(), true)
                 fileDropdown:Set({ name })
             end)
             notifyOK("Saved", #blocks .. " blocks -> " .. name .. " (selected)", 6)
@@ -9243,7 +9248,7 @@ tabEdit:CreateButton({
     Name = "Place Annotation at Cursor",
     Gear = { { Type = "button", Name = "Clear All Annotations", OnClick = function()
         annFolder():ClearAllChildren()
-        pcall(function() annDropdown:Refresh(annList()) end)
+        pcall(function() annDropdown:Refresh(annList(), true) end)
         notify("Annotations", "Cleared", 2, "info")
     end } },
     Tooltip = "Drop a floating label on the block under your cursor.",
@@ -9271,7 +9276,7 @@ tabEdit:CreateButton({
         lbl.TextColor3 = Color3.fromRGB(255, 230, 120)
         lbl.Text = S.annText or "Note"
         lbl.Parent = bb
-        pcall(function() annDropdown:Refresh(annList()) end)
+        pcall(function() annDropdown:Refresh(annList(), true) end)
         notifyOK("Annotation", "Placed: " .. (S.annText or "Note"), 3)
     end
 })
@@ -11917,7 +11922,7 @@ local function generateImageFile()
         selectedFile = name
         savedPreviewTransform = nil
         pcall(function() saveAlignment(name, CFrame.new()) end)
-        pcall(function() fileDropdown:Refresh(getFiles()) fileDropdown:Set({ name }) end)
+        pcall(function() fileDropdown:Refresh(getFiles(), true) fileDropdown:Set({ name }) end)
         say("Image Saved", #blocks .. " blocks (" .. tw .. " x " .. th .. ")\n-> "
             .. name .. "\nPreview tab: Preview Build, then Start Build.")
         notifyOK("Image", #blocks .. " blocks -> " .. name .. " (selected)", 6)
@@ -12121,7 +12126,7 @@ local function refreshList()
     if not F.kind then return end
     local ok, list = pcall(F.kind.list)
     if not ok or type(list) ~= "table" or #list == 0 then list = { "(none saved)" } end
-    pcall(function() fileDrop:Refresh(list) end)
+    pcall(function() fileDrop:Refresh(list, true) end)
     pcall(function()
         filePara:Set({
             Title = F.kind.name .. " Files",

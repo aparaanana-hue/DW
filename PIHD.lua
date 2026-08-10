@@ -1,4 +1,9 @@
-local Duvome = loadstring(game:HttpGet("https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
+-- The "?t=" is not decoration: raw.githubusercontent is behind a CDN that
+-- serves a stale copy for minutes after a push, so without it you can
+-- re-execute all day and still get the old library.
+local Duvome = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"
+        .. "?t=" .. tostring(os.time())))()
 
 local TAB_ICONS = {
 	Home                 = "house",
