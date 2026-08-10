@@ -198,6 +198,73 @@ def choose_limited(pal, colours, limit):
     return ranked[:limit]
 
 
+# A 4x4x4 ordered-dither threshold field. Values are evenly spread over 0-1 and
+# arranged so neighbouring cells get very different thresholds in all three
+# directions, which is what stops the pattern reading as stripes.
+def _bayer4():
+    base = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+    field = [[[0] * 4 for _ in range(4)] for _ in range(4)]
+    for z in range(4):
+        for y in range(4):
+            for x in range(4):
+                v = (base[y][x] + 16 * ((base[z][y] // 4) % 4)) % 64
+                field[z][y][x] = (v + 0.5) / 64.0
+    return field
+
+
+BAYER = _bayer4()
+
+
+class DitherMatcher:
+    """Nearest-block matching that mixes two blocks to fake the colours in
+    between.
+
+    Ninety-one colours cannot express a face. But a block is small: put two
+    nearby colours next to each other in a pattern and the eye averages them,
+    which buys far more apparent colours for nothing. For each cell it finds
+    the nearest block, then the nearest block on the *far* side of the target
+    colour, works out how far between the two the real colour lies, and uses an
+    ordered threshold from the cell's own position to decide which of the two
+    to place. No error is carried between cells, so the result stays
+    deterministic and has no seams.
+    """
+
+    def __init__(self, pal):
+        self.pal = pal
+        self._pair = {}
+
+    def _candidates(self, r, g, b):
+        key = (r // 2, g // 2, b // 2)
+        hit = self._pair.get(key)
+        if hit is not None:
+            return hit
+        c1 = nearest(self.pal, r, g, b)
+        # reflect the colour through c1 to find what lies on the other side
+        rr = min(255, max(0, 2 * r - c1[1][0]))
+        gg = min(255, max(0, 2 * g - c1[1][1]))
+        bb = min(255, max(0, 2 * b - c1[1][2]))
+        c2 = nearest(self.pal, rr, gg, bb)
+        if c2[0] == c1[0]:
+            out = (c1[0], c1[0], 0.0)
+        else:
+            # how far the true colour sits between the two, along the line
+            # joining them, in OKLab
+            L, a, bl = to_oklab(r, g, b)
+            v = (c2[2] - c1[2], c2[3] - c1[3], c2[4] - c1[4])
+            d = (L - c1[2], a - c1[3], bl - c1[4])
+            denom = v[0] * v[0] + v[1] * v[1] + v[2] * v[2]
+            t = 0.0 if denom <= 1e-12 else (d[0] * v[0] + d[1] * v[1] + d[2] * v[2]) / denom
+            out = (c1[0], c2[0], min(1.0, max(0.0, t)))
+        self._pair[key] = out
+        return out
+
+    def block(self, r, g, b, x=0, y=0, z=0):
+        c1, c2, t = self._candidates(r, g, b)
+        if t <= 0.0:
+            return c1
+        return c2 if BAYER[z % 4][y % 4][x % 4] < t else c1
+
+
 class Matcher:
     """nearest(), memoised on the colour so a big model does not re-match
     millions of identical pixels."""
@@ -206,7 +273,7 @@ class Matcher:
         self.pal = pal
         self._seen = {}
 
-    def block(self, r, g, b):
+    def block(self, r, g, b, x=0, y=0, z=0):
         key = (r, g, b)
         hit = self._seen.get(key)
         if hit is None:

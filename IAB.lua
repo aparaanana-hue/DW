@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 14:40"
+local IAB_BUILD = "Aug 10 16:10"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -348,7 +348,7 @@ local includeSlabs = true
 -- Luau's 200-local ceiling.
 -- .glb models voxelised on the way in. Declared up here because the Model
 -- section is built on the build tab, long before the reader itself.
-MODEL = { grid = 96, cache = {}, lastName = nil }
+MODEL = { grid = 96, cache = {}, lastName = nil, dither = true, ditherCache = {} }
 
 brushPreview = false
 previewOmitted = {}
@@ -3094,6 +3094,22 @@ auto:CreateSlider({
             BuilderAPI.setModelStatus("Detail " .. v .. " - about " .. v
                 .. " blocks along the model's longest side."
                 .. "\nTurn Preview Build off and on to rebuild it at this size.")
+        end
+    end
+})
+
+auto:CreateToggle({
+    Name = "Dither Colours",
+    CurrentValue = true,
+    Flag = "ModelDither",
+    Tooltip = "Mixes two nearby blocks in a pattern so the eye reads the colour in between. 91 block colours cannot render a face on their own; this buys far more apparent shades for no extra blocks.",
+    Callback = function(v)
+        if not MODEL then return end
+        MODEL.dither = v
+        MODEL.cache = {}
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus(v and "Dithering on - two blocks mixed for in-between shades."
+                or "Dithering off - one flat block per colour.")
         end
     end
 })
@@ -11628,6 +11644,62 @@ local function skinMatrices(m, skinIndex, globals)
     return mats
 end
 
+-- ── dithering ──────────────────────────────────────────────────────────────
+-- Ninety-one colours cannot express a face. But a block is small: put two
+-- nearby colours next to each other in a pattern and the eye averages them,
+-- which buys far more apparent colours for nothing. Find the nearest block,
+-- then the nearest block on the far side of the wanted colour, work out how
+-- far between the two the real colour lies, and let an ordered threshold taken
+-- from the cell's own position decide which to place. Nothing is carried
+-- between cells, so it stays deterministic and seamless.
+-- Built inside a function so its loop variables get their own registers: the
+-- main chunk is at Luau's 200-local ceiling and a bare do block shares them.
+MODEL.bayer = (function()
+    local base = { {0,8,2,10}, {12,4,14,6}, {3,11,1,9}, {15,7,13,5} }
+    local out = {}
+    for z = 0, 3 do
+        out[z] = {}
+        for y = 0, 3 do
+            out[z][y] = {}
+            for x = 0, 3 do
+                local v = (base[y + 1][x + 1]
+                    + 16 * (math.floor(base[z + 1][y + 1] / 4) % 4)) % 64
+                out[z][y][x] = (v + 0.5) / 64
+            end
+        end
+    end
+    return out
+end)()
+
+local function ditherBlock(r, g, b, x, y, z)
+    local key = math.floor(r / 2) .. "," .. math.floor(g / 2) .. "," .. math.floor(b / 2)
+    MODEL.ditherCache = MODEL.ditherCache or {}
+    local pair = MODEL.ditherCache[key]
+    if not pair then
+        local n1, c1 = blockFor(r, g, b)
+        -- reflect the colour through the nearest block to find what lies beyond
+        local rr = math.clamp(2 * r - c1.R * 255, 0, 255)
+        local gg = math.clamp(2 * g - c1.G * 255, 0, 255)
+        local bb = math.clamp(2 * b - c1.B * 255, 0, 255)
+        local n2, c2 = blockFor(math.floor(rr + 0.5), math.floor(gg + 0.5), math.floor(bb + 0.5))
+        if n2 == n1 then
+            pair = { n1, n1, 0 }
+        else
+            local L, a, bl = BA.toOklab(Color3.fromRGB(r, g, b))
+            local L1, a1, b1 = BA.toOklab(c1)
+            local L2, a2, b2 = BA.toOklab(c2)
+            local vx, vy, vz = L2 - L1, a2 - a1, b2 - b1
+            local dx, dy, dz = L - L1, a - a1, bl - b1
+            local den = vx * vx + vy * vy + vz * vz
+            local t = den <= 1e-12 and 0 or (dx * vx + dy * vy + dz * vz) / den
+            pair = { n1, n2, math.clamp(t, 0, 1) }
+        end
+        MODEL.ditherCache[key] = pair
+    end
+    if pair[3] <= 0 then return pair[1] end
+    return MODEL.bayer[z % 4][y % 4][x % 4] < pair[3] and pair[2] or pair[1]
+end
+
 -- ── voxelising ─────────────────────────────────────────────────────────────
 -- Samples every triangle on a barycentric lattice fine enough that no cell it
 -- crosses is missed. A rasteriser would be faster but needs a special case for
@@ -11838,10 +11910,15 @@ local function glbToBlocks(data, gridCells, onProgress)
     local blocks = table.create(#order)
     for i, cell in ipairs(order) do
         local n = math.max(cell[7], 1)
-        local name = blockFor(
-            math.clamp(math.floor(cell[4] / n + 0.5), 0, 255),
-            math.clamp(math.floor(cell[5] / n + 0.5), 0, 255),
-            math.clamp(math.floor(cell[6] / n + 0.5), 0, 255))
+        local cr = math.clamp(math.floor(cell[4] / n + 0.5), 0, 255)
+        local cg = math.clamp(math.floor(cell[5] / n + 0.5), 0, 255)
+        local cb = math.clamp(math.floor(cell[6] / n + 0.5), 0, 255)
+        local name
+        if MODEL.dither == false then
+            name = blockFor(cr, cg, cb)
+        else
+            name = ditherBlock(cr, cg, cb, cell[1], cell[2], cell[3])
+        end
         blocks[i] = {
             blockType = name,
             upperBlock = false,
@@ -11876,6 +11953,7 @@ BuilderAPI.loadModelFile = function(name, data)
     end
 
     rebuildActivePalette()
+    MODEL.ditherCache = {}
     notify("Model", "Voxelising " .. name .. " at detail " .. MODEL.grid .. "...", 6, "info")
 
     local blocks, err, info = glbToBlocks(data, MODEL.grid, function(done, total, cells)

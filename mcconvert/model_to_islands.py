@@ -20,6 +20,7 @@ thing, so this is the accuracy dial.
                       (Solid Wool Clay Neon Pastel Wood Stone Natural Ore)
       --simplify N    cap the build to N distinct block types (0 = off)
       --single NAME   ignore colour, build it all from one block type
+      --no-dither     one flat block per colour instead of mixing two
       --up y|z        force the up axis (default: auto-detect)
 
 Writes builds/solid/<OutputName>.json and builds/hollow/<OutputName>.json.
@@ -120,21 +121,32 @@ def sample_triangles(pos, uv, col, tris, spacing):
 
 
 def primitive_colours(prim, uvs, cols, count):
-    """Colour per sample: texture if there is one, else the flat material
-    colour, modulated by any vertex colours."""
+    """Colour and opacity per sample.
+
+    Returns (rgb, alpha). Transparent texels are reported so the caller can
+    throw them away: hair cards, eyelashes and decals are modelled as flat
+    quads with most of the texture cut out by alpha, and sampling those
+    invisible parts drags whole blocks towards a colour nothing there has.
+    """
     base = np.ones((count, 3), dtype=np.float64)
+    alpha = np.ones(count, dtype=np.float64)
     mat = prim.material
     if mat is not None:
         tex = mat.texture
         if tex is not None and tex.usable and uvs is not None:
-            base = tex.sample(uvs[:, 0], uvs[:, 1]).astype(np.float64) / 255.0
+            rgba = tex.sample(uvs[:, 0], uvs[:, 1]).astype(np.float64) / 255.0
+            base = rgba[:, :3] * np.array(mat.base_color[:3], dtype=np.float64)
+            if rgba.shape[1] > 3:
+                alpha = rgba[:, 3]
         else:
             base = np.tile(np.array(mat.base_color[:3], dtype=np.float64), (count, 1))
-        if tex is not None and tex.usable:
-            base *= np.array(mat.base_color[:3], dtype=np.float64)
     if cols is not None:
         base *= cols[:, :3].astype(np.float64)
-    return np.clip(base * 255.0, 0, 255)
+        if cols.shape[1] > 3:
+            alpha = alpha * cols[:, 3].astype(np.float64)
+    if mat is not None and len(mat.base_color) > 3:
+        alpha = alpha * mat.base_color[3]
+    return np.clip(base * 255.0, 0, 255), alpha
 
 
 def voxelise(model, up, cells_long, want_colour=True):
@@ -173,7 +185,12 @@ def voxelise(model, up, cells_long, want_colour=True):
             seen.update(map(tuple, np.unique(grid, axis=0).tolist()))
             continue
 
-        rgb = primitive_colours(prim, uvs, cols, len(pts))
+        rgb, alpha = primitive_colours(prim, uvs, cols, len(pts))
+        solid = alpha >= 0.5
+        if not solid.all():
+            if not solid.any():
+                continue
+            grid, rgb = grid[solid], rgb[solid]
 
         # Collapse to one row per cell before touching Python. A big model
         # produces tens of millions of samples, and looping over those - or
@@ -183,13 +200,32 @@ def voxelise(model, up, cells_long, want_colour=True):
         order = np.argsort(keys, kind="stable")
         keys_s, grid_s, rgb_s = keys[order], grid[order], rgb[order]
         starts = np.flatnonzero(np.r_[True, keys_s[1:] != keys_s[:-1]])
-        totals = np.add.reduceat(rgb_s, starts, axis=0)
         counts = np.diff(np.r_[starts, len(keys_s)])
         cells = grid_s[starts]
 
-        for cell, total, n in zip(map(tuple, cells.tolist()), totals, counts):
-            sums[cell] += total
-            hits[cell] += int(n)
+        # A cell on a boundary - hairline, eye, collar - is crossed by two very
+        # different surfaces. Averaging them invents a colour that is on
+        # neither, and the nearest block to that average can be wrong for both.
+        # So vote: bucket the samples coarsely, take the bucket with the most
+        # samples, and average only within it. Edges stay edges.
+        bucket = (rgb_s // 32).astype(np.int64)
+        bkey = (bucket[:, 0] << 10) | (bucket[:, 1] << 5) | bucket[:, 2]
+
+        for cell, s0, n in zip(map(tuple, cells.tolist()), starts, counts):
+            seg_rgb = rgb_s[s0:s0 + n]
+            if n == 1:
+                sums[cell] += seg_rgb[0]
+                hits[cell] += 1
+                continue
+            vals, inv = np.unique(bkey[s0:s0 + n], return_inverse=True)
+            if len(vals) == 1:
+                sums[cell] += seg_rgb.sum(axis=0)
+                hits[cell] += int(n)
+                continue
+            win = np.bincount(inv).argmax()
+            keep = seg_rgb[inv == win]
+            sums[cell] += keep.sum(axis=0)
+            hits[cell] += len(keep)
 
     if not want_colour:
         return {c: (0, 0, 0) for c in seen}
@@ -285,7 +321,11 @@ def to_blocks(cells, matcher, single):
     """
     placed = {}
     for cell, rgb in cells.items():
-        name = single or matcher.block(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        if single:
+            name = single
+        else:
+            name = matcher.block(int(rgb[0]), int(rgb[1]), int(rgb[2]),
+                                 cell[0], cell[1], cell[2])
         placed[cell] = name
     blocks = []
     for (x, y, z), name in placed.items():
@@ -381,7 +421,11 @@ def main():
         else:
             print(f"palette: {len(pal)} blocks"
                   + (f" ({groups})" if groups else ""))
-        matcher = islands_palette.Matcher(pal)
+        if "--no-dither" in sys.argv:
+            matcher = islands_palette.Matcher(pal)
+            print("dithering off")
+        else:
+            matcher = islands_palette.DitherMatcher(pal)
 
     blocks = anchor(to_blocks(cells, matcher, single))
 

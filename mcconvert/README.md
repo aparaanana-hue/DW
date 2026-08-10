@@ -98,6 +98,20 @@ the joint node transforms. Reading positions alone gives a T-pose no matter
 what the model looks like, so `JOINTS_0`/`WEIGHTS_0` and the inverse bind
 matrices are applied.
 
+Colour is dithered by default. Ninety-one block colours cannot render a face,
+so each cell picks between the two palette blocks its true colour falls
+between, using an ordered threshold from the cell's own position - the eye
+averages them and reads the shade in between. Measured against the model's own
+texture over 3x3x3 neighbourhoods, it cuts colour error by about 22%.
+`--no-dither` gives one flat block per colour.
+
+Transparent texels are thrown away rather than sampled. Hair, eyelashes and
+decals are flat quads with most of the texture cut out by alpha, and sampling
+those invisible parts drags whole blocks toward a colour nothing there has.
+Textures are sampled bilinearly, and a cell crossed by two different surfaces
+takes the colour of whichever covers most of it rather than a blend of both -
+an average of hair and skin is on neither.
+
 Textures: PNG works out of the box. **JPEG needs Pillow** (`pip install
 Pillow`) — without it those materials fall back to their flat base colour and
 it says so. Draco- or meshopt-compressed meshes are refused by name rather than
@@ -146,7 +160,7 @@ large; skip it if you want the solid interior.
 | Lavria | 730,123 | 339,754 | 331x107x331 |
 | DreamSpawn | 25,687 | 22,514 | 79x151x79 |
 | PinkPalace | 83,717 | 31,843 | 160x128x181 | generated, not converted |
-| FemaleTitan | 79,860 | 42,361 | 108x290x113 | from a .glb model, posed from its skeleton |
+| FemaleTitan | 79,860 | 42,361 | 108x290x113 | from a .glb model, posed and dithered |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and

@@ -65,7 +65,7 @@ class Texture:
     """A decoded base colour image, or a stub when it could not be decoded."""
 
     def __init__(self, pixels, width, height, name=""):
-        self.pixels = pixels              # (h, w, 3) uint8, or None
+        self.pixels = pixels              # (h, w, 4) uint8 RGBA, or None
         self.width = width
         self.height = height
         self.name = name
@@ -74,15 +74,32 @@ class Texture:
     def usable(self):
         return self.pixels is not None
 
-    def sample(self, u, v):
-        """Nearest-neighbour lookup, UVs wrapped. Arrays in, (n, 3) out."""
+    def sample(self, u, v, bilinear=True):
+        """Look up UVs, wrapped. Arrays in, (n, 4) RGBA out.
+
+        Bilinear rather than nearest: a face is only a few dozen blocks across,
+        and each block averages many samples, so point-sampling a 1024px
+        texture throws away most of what is there and adds noise on top.
+        """
         u = np.asarray(u, dtype=np.float64)
         v = np.asarray(v, dtype=np.float64)
-        x = np.mod(u, 1.0) * (self.width - 1)
         # glTF UV origin is top-left, image row 0 is the top, so v maps straight
+        x = np.mod(u, 1.0) * (self.width - 1)
         y = np.mod(v, 1.0) * (self.height - 1)
-        return self.pixels[np.rint(y).astype(np.int32),
-                           np.rint(x).astype(np.int32)]
+        if not bilinear:
+            return self.pixels[np.rint(y).astype(np.int32),
+                               np.rint(x).astype(np.int32)]
+
+        x0 = np.floor(x).astype(np.int32)
+        y0 = np.floor(y).astype(np.int32)
+        x1 = np.minimum(x0 + 1, self.width - 1)
+        y1 = np.minimum(y0 + 1, self.height - 1)
+        fx = (x - x0)[:, None]
+        fy = (y - y0)[:, None]
+        p = self.pixels
+        top = p[y0, x0] * (1 - fx) + p[y0, x1] * fx
+        bot = p[y1, x0] * (1 - fx) + p[y1, x1] * fx
+        return top * (1 - fy) + bot * fy
 
 
 class Primitive:
@@ -126,7 +143,7 @@ def _decode_with_pillow(data):
         return None
     import io
     try:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img = Image.open(io.BytesIO(data)).convert("RGBA")
         return np.asarray(img, dtype=np.uint8)
     except Exception:
         return None
@@ -199,11 +216,17 @@ def _decode_png(data):
         prev = line
 
     img = out.reshape(height, width, channels)
+    opaque = np.full((height, width, 1), 255, np.uint8)
     if ctype == 3 and palette is not None:
-        return palette[img[:, :, 0]]
-    if ctype in (0, 4):
-        return np.repeat(img[:, :, :1], 3, axis=2)
-    return img[:, :, :3]
+        return np.concatenate([palette[img[:, :, 0]], opaque], axis=2)
+    if ctype == 0:
+        return np.concatenate([np.repeat(img, 3, axis=2), opaque], axis=2)
+    if ctype == 4:                       # grey + alpha
+        return np.concatenate([np.repeat(img[:, :, :1], 3, axis=2),
+                               img[:, :, 1:2]], axis=2)
+    if ctype == 6:                       # RGBA
+        return img
+    return np.concatenate([img[:, :, :3], opaque], axis=2)
 
 
 def _decode_image(data, name, notes):
