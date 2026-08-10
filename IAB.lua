@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 20:15"
+local IAB_BUILD = "Aug 10 22:55"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -11038,10 +11038,17 @@ local function inflate(reader, out)
     local bitStream = createBitStream(reader)
     parseZlibHeader(bitStream)
     local window, pos = {}, 1
+    -- Yield every so many bytes written. Without this the whole stream is
+    -- decompressed in one uninterrupted go, and a megabyte-scale PNG - a
+    -- model texture, say - locks the client up for the best part of a second
+    -- with no way to tell it apart from a hang.
+    local written = 0
     local function write(byte)
         out(byte)
         window[pos] = byte
         pos = pos % 32768 + 1
+        written = written + 1
+        if written % 24000 == 0 then task.wait() end
     end
     repeat
         local bFinal = bitStream:Read(1)
@@ -11833,7 +11840,7 @@ MODEL.decodeJPEG8 = function(data)
             end
             done = done + 1
         end
-        if my % 8 == 0 then task.wait() end
+        if my % 2 == 0 then task.wait() end
     end
 
     -- ── DC to pixels ───────────────────────────────────────────────────────
@@ -11901,7 +11908,7 @@ MODEL.shrinkTexture = function(tex, maxDim)
             local o = ((y - 1) * nw + (x - 1)) * 3
             px[o + 1], px[o + 2], px[o + 3] = r, g, b
         end
-        if y % 32 == 0 then task.wait() end
+        if y % 12 == 0 then task.wait() end
     end
     return { w = nw, h = nh, from = w .. "x" .. h, get = function(x, y)
         if x < 1 then x = 1 elseif x > nw then x = nw end
@@ -12105,6 +12112,10 @@ end
 -- crosses is missed. A rasteriser would be faster but needs a special case for
 -- every skinny or edge-on triangle; this one has none.
 local MODEL_MAX_CELLS = 600000
+-- A ceiling on sampling work as well as on output. A model with a few huge
+-- triangles can want tens of millions of samples at a high detail setting, and
+-- grinding through those is what makes it look like a freeze.
+local MODEL_MAX_SAMPLES = 9000000
 
 local function glbToBlocks(data, gridCells, onProgress)
     local m, err = parseGLB(data)
@@ -12197,7 +12208,7 @@ local function glbToBlocks(data, gridCells, onProgress)
             if x > maxX then maxX = x end
             if y > maxY then maxY = y end
             if z > maxZ then maxZ = z end
-            if i % 4000 == 0 then task.wait() end
+            if i % 1200 == 0 then task.wait() end
         end
         job.verts = verts
     end
@@ -12208,11 +12219,13 @@ local function glbToBlocks(data, gridCells, onProgress)
     local zUp = sz > sy * 1.6 and sz > sx * 1.1
     local longest = math.max(sx, sy, sz, 1e-9)
     local scale = gridCells / longest
-    local spacing = 0.5 / scale
+    local spacing = 0.34 / scale
 
     local cells, order = {}, {}
     local placed = 0
     local stopped = false
+    local tooBig = false
+    local samples, lastYield = 0, 0
 
     for ji, job in ipairs(jobs) do
         local prim = job.prim
@@ -12231,27 +12244,59 @@ local function glbToBlocks(data, gridCells, onProgress)
         end
         if not idxRead then return nil, "Unsupported index data in that file" end
 
-        for t = 0, math.floor(idxCount / 3) - 1 do
+        -- Sampling one triangle. Four things used to make this crawl, and
+        -- together they were the freeze:
+        --
+        --  * the UVs were read from the binary blob three times per *sample*
+        --    rather than once per triangle - thousands of string.unpack calls
+        --    for a single triangle;
+        --  * every sample built a "x,y,z" string to key the cell table, so a
+        --    few million string allocations and hashes;
+        --  * a closure was allocated per triangle just to measure an edge;
+        --  * and it yielded every 250 triangles, which at up to two thousand
+        --    samples each is half a million samples inside one frame.
+        --
+        -- The sample count is also taken from the two edges separately now.
+        -- Sizing a square lattice by the longest edge gives a long thin
+        -- triangle thousands of samples when it needs dozens; this makes the
+        -- work follow the area instead.
+        local tw, th, tget
+        if tex then tw, th, tget = tex.w - 1, tex.h - 1, tex.get end
+        local br, bg, bb = base[1], base[2], base[3]
+        local triCount = math.floor(idxCount / 3)
+
+        for t = 0, triCount - 1 do
             local i0 = idxRead(t * 3) + 1
             local i1 = idxRead(t * 3 + 1) + 1
             local i2 = idxRead(t * 3 + 2) + 1
             local a, b, c = verts[i0], verts[i1], verts[i2]
             if a and b and c then
-                local function edge(p, q)
-                    local dx, dy, dz = p[1] - q[1], p[2] - q[2], p[3] - q[3]
-                    return math.sqrt(dx * dx + dy * dy + dz * dz)
-                end
-                local n = math.clamp(
-                    math.ceil(math.max(edge(a, b), edge(a, c), edge(b, c)) / spacing) + 1,
-                    2, 64)
+                local ax, ay, az = a[1], a[2], a[3]
+                local e1x, e1y, e1z = b[1] - ax, b[2] - ay, b[3] - az
+                local e2x, e2y, e2z = c[1] - ax, c[2] - ay, c[3] - az
+                local nu = math.ceil(math.sqrt(e1x * e1x + e1y * e1y + e1z * e1z) / spacing) + 1
+                local nv = math.ceil(math.sqrt(e2x * e2x + e2y * e2y + e2z * e2z) / spacing) + 1
+                if nu < 1 then nu = 1 elseif nu > 64 then nu = 64 end
+                if nv < 1 then nv = 1 elseif nv > 64 then nv = 64 end
 
-                for i = 0, n do
-                    for j = 0, n - i do
-                        local wi, wj = i / n, j / n
+                -- UVs once per triangle, not once per sample
+                local u0, v0, u1, v1, u2, v2
+                if tex then
+                    u0, v0 = uvRead(i0 - 1)
+                    u1, v1 = uvRead(i1 - 1)
+                    u2, v2 = uvRead(i2 - 1)
+                end
+
+                for i = 0, nu do
+                    local wi = i / nu
+                    local jmax = math.floor((1 - wi) * nv)
+                    for j = 0, jmax do
+                        local wj = j / nv
                         local wk = 1 - wi - wj
-                        local px = a[1] * wk + b[1] * wi + c[1] * wj
-                        local py = a[2] * wk + b[2] * wi + c[2] * wj
-                        local pz = a[3] * wk + b[3] * wi + c[3] * wj
+                        local px = ax + e1x * wi + e2x * wj
+                        local py = ay + e1y * wi + e2y * wj
+                        local pz = az + e1z * wi + e2z * wj
+
                         -- reorient so Y is up, as a build file expects
                         local gx, gy, gz
                         if zUp then
@@ -12263,7 +12308,10 @@ local function glbToBlocks(data, gridCells, onProgress)
                             gy = math.floor((py - minY) * scale)
                             gz = math.floor((pz - minZ) * scale)
                         end
-                        local key = gx .. "," .. gy .. "," .. gz
+
+                        -- a plain number keys the table far more cheaply than
+                        -- a concatenated string
+                        local key = (gx * 2048 + gy) * 2048 + gz
                         local cell = cells[key]
                         if not cell then
                             if placed >= MODEL_MAX_CELLS then
@@ -12276,16 +12324,13 @@ local function glbToBlocks(data, gridCells, onProgress)
                             placed = placed + 1
                         end
 
-                        local r, g, bl = base[1], base[2], base[3]
+                        local r, g, bl = br, bg, bb
                         if tex then
-                            local u0, v0 = uvRead(i0 - 1)
-                            local u1, v1 = uvRead(i1 - 1)
-                            local u2, v2 = uvRead(i2 - 1)
                             local u = u0 * wk + u1 * wi + u2 * wj
                             local v = v0 * wk + v1 * wi + v2 * wj
-                            local tx = math.floor((u % 1) * (tex.w - 1)) + 1
-                            local ty = math.floor((v % 1) * (tex.h - 1)) + 1
-                            local tr, tg, tb = tex.get(tx, ty)
+                            local tr, tg, tb = tget(
+                                math.floor((u % 1) * tw) + 1,
+                                math.floor((v % 1) * th) + 1)
                             r, g, bl = r * tr / 255, g * tg / 255, bl * tb / 255
                         end
                         cell[4] = cell[4] + r * 255
@@ -12295,12 +12340,21 @@ local function glbToBlocks(data, gridCells, onProgress)
                     end
                     if stopped then break end
                 end
+
+                -- Yield on work done, not on triangles counted, so a frame
+                -- never runs long however heavy the triangles happen to be.
+                samples = samples + (nu + 1) * (nv + 1) / 2
+                if samples - lastYield >= 5000 then
+                    lastYield = samples
+                    task.wait()
+                    if onProgress then onProgress(ji, #jobs, placed, t, triCount) end
+                end
+                if samples > MODEL_MAX_SAMPLES then
+                    stopped = true
+                    tooBig = true
+                end
             end
             if stopped then break end
-            if t % 250 == 0 then
-                task.wait()
-                if onProgress then onProgress(ji, #jobs, placed) end
-            end
         end
         if stopped then break end
     end
@@ -12325,13 +12379,15 @@ local function glbToBlocks(data, gridCells, onProgress)
             cframe = { cell[1] * 3, cell[2] * 3, cell[3] * 3, 1, 0, 0, 0, 1, 0 },
             parts = {},
         }
-        if i % 8000 == 0 then task.wait() end
+        if i % 1500 == 0 then task.wait() end
     end
 
     return blocks, nil, {
         posed = posedAny,
         tex = m.tex,
         stopped = stopped,
+        tooBig = tooBig,
+        samples = samples,
         jpeg = m.jpegSeen,
         zUp = zUp,
         -- report the size the blocks actually came out, not the model's own
@@ -12356,12 +12412,14 @@ BuilderAPI.loadModelFile = function(name, data)
     MODEL.buildPalette()
     notify("Model", "Voxelising " .. name .. " at detail " .. MODEL.grid .. "...", 6, "info")
 
-    local blocks, err, info = glbToBlocks(data, MODEL.grid, function(done, total, cells)
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus(("Voxelising %d/%d meshes - %d blocks so far")
-                :format(done, total, cells))
-        end
-    end)
+    local blocks, err, info = glbToBlocks(data, MODEL.grid,
+        function(done, total, cells, tri, tris)
+            if BuilderAPI.setModelStatus then
+                local pct = tris and tris > 0 and math.floor(tri / tris * 100) or 0
+                BuilderAPI.setModelStatus(("Voxelising mesh %d/%d - %d%% - %d blocks so far")
+                    :format(done, total, pct, cells))
+            end
+        end)
     if not blocks then
         notifyErr("Model", err or "Could not read that model", 8)
         if BuilderAPI.setModelStatus then BuilderAPI.setModelStatus(err or "Failed") end
@@ -12407,7 +12465,10 @@ BuilderAPI.loadModelFile = function(name, data)
     if #groups > 0 then
         msg = msg .. "\nModel Palette is restricted - clear it for a textured model."
     end
-    if info.stopped then
+    if info.tooBig then
+        msg = msg .. "\nStopped early: this model needs more sampling than one"
+            .. " session should spend. Lower Model Detail and try again."
+    elseif info.stopped then
         msg = msg .. "\nHit the " .. MODEL_MAX_CELLS .. " block ceiling; lower Model Detail."
     end
     if BuilderAPI.setModelStatus then BuilderAPI.setModelStatus(msg) end
