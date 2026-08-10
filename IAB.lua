@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 11 09:20"
+local IAB_BUILD = "Aug 11 11:45"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -350,7 +350,7 @@ local includeSlabs = true
 -- section is built on the build tab, long before the reader itself.
 MODEL = { grid = 96, cache = {}, lastName = nil, dither = true,
           ditherCache = {}, texSize = 256,
-          ditherAmount = 0.45, ditherMin = 0.053 }
+          ditherAmount = 0.45, ditherMin = 0.053, limit = 0 }
 
 brushPreview = false
 previewOmitted = {}
@@ -2728,7 +2728,8 @@ auto:CreateToggle({
         selBoxOnly = v
         if v then
             pcall(function() BuilderAPI.showSelBox() end)
-            notify("Box Shown", "Drag the face handles to resize it", 3)
+            pcall(function() BuilderAPI.armSelBoxPlacement() end)
+            notify("Click to Place", "Click where you want the box, then drag its handles to resize", 6)
         else
             pcall(function() BuilderAPI.hideSelBox() end)
         end
@@ -3040,6 +3041,22 @@ end
 
 modelDropdown = auto:CreateDropdown({
     Name = "Select Model",
+    -- The same viewer the build files use. It renders the blocks the model
+    -- turns into rather than the mesh itself - Roblox will not build a mesh
+    -- from raw triangles at runtime - so what you see is what will be placed,
+    -- which is the more useful answer anyway.
+    GearAction = {
+        Icon = "eye",
+        OnClick = function()
+            if not MODEL or not MODEL.selected then
+                notifyWarn("Model", "Pick a model first", 3)
+                return
+            end
+            if BuilderAPI.thumbOpen then
+                BuilderAPI.thumbOpen(not (BuilderAPI.thumbPanel and BuilderAPI.thumbPanel:IsOpen()))
+            end
+        end,
+    },
     Actions = {
         { Text = "Refresh", OnClick = function()
             pcall(function() modelDropdown:Refresh(getModelFiles(), true) end)
@@ -3092,11 +3109,6 @@ auto:CreateSlider({
     Callback = function(v)
         if not MODEL then return end
         MODEL.grid = v
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus("Detail " .. v .. " - about " .. v
-                .. " blocks along the model's longest side."
-                .. "\nTurn Preview Build off and on to rebuild it at this size.")
-        end
     end
 })
 
@@ -3121,10 +3133,17 @@ auto:CreateDropdown({
         MODEL.groups = set
         MODEL.cache = {}
         if MODEL.buildPalette then MODEL.buildPalette() end
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus(next(set) and "Palette restricted - re-run Preview Build."
-                or "Full palette (91 blocks) - re-run Preview Build.")
-        end
+    end
+})
+
+auto:CreateSlider({
+    Name = "Simplify", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
+    Suffix = "types", Flag = "ModelSimplify",
+    Tooltip = "Cap how many different blocks the whole model uses. 0 is off. Low values give a poster look - and a far shorter shopping list.",
+    Callback = function(v)
+        if not MODEL then return end
+        MODEL.limit = v
+        MODEL.cache = {}
     end
 })
 
@@ -3132,43 +3151,32 @@ auto:CreateToggle({
     Name = "Blend Colours",
     CurrentValue = true,
     Flag = "ModelDither",
-    Tooltip = "Off gives one flat block per colour - plain, and often what you want for skin or cloth. On mixes two nearby blocks in a pattern so the eye reads the shade in between, which is worth it on gradients and metal.",
+    Tooltip = "Off gives one flat block per colour - plain, and often what you want for skin or cloth. On mixes two nearby blocks so the eye reads the shade in between, which is worth it on gradients and metal. The gear sets how freely.",
+    Gear = {
+        { Type = "slider", Name = "Blend Amount", Min = 0, Max = 100, Default = 45,
+          Callback = function(v)
+            if not MODEL then return end
+            -- One dial over two: how often the second block is allowed, and
+            -- how badly the nearest has to fit before mixing is worth it.
+            MODEL.ditherAmount = v / 100
+            MODEL.ditherMin = 0.08 - 0.06 * (v / 100)
+            MODEL.cache = {}
+            MODEL.ditherCache = {}
+        end },
+    },
     Callback = function(v)
         if not MODEL then return end
         MODEL.dither = v
         MODEL.cache = {}
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus(v and "Blending on - two blocks mixed where no single one fits."
-                or "Flat - one block per colour, no pattern.")
-        end
-    end
-})
-
-auto:CreateSlider({
-    Name = "Blend Amount", Range = { 0, 100 }, Increment = 5, CurrentValue = 45,
-    Suffix = "%", Flag = "ModelBlend",
-    Tooltip = "How freely two blocks may be mixed. Low keeps broad even surfaces - skin, cloth - as one flat colour and only mixes where nothing single fits. High mixes everywhere, which shows more shades but speckles.",
-    Callback = function(v)
-        if not MODEL then return end
-        -- One dial over two: how often the second block is allowed, and how
-        -- badly the nearest block has to fit before mixing is worth it at all.
-        MODEL.ditherAmount = v / 100
-        MODEL.ditherMin = 0.08 - 0.06 * (v / 100)
-        MODEL.cache = {}
-        MODEL.ditherCache = {}
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus(v == 0 and "Flat - one block per colour."
-                or ("Blend " .. v .. "% - re-run Preview Build to see it."))
-        end
     end
 })
 
 auto:CreateButton({
-    Name = "Forget Model Cache",
-    Tooltip = "A voxelised model is kept so previewing it again is instant. Drop this if you have replaced the .glb file.",
+    Name = "Re-read Model File",
+    Tooltip = "A model is turned into blocks once and kept, so previewing it again is instant. Press this after replacing the .glb on disk with a new version, otherwise you keep seeing the old one.",
     Callback = function()
         if MODEL then MODEL.cache = {} end
-        notify("Model", "Cached models dropped", 3, "info")
+        notify("Model", "Will read the file again on the next preview", 3, "info")
     end
 })
 
@@ -3258,7 +3266,6 @@ addObjectsSection(auto, "Stamp File as Object", selectedFileBlocks, { Column = "
 
 do
 local saveFileName = "MyBuild"
-local saveSplitMode = "Full"
 selBoxOnly = false
 selBoxPart = nil
 selHandles = nil
@@ -3555,65 +3562,6 @@ function finishSaveBlocks(blocks)
         return
     end
 
-    if saveSplitMode ~= "Full" then
-        local minX, maxX = math.huge, -math.huge
-        local minZ, maxZ = math.huge, -math.huge
-        for _, b in ipairs(blocks) do
-            local x, z = b.cframe[1], b.cframe[3]
-            if x < minX then minX = x end
-            if x > maxX then maxX = x end
-            if z < minZ then minZ = z end
-            if z > maxZ then maxZ = z end
-        end
-        local cx = math.floor((minX + maxX) / 2 / 3 + 0.5) * 3
-        local cz = math.floor((minZ + maxZ) / 2 / 3 + 0.5) * 3
-
-        local kept = {}
-        for _, b in ipairs(blocks) do
-            local x, z = b.cframe[1], b.cframe[3]
-            local keep
-            if saveSplitMode == "Half (mirror)" then
-                keep = x >= cx
-            else
-                keep = x >= cx and z >= cz
-            end
-            if keep then kept[#kept + 1] = b end
-        end
-
-        local function mirror(b, mX, mZ)
-            local c = b.cframe
-            local nx = mX and (2 * cx - c[1]) or c[1]
-            local nz = mZ and (2 * cz - c[3]) or c[3]
-            local rX = mX and -c[4] or c[4]
-            local rZ = mZ and -c[6] or c[6]
-            local uX = mX and -c[7] or c[7]
-            local uZ = mZ and -c[9] or c[9]
-            return {
-                blockType = b.blockType,
-                upperBlock = b.upperBlock,
-                cframe = { nx, c[2], nz, rX, c[5], rZ, uX, c[8], uZ },
-                parts = {},
-            }
-        end
-
-        local out, seen = {}, {}
-        local function push(b)
-            local k = b.cframe[1] .. "_" .. b.cframe[2] .. "_" .. b.cframe[3]
-            if not seen[k] then seen[k] = true out[#out + 1] = b end
-        end
-        for _, b in ipairs(kept) do
-            push(b)
-            if saveSplitMode == "Half (mirror)" then
-                push(mirror(b, true, false))
-            else
-                push(mirror(b, true, false))
-                push(mirror(b, false, true))
-                push(mirror(b, true, true))
-            end
-        end
-        blocks = out
-    end
-
     if not isfolder("autoBuilder") then makefolder("autoBuilder") end
     local name = saveFileName
     if not (name:lower():sub(-5) == ".json" or name:lower():sub(-4) == ".txt") then
@@ -3660,6 +3608,32 @@ end
 local function hideSelBox()
     if selHandles then selHandles:Destroy() selHandles = nil end
     if selBoxPart then selBoxPart:Destroy() selBoxPart = nil end
+end
+
+-- Place the box by clicking, rather than dropping it on the player. It used to
+-- appear inside your own character, which is almost never where you want it,
+-- so the first click after turning it on puts it where you are pointing.
+local function placeSelBoxAtCursor()
+    if not selBoxPart or not selBoxPart.Parent then return false end
+    local cam = Workspace.CurrentCamera
+    if not cam then return false end
+    local mp = UserInputService:GetMouseLocation()
+    local ray = cam:ViewportPointToRay(mp.X, mp.Y)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local ignore = { selBoxPart }
+    local char = Players.LocalPlayer and Players.LocalPlayer.Character
+    if char then ignore[#ignore + 1] = char end
+    local ghost = Workspace:FindFirstChild(previewFolderName)
+    if ghost then ignore[#ignore + 1] = ghost end
+    params.FilterDescendantsInstances = ignore
+
+    local hit = Workspace:Raycast(ray.Origin, ray.Direction * 5000, params)
+    local pos = hit and hit.Position
+        or (ray.Origin + ray.Direction * 60)
+    -- sit the box on what was clicked rather than half-sunk into it
+    selBoxPart.CFrame = CFrame.new(pos + Vector3.new(0, selBoxPart.Size.Y / 2, 0))
+    return true
 end
 
 local function showSelBox()
@@ -3735,6 +3709,50 @@ end
 -- definitions, so it reaches them through here.
 BuilderAPI.showSelBox = showSelBox
 BuilderAPI.hideSelBox = hideSelBox
+
+-- One click after switching the box on drops it where you point. It is a
+-- one-shot rather than a mode, so it cannot get in the way of the resize
+-- handles afterwards.
+local selBoxArm = nil
+BuilderAPI.armSelBoxPlacement = function()
+    if selBoxArm then selBoxArm:Disconnect() selBoxArm = nil end
+    selBoxArm = UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if placeSelBoxAtCursor() then
+            notify("Box Placed", "Drag the face handles to resize it", 4, "info")
+        end
+        if selBoxArm then selBoxArm:Disconnect() selBoxArm = nil end
+    end)
+end
+
+-- Everything the box contains, in the ghost preview. The brush can already
+-- trim a preview block by block; this does the same job to a whole region at
+-- once, which is what the box is for.
+BuilderAPI.selectPreviewInBox = function(erase)
+    if not selBoxPart or not selBoxPart.Parent then
+        notifyWarn("Selection Box", "Turn Show Selection Box on and place it first", 4)
+        return 0
+    end
+    local model = previewModel
+    if not model or not model.Parent then
+        notifyWarn("Selection Box", "Preview a build or model first", 4)
+        return 0
+    end
+    local n = 0
+    for _, d in ipairs(model:GetChildren()) do
+        if d.Name ~= "PreviewRoot" and d.Name ~= "PreviewBBox" then
+            local ok, pos = pcall(function()
+                return d:IsA("BasePart") and d.Position or d:GetPivot().Position
+            end)
+            if ok and pos and inSelectionBox(pos) then
+                if erase then unhighlightBlock(d) else highlightBlock(d) end
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
 
 -- Right column runs Preview, Image, Save; Image is built last but sits above
 -- Save, so all three are ordered explicitly.
@@ -3985,16 +4003,11 @@ saveTab:CreateInput({
     end
 })
 
-saveTab:CreateDropdown({
-    Name = "Save Mode",
-    Options = { "Full", "Half (mirror)", "Quarter (4x)" },
-    CurrentOption = { "Full" },
-    MultipleOptions = false,
-    Flag = "SaveSplitMode",
-    Callback = function(v)
-        saveSplitMode = (typeof(v) == "table") and v[1] or v
-    end
-})
+
+
+-- Declared up here because saveIslandBuild reads it: naming a local before it
+-- exists compiles as a global lookup, and the box would be quietly ignored.
+local saveTarget = "Whole Island"
 
 local function saveIslandBuild()
     local island = getNearestIsland()
@@ -4015,7 +4028,7 @@ local function saveIslandBuild()
     for i, part in ipairs(children) do
         if part:IsA("BasePart") and part.Name ~= "bedrock" and part.Name ~= "portalToSpawn" then
             local include = true
-            if selBoxOnly then
+            if selBoxOnly and saveTarget == "Inside Selection Box" then
                 include = inSelectionBox(part.Position)
             end
             if include then
@@ -4028,14 +4041,17 @@ local function saveIslandBuild()
     finishSaveBlocks(blocks)
 end
 
-local saveTarget = "Island Build"
 saveTab:CreateDropdown({
     Name = "Save Target",
-    Options = { "Island Build", "Selected Only", "Image" },
-    CurrentOption = { "Island Build" },
+    -- Replaces the old Full/Half/Quarter mirror modes. What gets saved is
+    -- decided by the tools you already point at things with - the selection
+    -- box and the brush - rather than by a separate splitting mode.
+    Options = { "Whole Island", "Inside Selection Box", "Brush Selection",
+                "Model", "Image" },
+    CurrentOption = { "Whole Island" },
     MultipleOptions = false,
     Flag = "SaveTarget",
-    Tooltip = "What the Save button saves: the whole island, just brush-selected blocks, or the loaded image.",
+    Tooltip = "What Save writes. Inside Selection Box needs Show Selection Box on; Brush Selection needs blocks painted with the Block Brush; Model saves the .glb you picked as a build file.",
     Callback = function(v)
         saveTarget = (typeof(v) == "table") and v[1] or v
     end
@@ -4046,9 +4062,9 @@ saveTab:CreateButton({
     Tooltip = "Saves the chosen target to a build file using the Build Name.",
     Callback = function()
         task.spawn(function()
-            if saveTarget == "Selected Only" then
+            if saveTarget == "Brush Selection" then
                 if blockSelCount == 0 then
-                    notifyWarn("Save", "Use the Block Brush to select blocks first", 4)
+                    notifyWarn("Save", "Paint some blocks with the Block Brush first", 4)
                     return
                 end
                 saveSelectedBrush()
@@ -4058,6 +4074,38 @@ saveTab:CreateButton({
                     return
                 end
                 BuilderAPI.generateImage(saveFileName)
+            elseif saveTarget == "Model" then
+                -- a model is already a block list by the time it is previewed;
+                -- saving it just writes that out as an ordinary build file
+                if not MODEL or not MODEL.selected then
+                    notifyWarn("Save", "Pick a model in the Model section first", 4)
+                    return
+                end
+                local data = loadSelectedBuild()
+                if not data or not data.blocks then return end
+                local name = saveFileName
+                if not name or name == "" then
+                    name = MODEL.selected:gsub("%.[Gg][Ll][Bb]$", "")
+                end
+                if not name:match("%.json$") then name = name .. ".json" end
+                local ok = pcall(function()
+                    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
+                    writefile("autoBuilder/" .. name,
+                        HttpService:JSONEncode({ blocks = data.blocks }))
+                end)
+                if ok then
+                    pcall(function() fileDropdown:Refresh(getFiles(), true) end)
+                    notifyOK("Saved", name .. " - " .. #data.blocks .. " blocks", 5)
+                else
+                    notifyErr("Save Failed", "Could not write " .. name, 5)
+                end
+            elseif saveTarget == "Inside Selection Box" then
+                if not selBoxOnly then
+                    notifyWarn("Save", "Turn Show Selection Box on and place it first", 4)
+                    return
+                end
+                notify("Saving", "Scanning blocks inside the box...", 3)
+                saveIslandBuild()
             else
                 notify("Saving", "Scanning island blocks...", 3)
                 saveIslandBuild()
@@ -12255,6 +12303,7 @@ local function glbToBlocks(data, gridCells, onProgress)
     local placed = 0
     local stopped = false
     local tooBig = false
+    local limited = nil
     local samples, lastYield = 0, 0
 
     for ji, job in ipairs(jobs) do
@@ -12415,6 +12464,34 @@ local function glbToBlocks(data, gridCells, onProgress)
 
     if #order == 0 then return nil, "Nothing was voxelised - the model may be empty" end
 
+    -- Simplify: cap how many different blocks the whole model may use. Two
+    -- passes, as the image converter does - tally what every cell would pick
+    -- from the full palette, keep the most popular, then match again against
+    -- only those. A low cap gives a poster look rather than a muddle.
+    if (MODEL.limit or 0) > 0 and MODEL.pal and #MODEL.pal > MODEL.limit then
+        local counts = {}
+        for i, cell in ipairs(order) do
+            local n = math.max(cell[7], 1)
+            local name = MODEL.blockFor(
+                math.clamp(math.floor(cell[4] / n + 0.5), 0, 255),
+                math.clamp(math.floor(cell[5] / n + 0.5), 0, 255),
+                math.clamp(math.floor(cell[6] / n + 0.5), 0, 255))
+            counts[name] = (counts[name] or 0) + 1
+            if i % 4000 == 0 then task.wait() end
+        end
+        local ranked = {}
+        for _, e in ipairs(MODEL.pal) do ranked[#ranked + 1] = e end
+        table.sort(ranked, function(a, b)
+            return (counts[a.name] or 0) > (counts[b.name] or 0)
+        end)
+        local kept = {}
+        for i = 1, math.min(MODEL.limit, #ranked) do kept[i] = ranked[i] end
+        MODEL.pal = kept
+        MODEL.match = {}
+        MODEL.ditherCache = {}
+        limited = #kept
+    end
+
     local blocks = table.create(#order)
     for i, cell in ipairs(order) do
         local n = math.max(cell[7], 1)
@@ -12456,6 +12533,7 @@ local function glbToBlocks(data, gridCells, onProgress)
         tex = m.tex,
         stopped = stopped,
         tooBig = tooBig,
+        limited = limited,
         samples = samples,
         jpeg = m.jpegSeen,
         zUp = zUp,
@@ -12510,6 +12588,7 @@ BuilderAPI.loadModelFile = function(name, data)
     table.sort(groups)
     msg = msg .. "\nPalette: " .. pal .. " blocks"
         .. (#groups > 0 and (" (" .. table.concat(groups, ", ") .. ")") or " (all)")
+        .. (info.limited and (", simplified to " .. info.limited) or "")
 
     if (t.ok or 0) > 0 then
         msg = msg .. "\nTextures: " .. t.ok .. " decoded"
@@ -13743,7 +13822,11 @@ previewPanel:AddSlider({
     Tooltip = "Leave out any block the build needs fewer of than this. 1 shows everything.",
     Callback = function(v)
         requiredMinCount = v
-        if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
+        -- only re-render a list that already exists; scanning from here would
+        -- open the panel, and this fires when the saved config is restored
+        if BuilderAPI.scanRequired and requiredBlocksList and #requiredBlocksList > 0 then
+            BuilderAPI.scanRequired()
+        end
     end })
 
 -- One dropdown of the listed entries plus a Remove button, rather than a row of
@@ -13968,15 +14051,27 @@ BuilderAPI.toggles.brushPreview = brushPanel:AddToggle({
     end })
 
 brushPanel:AddButton({
+    Name = "Select Box Contents",
+    Tooltip = "Adds every previewed block inside the selection box to the selection, so a whole region can be deleted at once instead of painted over.",
+    Callback = function()
+        local n = BuilderAPI.selectPreviewInBox and BuilderAPI.selectPreviewInBox(false) or 0
+        if n > 0 then notify("Selection Box", n .. " block(s) added", 3, "info") end
+    end })
+
+brushPanel:AddButton({
+    Name = "Deselect Box Contents",
+    Tooltip = "The reverse: drops everything inside the box from the selection.",
+    Callback = function()
+        local n = BuilderAPI.selectPreviewInBox and BuilderAPI.selectPreviewInBox(true) or 0
+        if n > 0 then notify("Selection Box", n .. " block(s) removed", 3, "info") end
+    end })
+
+brushPanel:AddButton({
     Name = "Delete Selected",
     Tooltip = "Removes the painted blocks from the ghost and leaves them out of the build.",
     Callback = function()
-        if not brushPreview then
-            notifyWarn("Delete", "Turn Brush Preview on first", 4)
-            return
-        end
         if blockSelCount == 0 then
-            notifyWarn("Delete", "Paint some ghost blocks first", 4)
+            notifyWarn("Delete", "Paint ghost blocks with the brush, or use Select Box Contents", 5)
             return
         end
         local n = blockSelCount
