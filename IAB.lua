@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 17:30"
+local IAB_BUILD = "Aug 10 18:45"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -348,7 +348,8 @@ local includeSlabs = true
 -- Luau's 200-local ceiling.
 -- .glb models voxelised on the way in. Declared up here because the Model
 -- section is built on the build tab, long before the reader itself.
-MODEL = { grid = 96, cache = {}, lastName = nil, dither = true, ditherCache = {} }
+MODEL = { grid = 96, cache = {}, lastName = nil, dither = true,
+          ditherCache = {}, texSize = 256 }
 
 brushPreview = false
 previewOmitted = {}
@@ -11606,9 +11607,50 @@ local function accessorReader(m, index)
 end
 
 -- ── materials and textures ─────────────────────────────────────────────────
+-- A decoded 1024x1024 texture is about three million Lua numbers - tens of
+-- megabytes - and a model with three of them would hold all three at once.
+-- That is a good way to run an executor out of memory, and the failure is
+-- silent: the texture is dropped and the material falls back to plain white.
+-- Nothing here needs that much detail, since even a large model is only a few
+-- hundred blocks tall, so each texture is shrunk and the full-size copy let go
+-- immediately.
+MODEL.shrinkTexture = function(tex, maxDim)
+    local w, h = tex.w, tex.h
+    if w <= maxDim and h <= maxDim then return tex end
+    local nw = math.min(maxDim, w)
+    local nh = math.max(1, math.floor(h * nw / w + 0.5))
+    local px = table.create(nw * nh * 3)
+    for y = 1, nh do
+        local sy = math.min(h, math.floor((y - 0.5) * h / nh) + 1)
+        for x = 1, nw do
+            local sx = math.min(w, math.floor((x - 0.5) * w / nw) + 1)
+            local r, g, b = tex.get(sx, sy)
+            local o = ((y - 1) * nw + (x - 1)) * 3
+            px[o + 1], px[o + 2], px[o + 3] = r, g, b
+        end
+        if y % 32 == 0 then task.wait() end
+    end
+    return { w = nw, h = nh, from = w .. "x" .. h, get = function(x, y)
+        if x < 1 then x = 1 elseif x > nw then x = nw end
+        if y < 1 then y = 1 elseif y > nh then y = nh end
+        local o = ((y - 1) * nw + (x - 1)) * 3
+        return px[o + 1], px[o + 2], px[o + 3], 255
+    end }
+end
+
+-- Colour for a material: its texture if one can be decoded, else its flat
+-- base colour. Every outcome is counted, because they are indistinguishable in
+-- the result: a glTF with no baseColorFactor defaults to pure white, and pure
+-- white is an exact match for neonWhite. So a texture that fails to decode
+-- produces a flat white-neon model - which looks identical to a palette
+-- restricted to Neon, and has an entirely different cause.
 local function materialColour(m, index)
+    m.tex = m.tex or { ok = 0, failed = 0, jpeg = 0, missing = 0, sizes = {} }
     local mat = index ~= nil and m.gltf.materials and m.gltf.materials[index + 1]
-    if not mat then return { 1, 1, 1 }, nil end
+    if not mat then
+        m.tex.missing = m.tex.missing + 1
+        return { 1, 1, 1 }, nil
+    end
     local pbr = mat.pbrMetallicRoughness or {}
     local f = pbr.baseColorFactor or { 1, 1, 1, 1 }
     local tex = nil
@@ -11625,13 +11667,29 @@ local function materialColour(m, index)
                                         (bv.byteOffset or 0) + bv.byteLength)
                 if bytes:sub(1, 8) == "\137PNG\r\n\26\n" then
                     local ok, decoded = pcall(decodePNG, bytes)
-                    if ok and decoded then m.texCache[ti] = decoded end
+                    if ok and decoded then
+                        local small = MODEL.shrinkTexture(decoded, MODEL.texSize or 256)
+                        decoded = nil          -- let the full-size copy go
+                        m.texCache[ti] = small
+                        m.tex.ok = m.tex.ok + 1
+                        m.tex.sizes[#m.tex.sizes + 1] =
+                            (small.from and (small.from .. "->") or "")
+                            .. small.w .. "x" .. small.h
+                    else
+                        m.tex.failed = m.tex.failed + 1
+                        m.tex.why = m.tex.why or tostring(decoded)
+                    end
                 else
+                    m.tex.jpeg = m.tex.jpeg + 1
                     m.jpegSeen = true
                 end
+            else
+                m.tex.missing = m.tex.missing + 1
             end
         end
         tex = m.texCache[ti] or nil
+    else
+        m.tex.missing = m.tex.missing + 1
     end
     return { f[1] or 1, f[2] or 1, f[3] or 1 }, tex
 end
@@ -11992,6 +12050,7 @@ local function glbToBlocks(data, gridCells, onProgress)
 
     return blocks, nil, {
         posed = posedAny,
+        tex = m.tex,
         stopped = stopped,
         jpeg = m.jpegSeen,
         zUp = zUp,
@@ -12033,9 +12092,38 @@ BuilderAPI.loadModelFile = function(name, data)
     local msg = ("%d blocks, %dx%dx%d"):format(#blocks, info.size[1], info.size[2], info.size[3])
     if info.zUp then msg = msg .. "\nStood it up: the model was authored Z-up." end
     if info.posed then msg = msg .. "\nPosed from its skeleton." end
-    if info.jpeg then
-        msg = msg .. "\nSome textures are JPEG, which cannot be decoded in game -"
-            .. " those parts use their flat material colour."
+
+    -- Say plainly where the colours came from. A flat white model has two very
+    -- different causes that look the same, and guessing between them wastes
+    -- everyone's time.
+    local t = info.tex or {}
+    local pal = #(MODEL.pal or {})
+    local groups = {}
+    for g in pairs(MODEL.groups or {}) do groups[#groups + 1] = g end
+    table.sort(groups)
+    msg = msg .. "\nPalette: " .. pal .. " blocks"
+        .. (#groups > 0 and (" (" .. table.concat(groups, ", ") .. ")") or " (all)")
+
+    if (t.ok or 0) > 0 then
+        msg = msg .. "\nTextures: " .. t.ok .. " decoded"
+            .. (t.sizes and #t.sizes > 0 and (" - " .. table.concat(t.sizes, ", ")) or "")
+    end
+    if (t.failed or 0) > 0 or (t.jpeg or 0) > 0 or ((t.ok or 0) == 0 and (t.missing or 0) > 0) then
+        msg = msg .. "\nNO TEXTURE COLOUR"
+        if (t.jpeg or 0) > 0 then
+            msg = msg .. ": " .. t.jpeg .. " JPEG (only PNG decodes in game)"
+        elseif (t.failed or 0) > 0 then
+            msg = msg .. ": " .. t.failed .. " PNG would not decode"
+        else
+            msg = msg .. ": the materials carry no texture"
+        end
+        msg = msg .. ".\nThose parts fall back to the material's flat colour,"
+            .. " which is usually plain white - so the model comes out white."
+            .. "\nConvert it with mcconvert/model_to_islands.py instead for"
+            .. " full colour."
+    end
+    if #groups > 0 then
+        msg = msg .. "\nModel Palette is restricted - clear it for a textured model."
     end
     if info.stopped then
         msg = msg .. "\nHit the " .. MODEL_MAX_CELLS .. " block ceiling; lower Model Detail."
