@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 22:55"
+local IAB_BUILD = "Aug 11 09:20"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -349,7 +349,8 @@ local includeSlabs = true
 -- .glb models voxelised on the way in. Declared up here because the Model
 -- section is built on the build tab, long before the reader itself.
 MODEL = { grid = 96, cache = {}, lastName = nil, dither = true,
-          ditherCache = {}, texSize = 256 }
+          ditherCache = {}, texSize = 256,
+          ditherAmount = 0.45, ditherMin = 0.053 }
 
 brushPreview = false
 previewOmitted = {}
@@ -3128,17 +3129,36 @@ auto:CreateDropdown({
 })
 
 auto:CreateToggle({
-    Name = "Dither Colours",
+    Name = "Blend Colours",
     CurrentValue = true,
     Flag = "ModelDither",
-    Tooltip = "Mixes two nearby blocks in a pattern so the eye reads the colour in between. 91 block colours cannot render a face on their own; this buys far more apparent shades for no extra blocks.",
+    Tooltip = "Off gives one flat block per colour - plain, and often what you want for skin or cloth. On mixes two nearby blocks in a pattern so the eye reads the shade in between, which is worth it on gradients and metal.",
     Callback = function(v)
         if not MODEL then return end
         MODEL.dither = v
         MODEL.cache = {}
         if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus(v and "Dithering on - two blocks mixed for in-between shades."
-                or "Dithering off - one flat block per colour.")
+            BuilderAPI.setModelStatus(v and "Blending on - two blocks mixed where no single one fits."
+                or "Flat - one block per colour, no pattern.")
+        end
+    end
+})
+
+auto:CreateSlider({
+    Name = "Blend Amount", Range = { 0, 100 }, Increment = 5, CurrentValue = 45,
+    Suffix = "%", Flag = "ModelBlend",
+    Tooltip = "How freely two blocks may be mixed. Low keeps broad even surfaces - skin, cloth - as one flat colour and only mixes where nothing single fits. High mixes everywhere, which shows more shades but speckles.",
+    Callback = function(v)
+        if not MODEL then return end
+        -- One dial over two: how often the second block is allowed, and how
+        -- badly the nearest block has to fit before mixing is worth it at all.
+        MODEL.ditherAmount = v / 100
+        MODEL.ditherMin = 0.08 - 0.06 * (v / 100)
+        MODEL.cache = {}
+        MODEL.ditherCache = {}
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus(v == 0 and "Flat - one block per colour."
+                or ("Blend " .. v .. "% - re-run Preview Build to see it."))
         end
     end
 })
@@ -12084,6 +12104,14 @@ local function ditherBlock(r, g, b, x, y, z)
     local pair = MODEL.ditherCache[key]
     if not pair then
         local n1, c1 = MODEL.blockFor(r, g, b)
+        -- How wrong the single nearest block actually is. Mixing two blocks
+        -- only earns its keep when no single block is close: a broad even
+        -- surface like skin has a block that matches it well, and speckling a
+        -- second one through it adds a checker pattern that is not detail,
+        -- just noise.
+        local dL, da, db = BA.toOklab(Color3.fromRGB(r, g, b))
+        local cL, ca, cb = BA.toOklab(c1)
+        local miss = math.sqrt((dL - cL) ^ 2 + (da - ca) ^ 2 + (db - cb) ^ 2)
         -- reflect the colour through the nearest block to find what lies beyond
         local rr = math.clamp(2 * r - c1.R * 255, 0, 255)
         local gg = math.clamp(2 * g - c1.G * 255, 0, 255)
@@ -12092,19 +12120,21 @@ local function ditherBlock(r, g, b, x, y, z)
         if n2 == n1 then
             pair = { n1, n1, 0 }
         else
-            local L, a, bl = BA.toOklab(Color3.fromRGB(r, g, b))
-            local L1, a1, b1 = BA.toOklab(c1)
             local L2, a2, b2 = BA.toOklab(c2)
-            local vx, vy, vz = L2 - L1, a2 - a1, b2 - b1
-            local dx, dy, dz = L - L1, a - a1, bl - b1
+            local vx, vy, vz = L2 - cL, a2 - ca, b2 - cb
+            local dx, dy, dz = dL - cL, da - ca, db - cb
             local den = vx * vx + vy * vy + vz * vz
             local t = den <= 1e-12 and 0 or (dx * vx + dy * vy + dz * vz) / den
-            pair = { n1, n2, math.clamp(t, 0, 1) }
+            pair = { n1, n2, math.clamp(t, 0, 1), miss }
         end
         MODEL.ditherCache[key] = pair
     end
     if pair[3] <= 0 then return pair[1] end
-    return MODEL.bayer[z % 4][y % 4][x % 4] < pair[3] and pair[2] or pair[1]
+    -- below the threshold the nearest block is close enough on its own
+    if (pair[4] or 0) < (MODEL.ditherMin or 0.035) then return pair[1] end
+    local t = pair[3] * (MODEL.ditherAmount or 1)
+    if t <= 0 then return pair[1] end
+    return MODEL.bayer[z % 4][y % 4][x % 4] < t and pair[2] or pair[1]
 end
 
 -- ── voxelising ─────────────────────────────────────────────────────────────
@@ -12333,10 +12363,34 @@ local function glbToBlocks(data, gridCells, onProgress)
                                 math.floor((v % 1) * th) + 1)
                             r, g, bl = r * tr / 255, g * tg / 255, bl * tb / 255
                         end
-                        cell[4] = cell[4] + r * 255
-                        cell[5] = cell[5] + g * 255
-                        cell[6] = cell[6] + bl * 255
+                        r, g, bl = r * 255, g * 255, bl * 255
+                        cell[4] = cell[4] + r
+                        cell[5] = cell[5] + g
+                        cell[6] = cell[6] + bl
                         cell[7] = cell[7] + 1
+
+                        -- Group the samples coarsely and keep a tally. A cell
+                        -- on an edge - a hairline, a lash, the rim of an eye -
+                        -- is crossed by two very different surfaces, and the
+                        -- plain average of those is a colour on neither, which
+                        -- is what made faces look smeared. The winning group's
+                        -- own average is used instead.
+                        local bk = math.floor(r / 40) * 49
+                            + math.floor(g / 40) * 7 + math.floor(bl / 40)
+                        local tally = cell[8]
+                        if not tally then
+                            tally = {}
+                            cell[8] = tally
+                        end
+                        local slot = tally[bk]
+                        if slot then
+                            slot[1] = slot[1] + 1
+                            slot[2] = slot[2] + r
+                            slot[3] = slot[3] + g
+                            slot[4] = slot[4] + bl
+                        else
+                            tally[bk] = { 1, r, g, bl }
+                        end
                     end
                     if stopped then break end
                 end
@@ -12364,11 +12418,26 @@ local function glbToBlocks(data, gridCells, onProgress)
     local blocks = table.create(#order)
     for i, cell in ipairs(order) do
         local n = math.max(cell[7], 1)
-        local cr = math.clamp(math.floor(cell[4] / n + 0.5), 0, 255)
-        local cg = math.clamp(math.floor(cell[5] / n + 0.5), 0, 255)
-        local cb = math.clamp(math.floor(cell[6] / n + 0.5), 0, 255)
+        local sr, sg, sb = cell[4], cell[5], cell[6]
+        -- take the group that covers most of the cell, not the blend of all
+        local tally = cell[8]
+        if tally then
+            local bestN
+            for _, slot in pairs(tally) do
+                if not bestN or slot[1] > bestN then
+                    bestN, sr, sg, sb = slot[1], slot[2], slot[3], slot[4]
+                end
+            end
+            n = math.max(bestN or n, 1)
+        end
+        local cr = math.clamp(math.floor(sr / n + 0.5), 0, 255)
+        local cg = math.clamp(math.floor(sg / n + 0.5), 0, 255)
+        local cb = math.clamp(math.floor(sb / n + 0.5), 0, 255)
+        -- At zero blend go straight to the plain match: the dither path keys
+        -- its cache on the colour rounded to steps of two, so it would answer
+        -- a shade or two off for no reason.
         local name
-        if MODEL.dither == false then
+        if MODEL.dither == false or (MODEL.ditherAmount or 1) <= 0 then
             name = MODEL.blockFor(cr, cg, cb)
         else
             name = ditherBlock(cr, cg, cb, cell[1], cell[2], cell[3])
