@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 18:45"
+local IAB_BUILD = "Aug 10 20:15"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -11607,6 +11607,279 @@ local function accessorReader(m, index)
 end
 
 -- ── materials and textures ─────────────────────────────────────────────────
+-- ── JPEG ───────────────────────────────────────────────────────────────────
+-- Enough of a baseline JPEG decoder to colour blocks, and no more.
+--
+-- A JPEG stores each 8x8 pixel block as a DC coefficient - the block's average
+-- - plus 63 AC coefficients describing the detail within it. Reconstructing
+-- the pixels means an inverse DCT on every block, which is where the cost and
+-- most of the code lives. But a model only needs a few hundred blocks of
+-- colour, so the averages alone are plenty: taking the DC and discarding the
+-- rest yields the image at 1/8 scale with no IDCT, no upsampling and no
+-- colour-fringe handling. A 1024px texture lands at 128px, which is already
+-- finer than any model will resolve.
+--
+-- Baseline (SOF0/SOF1) only. Progressive JPEG interleaves coefficients across
+-- scans and cannot be read this way; it is refused by name.
+MODEL.decodeJPEG8 = function(data)
+    if data:byte(1) ~= 0xFF or data:byte(2) ~= 0xD8 then
+        return nil, "not a JPEG"
+    end
+
+    local qt, huffDC, huffAC = {}, {}, {}
+    local comps, frameW, frameH = nil, 0, 0
+    local restart = 0
+    local pos = 3
+    local scanAt = nil
+
+    local function u16(at) return data:byte(at) * 256 + data:byte(at + 1) end
+
+    while pos < #data do
+        if data:byte(pos) ~= 0xFF then pos = pos + 1 else
+            local marker = data:byte(pos + 1)
+            if marker == 0xD8 or marker == 0x01 or (marker >= 0xD0 and marker <= 0xD7) then
+                pos = pos + 2
+            elseif marker == 0xD9 then
+                break
+            else
+                local len = u16(pos + 2)
+                local body = pos + 4
+
+                if marker == 0xDB then                      -- quantisation
+                    local at = body
+                    while at < pos + 2 + len do
+                        local pq = math.floor(data:byte(at) / 16)
+                        local tq = data:byte(at) % 16
+                        at = at + 1
+                        local tbl = {}
+                        for i = 1, 64 do
+                            if pq == 1 then
+                                tbl[i] = u16(at) at = at + 2
+                            else
+                                tbl[i] = data:byte(at) at = at + 1
+                            end
+                        end
+                        qt[tq] = tbl
+                    end
+
+                elseif marker == 0xC0 or marker == 0xC1 then -- baseline frame
+                    frameH = u16(body + 1)
+                    frameW = u16(body + 3)
+                    local n = data:byte(body + 5)
+                    comps = {}
+                    for i = 1, n do
+                        local at = body + 6 + (i - 1) * 3
+                        comps[i] = {
+                            id = data:byte(at),
+                            h = math.floor(data:byte(at + 1) / 16),
+                            v = data:byte(at + 1) % 16,
+                            tq = data:byte(at + 2),
+                            pred = 0,
+                        }
+                    end
+
+                elseif marker == 0xC2 then
+                    return nil, "progressive JPEG - re-export it as baseline, or as PNG"
+                elseif marker == 0xC3 or (marker >= 0xC5 and marker <= 0xCF and marker ~= 0xC8) then
+                    return nil, "unsupported JPEG type (not baseline)"
+
+                elseif marker == 0xC4 then                   -- huffman tables
+                    local at = body
+                    while at < pos + 2 + len do
+                        local tc = math.floor(data:byte(at) / 16)
+                        local th = data:byte(at) % 16
+                        at = at + 1
+                        local counts, total = {}, 0
+                        for i = 1, 16 do
+                            counts[i] = data:byte(at + i - 1)
+                            total = total + counts[i]
+                        end
+                        at = at + 16
+                        local tbl, code = {}, 0
+                        for len2 = 1, 16 do
+                            tbl[len2] = {}
+                            for _ = 1, counts[len2] do
+                                tbl[len2][code] = data:byte(at)
+                                at = at + 1
+                                code = code + 1
+                            end
+                            code = code * 2
+                        end
+                        if tc == 0 then huffDC[th] = tbl else huffAC[th] = tbl end
+                    end
+
+                elseif marker == 0xDD then                   -- restart interval
+                    restart = u16(body)
+
+                elseif marker == 0xDA then                   -- start of scan
+                    local n = data:byte(body)
+                    for i = 1, n do
+                        local at = body + 1 + (i - 1) * 2
+                        local cid = data:byte(at)
+                        for _, c in ipairs(comps or {}) do
+                            if c.id == cid then
+                                c.td = math.floor(data:byte(at + 1) / 16)
+                                c.ta = data:byte(at + 1) % 16
+                            end
+                        end
+                    end
+                    scanAt = pos + 2 + len
+                    break
+                end
+                pos = pos + 2 + len
+            end
+        end
+    end
+
+    if not comps or not scanAt then return nil, "JPEG has no baseline scan" end
+
+    -- ── entropy-coded data ─────────────────────────────────────────────────
+    local at, bitBuf, bitCount = scanAt, 0, 0
+
+    local function readBit()
+        if bitCount == 0 then
+            local b = data:byte(at)
+            if b == nil then return 0 end
+            at = at + 1
+            if b == 0xFF then
+                local nxt = data:byte(at)
+                if nxt == 0x00 then at = at + 1
+                elseif nxt and nxt >= 0xD0 and nxt <= 0xD7 then at = at + 1
+                else return 0 end
+            end
+            bitBuf, bitCount = b, 8
+        end
+        bitCount = bitCount - 1
+        return math.floor(bitBuf / (2 ^ bitCount)) % 2
+    end
+
+    local function decodeHuff(tbl)
+        if not tbl then return 0 end
+        local code = 0
+        for len = 1, 16 do
+            code = code * 2 + readBit()
+            local row = tbl[len]
+            if row then
+                local v = row[code]
+                if v ~= nil then return v end
+            end
+        end
+        return 0
+    end
+
+    local function receive(n)
+        local v = 0
+        for _ = 1, n do v = v * 2 + readBit() end
+        return v
+    end
+
+    local function extend(v, n)
+        if n == 0 then return 0 end
+        if v < 2 ^ (n - 1) then return v - 2 ^ n + 1 end
+        return v
+    end
+
+    local maxH, maxV = 1, 1
+    for _, c in ipairs(comps) do
+        if c.h > maxH then maxH = c.h end
+        if c.v > maxV then maxV = c.v end
+    end
+    local mcusX = math.ceil(frameW / (8 * maxH))
+    local mcusY = math.ceil(frameH / (8 * maxV))
+    for _, c in ipairs(comps) do
+        c.bw = mcusX * c.h
+        c.plane = {}
+    end
+
+    local done = 0
+    for my = 0, mcusY - 1 do
+        for mx = 0, mcusX - 1 do
+            if restart > 0 and done > 0 and done % restart == 0 then
+                bitCount = 0
+                -- step over the restart marker itself
+                while at < #data do
+                    if data:byte(at) == 0xFF then
+                        local nxt = data:byte(at + 1)
+                        if nxt and nxt >= 0xD0 and nxt <= 0xD7 then at = at + 2 break end
+                    end
+                    at = at + 1
+                end
+                for _, c in ipairs(comps) do c.pred = 0 end
+            end
+
+            for _, c in ipairs(comps) do
+                for by = 0, c.v - 1 do
+                    for bx = 0, c.h - 1 do
+                        local t = decodeHuff(huffDC[c.td or 0])
+                        c.pred = c.pred + (t == 0 and 0 or extend(receive(t), t))
+                        c.plane[(my * c.v + by) * c.bw + (mx * c.h + bx)] = c.pred
+
+                        -- walk the AC coefficients only to stay in step with
+                        -- the bitstream; their values are of no use here
+                        local k = 1
+                        while k <= 63 do
+                            local rs = decodeHuff(huffAC[c.ta or 0])
+                            local r = math.floor(rs / 16)
+                            local sz = rs % 16
+                            if sz == 0 then
+                                if r == 15 then k = k + 16 else break end
+                            else
+                                k = k + r + 1
+                                receive(sz)
+                            end
+                        end
+                    end
+                end
+            end
+            done = done + 1
+        end
+        if my % 8 == 0 then task.wait() end
+    end
+
+    -- ── DC to pixels ───────────────────────────────────────────────────────
+    local outW, outH = mcusX * maxH, mcusY * maxV
+    local px = table.create(outW * outH * 3)
+
+    local function sampleOf(c, x, y)
+        local sx = math.floor(x * c.h / maxH)
+        local sy = math.floor(y * c.v / maxV)
+        local dc = c.plane[sy * c.bw + sx] or 0
+        local q = qt[c.tq] and qt[c.tq][1] or 1
+        return dc * q / 8 + 128
+    end
+
+    for y = 0, outH - 1 do
+        for x = 0, outW - 1 do
+            local r, g, b
+            if #comps >= 3 then
+                local Y = sampleOf(comps[1], x, y)
+                local cb = sampleOf(comps[2], x, y) - 128
+                local cr = sampleOf(comps[3], x, y) - 128
+                r = Y + 1.402 * cr
+                g = Y - 0.344136 * cb - 0.714136 * cr
+                b = Y + 1.772 * cb
+            else
+                r = sampleOf(comps[1], x, y)
+                g, b = r, r
+            end
+            local o = (y * outW + x) * 3
+            px[o + 1] = math.clamp(math.floor(r + 0.5), 0, 255)
+            px[o + 2] = math.clamp(math.floor(g + 0.5), 0, 255)
+            px[o + 3] = math.clamp(math.floor(b + 0.5), 0, 255)
+        end
+    end
+
+    return {
+        w = outW, h = outH, from = frameW .. "x" .. frameH,
+        get = function(x, y)
+            if x < 1 then x = 1 elseif x > outW then x = outW end
+            if y < 1 then y = 1 elseif y > outH then y = outH end
+            local o = ((y - 1) * outW + (x - 1)) * 3
+            return px[o + 1], px[o + 2], px[o + 3], 255
+        end,
+    }
+end
+
 -- A decoded 1024x1024 texture is about three million Lua numbers - tens of
 -- megabytes - and a model with three of them would hold all three at once.
 -- That is a good way to run an executor out of memory, and the failure is
@@ -11665,8 +11938,16 @@ local function materialColour(m, index)
                 local bv = m.gltf.bufferViews[img.bufferView + 1]
                 local bytes = m.bin:sub((bv.byteOffset or 0) + 1,
                                         (bv.byteOffset or 0) + bv.byteLength)
-                if bytes:sub(1, 8) == "\137PNG\r\n\26\n" then
-                    local ok, decoded = pcall(decodePNG, bytes)
+                local isPNG = bytes:sub(1, 8) == "\137PNG\r\n\26\n"
+                local isJPEG = bytes:byte(1) == 0xFF and bytes:byte(2) == 0xD8
+                if isPNG or isJPEG then
+                    local ok, decoded, why
+                    if isPNG then
+                        ok, decoded = pcall(decodePNG, bytes)
+                    else
+                        ok, decoded, why = pcall(MODEL.decodeJPEG8, bytes)
+                        if ok and not decoded then why = decoded end
+                    end
                     if ok and decoded then
                         local small = MODEL.shrinkTexture(decoded, MODEL.texSize or 256)
                         decoded = nil          -- let the full-size copy go
@@ -11677,11 +11958,10 @@ local function materialColour(m, index)
                             .. small.w .. "x" .. small.h
                     else
                         m.tex.failed = m.tex.failed + 1
-                        m.tex.why = m.tex.why or tostring(decoded)
+                        m.tex.why = m.tex.why or tostring(why or decoded)
                     end
                 else
-                    m.tex.jpeg = m.tex.jpeg + 1
-                    m.jpegSeen = true
+                    m.tex.other = (m.tex.other or 0) + 1
                 end
             else
                 m.tex.missing = m.tex.missing + 1
@@ -12108,12 +12388,14 @@ BuilderAPI.loadModelFile = function(name, data)
         msg = msg .. "\nTextures: " .. t.ok .. " decoded"
             .. (t.sizes and #t.sizes > 0 and (" - " .. table.concat(t.sizes, ", ")) or "")
     end
-    if (t.failed or 0) > 0 or (t.jpeg or 0) > 0 or ((t.ok or 0) == 0 and (t.missing or 0) > 0) then
+    if (t.failed or 0) > 0 or (t.other or 0) > 0
+        or ((t.ok or 0) == 0 and (t.missing or 0) > 0) then
         msg = msg .. "\nNO TEXTURE COLOUR"
-        if (t.jpeg or 0) > 0 then
-            msg = msg .. ": " .. t.jpeg .. " JPEG (only PNG decodes in game)"
-        elseif (t.failed or 0) > 0 then
-            msg = msg .. ": " .. t.failed .. " PNG would not decode"
+        if (t.failed or 0) > 0 then
+            msg = msg .. ": " .. t.failed .. " would not decode"
+                .. (t.why and (" (" .. tostring(t.why):sub(1, 90) .. ")") or "")
+        elseif (t.other or 0) > 0 then
+            msg = msg .. ": " .. t.other .. " in a format that is neither PNG nor JPEG"
         else
             msg = msg .. ": the materials carry no texture"
         end

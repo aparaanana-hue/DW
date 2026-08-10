@@ -117,6 +117,13 @@ Pillow`) — without it those materials fall back to their flat base colour and
 it says so. Draco- or meshopt-compressed meshes are refused by name rather than
 silently producing nothing; re-export without compression.
 
+In game, both PNG and JPEG decode. The JPEG reader takes only each 8x8 block's
+DC coefficient — its average — which gives the image at 1/8 scale with no
+inverse DCT. That is exactly what a block converter needs and a fraction of the
+work: a 1024px texture lands at 128px, finer than any model will resolve, and
+it measures within about 5/255 of a true decode. Progressive JPEGs cannot be
+read this way and are refused by name.
+
 ### `--hollow`
 
 Drops every block whose six neighbours are all filled. Those are invisible from
