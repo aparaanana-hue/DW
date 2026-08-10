@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 11:20"
+local IAB_BUILD = "Aug 10 12:05"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -280,6 +280,14 @@ local net = ReplicatedStorage
 
 if not isfolder("autoBuilder") then
     makefolder("autoBuilder")
+end
+
+-- .glb models live in their own folder rather than mixed in with the build
+-- files. MODEL_DIR is the one place that decides where, so the file list, the
+-- loader and the delete button cannot drift apart.
+MODEL_DIR = "autoBuilder/models"
+if not isfolder(MODEL_DIR) then
+    makefolder(MODEL_DIR)
 end
 
 local placeDelay = 0.03
@@ -701,15 +709,36 @@ function hollowExterior(blocks)
     return out
 end
 
+-- Where a name in the file dropdown actually lives. Models are the only
+-- entries that come from somewhere other than autoBuilder itself.
+function isModelFile(name)
+    return name ~= nil and string.lower(name):sub(-4) == ".glb"
+end
+
+function filePathFor(name)
+    if isModelFile(name) then
+        return MODEL_DIR .. "/" .. name
+    end
+    return "autoBuilder/" .. name
+end
+
 local function getFiles()
     local files = {}
 
     for _, file in ipairs(listfiles("autoBuilder")) do
         local lower = string.lower(file)
-        -- .glb sits in the same folder and is voxelised on the way in
-        if lower:sub(-4) == ".txt" or lower:sub(-5) == ".json"
-            or lower:sub(-4) == ".glb" then
+        if lower:sub(-4) == ".txt" or lower:sub(-5) == ".json" then
             table.insert(files, file:match("[^/\\]+$"))
+        end
+    end
+
+    -- models sit in autoBuilder/models; they show up in the same list because
+    -- they are picked and previewed exactly like a build file
+    if isfolder(MODEL_DIR) then
+        for _, file in ipairs(listfiles(MODEL_DIR)) do
+            if string.lower(file):sub(-4) == ".glb" then
+                table.insert(files, file:match("[^/\\]+$"))
+            end
         end
     end
 
@@ -1319,7 +1348,7 @@ local function loadSelectedBuild()
         return nil
     end
 
-    local path = "autoBuilder/" .. selectedFile
+    local path = filePathFor(selectedFile)
 
     if not isfile(path) then
         notify("Error", "File not found: " .. tostring(selectedFile), 4)
@@ -1330,7 +1359,7 @@ local function loadSelectedBuild()
 
     -- A model is not a build file yet; turn it into one, then carry on as if
     -- it always had been. Everything downstream sees the same block list.
-    if string.lower(selectedFile):sub(-4) == ".glb" then
+    if isModelFile(selectedFile) then
         if not BuilderAPI.loadModelFile then
             notify("Error", "Model support is still loading, try again", 4)
             return nil
@@ -2777,7 +2806,7 @@ fileDropdown = auto:CreateDropdown({
                 "Permanently delete '" .. target .. "'? This cannot be undone.",
                 "Delete", function()
                     local ok = pcall(function()
-                        local path = "autoBuilder/" .. target
+                        local path = filePathFor(target)
                         if isfile(path) then delfile(path) end
                     end)
                     pcall(function() clearAlignment(target) end)
@@ -2989,7 +3018,9 @@ auto:CreateSection("Model", { Collapsible = true, Column = "left", Order = 1 })
 
 local modelStatus = auto:CreateParagraph({
     Title = "Model",
-    Content = "Drop a .glb into autoBuilder and pick it in the file list, like a build file.",
+    Content = "Put .glb models in autoBuilder/models, then Refresh the file list"
+        .. " and pick one - it previews like a build file.\nModel Detail sets"
+        .. " how big it comes out.",
 })
 BuilderAPI.setModelStatus = function(text)
     pcall(function()
@@ -3005,8 +3036,9 @@ auto:CreateSlider({
         if not MODEL then return end
         MODEL.grid = v
         if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus("Detail " .. v ..
-                " - re-run Preview Build to rebuild the model at this size.")
+            BuilderAPI.setModelStatus("Detail " .. v .. " - about " .. v
+                .. " blocks along the model's longest side."
+                .. "\nTurn Preview Build off and on to rebuild it at this size.")
         end
     end
 })
