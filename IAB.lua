@@ -14,7 +14,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 06 13:48"
+local IAB_BUILD = "Aug 10 09:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -697,7 +697,9 @@ local function getFiles()
 
     for _, file in ipairs(listfiles("autoBuilder")) do
         local lower = string.lower(file)
-        if lower:sub(-4) == ".txt" or lower:sub(-5) == ".json" then
+        -- .glb sits in the same folder and is voxelised on the way in
+        if lower:sub(-4) == ".txt" or lower:sub(-5) == ".json"
+            or lower:sub(-4) == ".glb" then
             table.insert(files, file:match("[^/\\]+$"))
         end
     end
@@ -1316,6 +1318,17 @@ local function loadSelectedBuild()
     end
 
     local text = readfile(path)
+
+    -- A model is not a build file yet; turn it into one, then carry on as if
+    -- it always had been. Everything downstream sees the same block list.
+    if string.lower(selectedFile):sub(-4) == ".glb" then
+        if not BuilderAPI.loadModelFile then
+            notify("Error", "Model support is still loading, try again", 4)
+            return nil
+        end
+        return BuilderAPI.loadModelFile(selectedFile, text)
+    end
+
     local success, data = pcall(function()
         return HttpService:JSONDecode(text)
     end)
@@ -11245,6 +11258,433 @@ local function blockFor(r, g, b)
     return rec[1], rec[2]
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- GLB -> BLOCKS
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Drop a .glb straight into autoBuilder next to the build files and it shows
+-- up in the file list like one. It is voxelised here, on the client, using the
+-- same palette and the same OKLab match the image converter uses, so a model
+-- and an image come out looking like they belong to each other.
+--
+-- The Python converter in mcconvert does the same job with more room to move -
+-- solid fill, block budgets, huge models. This is for dropping a model in and
+-- seeing it, without leaving the game.
+
+MODEL = { grid = 96, cache = {}, lastName = nil }
+
+do
+
+local GLB_MAGIC = 0x46546C67
+local GLB_JSON = 0x4E4F534A
+local GLB_BIN = 0x004E4942
+
+-- componentType -> (string.unpack format, byte width)
+local GLB_COMP = {
+    [5120] = { "i1", 1 }, [5121] = { "I1", 1 }, [5122] = { "i2", 2 },
+    [5123] = { "I2", 2 }, [5125] = { "I4", 4 }, [5126] = { "f", 4 },
+}
+local GLB_COUNT = { SCALAR = 1, VEC2 = 2, VEC3 = 3, VEC4 = 4, MAT4 = 16 }
+
+-- ── 4x4 matrices, row-major, 1-based ───────────────────────────────────────
+-- CFrame cannot carry the scale a glTF node may have, so these are plain
+-- tables rather than CFrames.
+local function matIdentity()
+    return { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 }
+end
+
+local function matMul(a, b)
+    local m = {}
+    for r = 0, 3 do
+        for c = 1, 4 do
+            m[r * 4 + c] = a[r * 4 + 1] * b[c]
+                + a[r * 4 + 2] * b[4 + c]
+                + a[r * 4 + 3] * b[8 + c]
+                + a[r * 4 + 4] * b[12 + c]
+        end
+    end
+    return m
+end
+
+local function matApply(m, x, y, z)
+    return m[1] * x + m[2] * y + m[3] * z + m[4],
+           m[5] * x + m[6] * y + m[7] * z + m[8],
+           m[9] * x + m[10] * y + m[11] * z + m[12]
+end
+
+local function nodeMatrix(node)
+    if node.matrix then
+        -- glTF matrices are column-major; transpose into row-major
+        local a, m = node.matrix, {}
+        for r = 0, 3 do
+            for c = 1, 4 do m[r * 4 + c] = a[(c - 1) * 4 + r + 1] end
+        end
+        return m
+    end
+    local m = matIdentity()
+    if node.scale then
+        m = matMul({ node.scale[1],0,0,0, 0,node.scale[2],0,0,
+                     0,0,node.scale[3],0, 0,0,0,1 }, m)
+    end
+    if node.rotation then
+        local x, y, z, w = node.rotation[1], node.rotation[2], node.rotation[3], node.rotation[4]
+        m = matMul({
+            1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w),   0,
+            2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w),   0,
+            2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y), 0,
+            0, 0, 0, 1 }, m)
+    end
+    if node.translation then
+        m = matMul({ 1,0,0,node.translation[1], 0,1,0,node.translation[2],
+                     0,0,1,node.translation[3], 0,0,0,1 }, m)
+    end
+    return m
+end
+
+-- ── container ──────────────────────────────────────────────────────────────
+local function parseGLB(data)
+    if #data < 20 then return nil, "File is too small to be a GLB" end
+    local magic = string.unpack("<I4", data, 1)
+    if magic ~= GLB_MAGIC then
+        if data:sub(1, 1) == "{" then
+            return nil, "That is a .gltf, not a .glb. Export it as .glb so the textures come with it."
+        end
+        return nil, "Not a GLB file"
+    end
+    local version = string.unpack("<I4", data, 5)
+    if version ~= 2 then return nil, "GLB version " .. version .. ", only 2 is supported" end
+
+    local gltf, bin
+    local pos = 13
+    while pos + 8 <= #data + 1 do
+        local len = string.unpack("<I4", data, pos)
+        local kind = string.unpack("<I4", data, pos + 4)
+        local body = data:sub(pos + 8, pos + 7 + len)
+        pos = pos + 8 + len + ((-len) % 4)
+        if kind == GLB_JSON then
+            local ok, decoded = pcall(function()
+                return HttpService:JSONDecode((body:gsub("[%s%z]+$", "")))
+            end)
+            if not ok then return nil, "The GLB's JSON chunk would not parse" end
+            gltf = decoded
+        elseif kind == GLB_BIN then
+            bin = body
+        end
+    end
+    if not gltf then return nil, "No JSON chunk in the GLB" end
+
+    for _, ext in ipairs(gltf.extensionsRequired or {}) do
+        if ext == "KHR_draco_mesh_compression" then
+            return nil, "Mesh is Draco-compressed. Re-export it without Draco."
+        elseif ext == "EXT_meshopt_compression" then
+            return nil, "Mesh is meshopt-compressed. Re-export it without that."
+        end
+    end
+    return { gltf = gltf, bin = bin or "" }
+end
+
+local function accessorReader(m, index)
+    local acc = m.gltf.accessors[index + 1]
+    if not acc then return nil end
+    if acc.sparse then return nil end
+    local comp = GLB_COMP[acc.componentType]
+    local n = GLB_COUNT[acc.type]
+    if not comp or not n then return nil end
+    if acc.bufferView == nil then return nil end
+
+    local bv = m.gltf.bufferViews[acc.bufferView + 1]
+    local base = (bv.byteOffset or 0) + (acc.byteOffset or 0)
+    local stride = bv.byteStride or (comp[2] * n)
+    local fmt = "<" .. string.rep(comp[1], n)
+    local norm = acc.normalized
+    local scale = 1
+    if norm then
+        if acc.componentType == 5121 then scale = 1 / 255
+        elseif acc.componentType == 5123 then scale = 1 / 65535 end
+    end
+
+    -- returns the i-th element (0-based) as up to 4 numbers
+    return function(i)
+        local at = base + i * stride + 1
+        if n == 1 then
+            local v = string.unpack(fmt, m.bin, at)
+            return norm and v * scale or v
+        end
+        local a, b, c, d = string.unpack(fmt, m.bin, at)
+        if norm then
+            a = a * scale
+            if b then b = b * scale end
+            if c then c = c * scale end
+            if d then d = d * scale end
+        end
+        return a, b, c, d
+    end, acc.count
+end
+
+-- ── materials and textures ─────────────────────────────────────────────────
+local function materialColour(m, index)
+    local mat = index ~= nil and m.gltf.materials and m.gltf.materials[index + 1]
+    if not mat then return { 1, 1, 1 }, nil end
+    local pbr = mat.pbrMetallicRoughness or {}
+    local f = pbr.baseColorFactor or { 1, 1, 1, 1 }
+    local tex = nil
+    if pbr.baseColorTexture then
+        local ti = pbr.baseColorTexture.index
+        m.texCache = m.texCache or {}
+        if m.texCache[ti] == nil then
+            m.texCache[ti] = false
+            local t = m.gltf.textures and m.gltf.textures[ti + 1]
+            local img = t and t.source ~= nil and m.gltf.images[t.source + 1]
+            if img and img.bufferView ~= nil then
+                local bv = m.gltf.bufferViews[img.bufferView + 1]
+                local bytes = m.bin:sub((bv.byteOffset or 0) + 1,
+                                        (bv.byteOffset or 0) + bv.byteLength)
+                if bytes:sub(1, 8) == "\137PNG\r\n\26\n" then
+                    local ok, decoded = pcall(decodePNG, bytes)
+                    if ok and decoded then m.texCache[ti] = decoded end
+                else
+                    m.jpegSeen = true
+                end
+            end
+        end
+        tex = m.texCache[ti] or nil
+    end
+    return { f[1] or 1, f[2] or 1, f[3] or 1 }, tex
+end
+
+-- ── voxelising ─────────────────────────────────────────────────────────────
+-- Samples every triangle on a barycentric lattice fine enough that no cell it
+-- crosses is missed. A rasteriser would be faster but needs a special case for
+-- every skinny or edge-on triangle; this one has none.
+local MODEL_MAX_CELLS = 200000
+
+local function glbToBlocks(data, gridCells, onProgress)
+    local m, err = parseGLB(data)
+    if not m then return nil, err end
+    local gltf = m.gltf
+
+    -- flatten the node tree into (primitive, world matrix) pairs
+    local jobs = {}
+    local function walk(nodeIndex, parent)
+        local node = gltf.nodes[nodeIndex + 1]
+        if not node then return end
+        local world = matMul(parent, nodeMatrix(node))
+        if node.mesh ~= nil then
+            local mesh = gltf.meshes[node.mesh + 1]
+            for _, prim in ipairs(mesh and mesh.primitives or {}) do
+                if (prim.mode or 4) == 4 and prim.attributes
+                    and prim.attributes.POSITION ~= nil then
+                    jobs[#jobs + 1] = { prim = prim, world = world }
+                end
+            end
+        end
+        for _, child in ipairs(node.children or {}) do walk(child, world) end
+    end
+    local scene = gltf.scenes and gltf.scenes[(gltf.scene or 0) + 1]
+    if scene and scene.nodes then
+        for _, n in ipairs(scene.nodes) do walk(n, matIdentity()) end
+    else
+        for i = 0, #(gltf.nodes or {}) - 1 do walk(i, matIdentity()) end
+    end
+    if #jobs == 0 then return nil, "No triangle geometry in that file" end
+
+    -- pass one: world-space vertices and the bounding box
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    for _, job in ipairs(jobs) do
+        local read, count = accessorReader(m, job.prim.attributes.POSITION)
+        if not read then return nil, "Unsupported vertex data in that file" end
+        local verts = table.create(count)
+        for i = 0, count - 1 do
+            local x, y, z = matApply(job.world, read(i))
+            verts[i + 1] = { x, y, z }
+            if x < minX then minX = x end
+            if y < minY then minY = y end
+            if z < minZ then minZ = z end
+            if x > maxX then maxX = x end
+            if y > maxY then maxY = y end
+            if z > maxZ then maxZ = z end
+            if i % 4000 == 0 then task.wait() end
+        end
+        job.verts = verts
+    end
+
+    local sx, sy, sz = maxX - minX, maxY - minY, maxZ - minZ
+    -- glTF is Y-up by spec, but plenty of exports are Z-up and land on their
+    -- side. A model standing up is taller than it is deep.
+    local zUp = sz > sy * 1.6 and sz > sx * 1.1
+    local longest = math.max(sx, sy, sz, 1e-9)
+    local scale = gridCells / longest
+    local spacing = 0.5 / scale
+
+    local cells, order = {}, {}
+    local placed = 0
+    local stopped = false
+
+    for ji, job in ipairs(jobs) do
+        local prim = job.prim
+        local verts = job.verts
+        local uvRead = prim.attributes.TEXCOORD_0 ~= nil
+            and accessorReader(m, prim.attributes.TEXCOORD_0) or nil
+        local base, tex = materialColour(m, prim.material)
+        if not uvRead then tex = nil end
+
+        local idxRead, idxCount
+        if prim.indices ~= nil then
+            idxRead, idxCount = accessorReader(m, prim.indices)
+        else
+            idxCount = #verts
+            idxRead = function(i) return i end
+        end
+        if not idxRead then return nil, "Unsupported index data in that file" end
+
+        for t = 0, math.floor(idxCount / 3) - 1 do
+            local i0 = idxRead(t * 3) + 1
+            local i1 = idxRead(t * 3 + 1) + 1
+            local i2 = idxRead(t * 3 + 2) + 1
+            local a, b, c = verts[i0], verts[i1], verts[i2]
+            if a and b and c then
+                local function edge(p, q)
+                    local dx, dy, dz = p[1] - q[1], p[2] - q[2], p[3] - q[3]
+                    return math.sqrt(dx * dx + dy * dy + dz * dz)
+                end
+                local n = math.clamp(
+                    math.ceil(math.max(edge(a, b), edge(a, c), edge(b, c)) / spacing) + 1,
+                    2, 64)
+
+                for i = 0, n do
+                    for j = 0, n - i do
+                        local wi, wj = i / n, j / n
+                        local wk = 1 - wi - wj
+                        local px = a[1] * wk + b[1] * wi + c[1] * wj
+                        local py = a[2] * wk + b[2] * wi + c[2] * wj
+                        local pz = a[3] * wk + b[3] * wi + c[3] * wj
+                        -- reorient so Y is up, as a build file expects
+                        local gx, gy, gz
+                        if zUp then
+                            gx = math.floor((px - minX) * scale)
+                            gy = math.floor((pz - minZ) * scale)
+                            gz = math.floor((maxY - py) * scale)
+                        else
+                            gx = math.floor((px - minX) * scale)
+                            gy = math.floor((py - minY) * scale)
+                            gz = math.floor((pz - minZ) * scale)
+                        end
+                        local key = gx .. "," .. gy .. "," .. gz
+                        local cell = cells[key]
+                        if not cell then
+                            if placed >= MODEL_MAX_CELLS then
+                                stopped = true
+                                break
+                            end
+                            cell = { gx, gy, gz, 0, 0, 0, 0 }
+                            cells[key] = cell
+                            order[#order + 1] = cell
+                            placed = placed + 1
+                        end
+
+                        local r, g, bl = base[1], base[2], base[3]
+                        if tex then
+                            local u0, v0 = uvRead(i0 - 1)
+                            local u1, v1 = uvRead(i1 - 1)
+                            local u2, v2 = uvRead(i2 - 1)
+                            local u = u0 * wk + u1 * wi + u2 * wj
+                            local v = v0 * wk + v1 * wi + v2 * wj
+                            local tx = math.floor((u % 1) * (tex.w - 1)) + 1
+                            local ty = math.floor((v % 1) * (tex.h - 1)) + 1
+                            local tr, tg, tb = tex.get(tx, ty)
+                            r, g, bl = r * tr / 255, g * tg / 255, bl * tb / 255
+                        end
+                        cell[4] = cell[4] + r * 255
+                        cell[5] = cell[5] + g * 255
+                        cell[6] = cell[6] + bl * 255
+                        cell[7] = cell[7] + 1
+                    end
+                    if stopped then break end
+                end
+            end
+            if stopped then break end
+            if t % 250 == 0 then
+                task.wait()
+                if onProgress then onProgress(ji, #jobs, placed) end
+            end
+        end
+        if stopped then break end
+    end
+
+    if #order == 0 then return nil, "Nothing was voxelised - the model may be empty" end
+
+    local blocks = table.create(#order)
+    for i, cell in ipairs(order) do
+        local n = math.max(cell[7], 1)
+        local name = blockFor(
+            math.clamp(math.floor(cell[4] / n + 0.5), 0, 255),
+            math.clamp(math.floor(cell[5] / n + 0.5), 0, 255),
+            math.clamp(math.floor(cell[6] / n + 0.5), 0, 255))
+        blocks[i] = {
+            blockType = name,
+            upperBlock = false,
+            cframe = { cell[1] * 3, cell[2] * 3, cell[3] * 3, 1, 0, 0, 0, 1, 0 },
+            parts = {},
+        }
+        if i % 8000 == 0 then task.wait() end
+    end
+
+    return blocks, nil, {
+        stopped = stopped,
+        jpeg = m.jpegSeen,
+        zUp = zUp,
+        -- report the size the blocks actually came out, not the model's own
+        -- axes, which differ once a Z-up model has been stood up
+        size = zUp
+            and { math.floor(sx * scale) + 1, math.floor(sz * scale) + 1,
+                  math.floor(sy * scale) + 1 }
+            or { math.floor(sx * scale) + 1, math.floor(sy * scale) + 1,
+                 math.floor(sz * scale) + 1 },
+    }
+end
+
+-- Called from loadSelectedBuild when the chosen file is a .glb. Results are
+-- cached per file and detail level, so flipping Preview Build on and off does
+-- not re-voxelise a model every time.
+BuilderAPI.loadModelFile = function(name, data)
+    local key = name .. "@" .. MODEL.grid
+    if MODEL.cache[key] then
+        return { blocks = MODEL.cache[key] }
+    end
+
+    rebuildActivePalette()
+    notify("Model", "Voxelising " .. name .. " at detail " .. MODEL.grid .. "...", 6, "info")
+
+    local blocks, err, info = glbToBlocks(data, MODEL.grid, function(done, total, cells)
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus(("Voxelising %d/%d meshes - %d blocks so far")
+                :format(done, total, cells))
+        end
+    end)
+    if not blocks then
+        notifyErr("Model", err or "Could not read that model", 8)
+        if BuilderAPI.setModelStatus then BuilderAPI.setModelStatus(err or "Failed") end
+        return nil
+    end
+
+    MODEL.cache[key] = blocks
+    local msg = ("%d blocks, %dx%dx%d"):format(#blocks, info.size[1], info.size[2], info.size[3])
+    if info.zUp then msg = msg .. "\nStood it up: the model was authored Z-up." end
+    if info.jpeg then
+        msg = msg .. "\nSome textures are JPEG, which cannot be decoded in game -"
+            .. " those parts use their flat material colour."
+    end
+    if info.stopped then
+        msg = msg .. "\nHit the " .. MODEL_MAX_CELLS .. " block ceiling; lower Model Detail."
+    end
+    if BuilderAPI.setModelStatus then BuilderAPI.setModelStatus(msg) end
+    notifyOK("Model", msg, 8)
+    return { blocks = blocks }
+end
+
+end
+
+
 -- ── preview ────────────────────────────────────────────────────────────────
 local PREVIEW_FOLDER = "IABImagePreview"
 local MAX_PREVIEW = 70000
@@ -12538,6 +12978,37 @@ previewPanel:AddToggle({
     Name = "Include Slabs", Default = true,
     Tooltip = "Off leaves every slab out of the preview and the build.",
     Callback = function(v) includeSlabs = v end })
+
+-- ── Models ─────────────────────────────────────────────────────────────────
+previewPanel:AddDivider()
+
+local modelStatus = previewPanel:AddParagraph("Model",
+    "Drop a .glb into autoBuilder and pick it in the file list.")
+BuilderAPI.setModelStatus = function(text)
+    pcall(function() modelStatus:Set(tostring(text)) end)
+end
+
+previewPanel:AddSlider({
+    Name = "Model Detail", Min = 16, Max = 256, Increment = 8, Default = 96,
+    ValueName = "cells",
+    Tooltip = "How many blocks a .glb gets along its longest side. Higher is a closer likeness and a lot more blocks. Re-run Preview Build after changing it.",
+    Callback = function(v)
+        MODEL.grid = v
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus("Detail " .. v ..
+                " - re-run Preview Build to rebuild the model at this size.")
+        end
+    end })
+
+previewPanel:AddButton({
+    Name = "Forget Model Cache",
+    Tooltip = "A voxelised model is kept so previewing it again is instant. Drop this if you have replaced the .glb file.",
+    Callback = function()
+        MODEL.cache = {}
+        notify("Model", "Cached models dropped", 3, "info")
+    end })
+
+previewPanel:AddDivider()
 
 previewPanel:AddToggle({
     Name = "No Interior", Default = false,

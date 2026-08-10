@@ -13,6 +13,8 @@ thing, so this is the accuracy dial.
 
       --blocks N      target block count (default 80000)
       --height N      exact height in blocks, instead of a budget
+      --scale N       blocks per model unit - the model's own scale, kept
+      --grid N        cells along the model's longest axis, set directly
       --solid         fill the interior (default: surface shell only)
       --palette A,B   restrict to palette groups, e.g. Stone,Wool
                       (Solid Wool Clay Neon Pastel Wood Stone Natural Ore)
@@ -317,6 +319,8 @@ def main():
     path, name = sys.argv[1], sys.argv[2]
     target = arg("--blocks", 80000, int)
     height = arg("--height", None, int)
+    scale = arg("--scale", None, float)
+    grid = arg("--grid", None, int)
     solid = "--solid" in sys.argv
     simplify = arg("--simplify", 0, int)
     single = arg("--single")
@@ -336,9 +340,22 @@ def main():
     up, why = pick_up_axis(hi - lo, up_flag)
     print(f"up axis: {up.upper()} - {why}")
 
-    if height:
-        world = to_world(np.array([lo, hi]), up)
-        size = np.abs(world[1] - world[0])
+    world = to_world(np.array([lo, hi]), up)
+    size = np.abs(world[1] - world[0])
+
+    if grid:
+        cells_long = max(8, grid)
+        print(f"grid {cells_long} (set directly)")
+    elif scale:
+        # The model's own units, times a factor. A model authored in metres at
+        # --scale 30 comes out 30 blocks per metre, whatever its bounding box
+        # happens to be - so two models converted at the same scale stay in
+        # proportion with each other, which a block budget cannot promise.
+        cells_long = max(8, int(round(size.max() * scale)))
+        dims = " x ".join(str(max(1, int(round(v * scale)))) for v in size)
+        print(f"scale {scale} blocks per model unit -> {dims} blocks "
+              f"(grid {cells_long})")
+    elif height:
         cells_long = max(8, int(round(height * size.max() / max(size[1], 1e-9))))
         print(f"sizing for {height} blocks tall -> grid {cells_long}")
     else:
