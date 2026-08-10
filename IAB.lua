@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 10 16:10"
+local IAB_BUILD = "Aug 10 17:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3094,6 +3094,34 @@ auto:CreateSlider({
             BuilderAPI.setModelStatus("Detail " .. v .. " - about " .. v
                 .. " blocks along the model's longest side."
                 .. "\nTurn Preview Build off and on to rebuild it at this size.")
+        end
+    end
+})
+
+auto:CreateDropdown({
+    Name = "Model Palette",
+    -- The same nine families the image converter offers. Spelled out here
+    -- because IMAGE_GROUPS is defined further down the file than this tab.
+    Options = { "Solid", "Wool", "Clay", "Neon", "Pastel", "Wood", "Stone",
+                "Natural", "Ore" },
+    CurrentOption = {},
+    MultipleOptions = true,
+    Flag = "ModelPalette",
+    Tooltip = "Which families of blocks a model may use. Pick none to allow all of them - that is almost always what you want for a textured model.",
+    Callback = function(v)
+        if not MODEL then return end
+        local set = {}
+        if typeof(v) == "table" then
+            for _, g in ipairs(v) do set[g] = true end
+        elseif v then
+            set[v] = true
+        end
+        MODEL.groups = set
+        MODEL.cache = {}
+        if MODEL.buildPalette then MODEL.buildPalette() end
+        if BuilderAPI.setModelStatus then
+            BuilderAPI.setModelStatus(next(set) and "Palette restricted - re-run Preview Build."
+                or "Full palette (91 blocks) - re-run Preview Build.")
         end
     end
 })
@@ -11644,6 +11672,40 @@ local function skinMatrices(m, skinIndex, globals)
     return mats
 end
 
+-- ── palette ────────────────────────────────────────────────────────────────
+-- Models keep their own palette. They used to borrow the image converter's,
+-- which meant a group left selected on the Image tab silently governed every
+-- model too - pick Neon there for one picture and every model afterwards comes
+-- out in white neon with no detail. These are stored on MODEL rather than as
+-- locals because the main chunk is at Luau's 200-local ceiling.
+MODEL.buildPalette = function()
+    local want = MODEL.groups
+    if not want or next(want) == nil then
+        MODEL.pal = IMAGE_PAL
+    else
+        local out = {}
+        for _, e in ipairs(IMAGE_PAL) do
+            if want[e.group] then out[#out + 1] = e end
+        end
+        MODEL.pal = (#out > 0) and out or IMAGE_PAL
+    end
+    MODEL.match = {}
+    MODEL.ditherCache = {}
+end
+
+MODEL.blockFor = function(r, g, b)
+    MODEL.match = MODEL.match or {}
+    local key = r .. "," .. g .. "," .. b
+    local hit = MODEL.match[key]
+    if hit then return hit[1], hit[2] end
+    local L, a, bb = BA.toOklab(Color3.fromRGB(r, g, b))
+    local best = nearestIn(MODEL.pal or IMAGE_PAL, L, a, bb)
+    local rec = best and { best.name, best.col }
+        or { "stone", Color3.fromRGB(r, g, b) }
+    MODEL.match[key] = rec
+    return rec[1], rec[2]
+end
+
 -- ── dithering ──────────────────────────────────────────────────────────────
 -- Ninety-one colours cannot express a face. But a block is small: put two
 -- nearby colours next to each other in a pattern and the eye averages them,
@@ -11676,12 +11738,12 @@ local function ditherBlock(r, g, b, x, y, z)
     MODEL.ditherCache = MODEL.ditherCache or {}
     local pair = MODEL.ditherCache[key]
     if not pair then
-        local n1, c1 = blockFor(r, g, b)
+        local n1, c1 = MODEL.blockFor(r, g, b)
         -- reflect the colour through the nearest block to find what lies beyond
         local rr = math.clamp(2 * r - c1.R * 255, 0, 255)
         local gg = math.clamp(2 * g - c1.G * 255, 0, 255)
         local bb = math.clamp(2 * b - c1.B * 255, 0, 255)
-        local n2, c2 = blockFor(math.floor(rr + 0.5), math.floor(gg + 0.5), math.floor(bb + 0.5))
+        local n2, c2 = MODEL.blockFor(math.floor(rr + 0.5), math.floor(gg + 0.5), math.floor(bb + 0.5))
         if n2 == n1 then
             pair = { n1, n1, 0 }
         else
@@ -11915,7 +11977,7 @@ local function glbToBlocks(data, gridCells, onProgress)
         local cb = math.clamp(math.floor(cell[6] / n + 0.5), 0, 255)
         local name
         if MODEL.dither == false then
-            name = blockFor(cr, cg, cb)
+            name = MODEL.blockFor(cr, cg, cb)
         else
             name = ditherBlock(cr, cg, cb, cell[1], cell[2], cell[3])
         end
@@ -11952,8 +12014,7 @@ BuilderAPI.loadModelFile = function(name, data)
         return { blocks = MODEL.cache[key] }
     end
 
-    rebuildActivePalette()
-    MODEL.ditherCache = {}
+    MODEL.buildPalette()
     notify("Model", "Voxelising " .. name .. " at detail " .. MODEL.grid .. "...", 6, "info")
 
     local blocks, err, info = glbToBlocks(data, MODEL.grid, function(done, total, cells)
