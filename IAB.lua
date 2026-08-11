@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 11 11:45"
+local IAB_BUILD = "Aug 11 14:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3556,14 +3556,15 @@ function partToBlockEntry(part)
     }
 end
 
-function finishSaveBlocks(blocks)
+function finishSaveBlocks(blocks, nameOverride)
     if #blocks == 0 then
         notify("Save Failed", "No blocks found to save", 4)
         return
     end
 
     if not isfolder("autoBuilder") then makefolder("autoBuilder") end
-    local name = saveFileName
+    local name = nameOverride
+    if not name or name == "" then name = saveFileName end
     if not (name:lower():sub(-5) == ".json" or name:lower():sub(-4) == ".txt") then
         name = name .. ".json"
     end
@@ -4083,22 +4084,13 @@ saveTab:CreateButton({
                 end
                 local data = loadSelectedBuild()
                 if not data or not data.blocks then return end
+                -- through the shared path, so it is mirrored to the webhook
+                -- and listed like any other save rather than quietly written
                 local name = saveFileName
                 if not name or name == "" then
                     name = MODEL.selected:gsub("%.[Gg][Ll][Bb]$", "")
                 end
-                if not name:match("%.json$") then name = name .. ".json" end
-                local ok = pcall(function()
-                    if not isfolder("autoBuilder") then makefolder("autoBuilder") end
-                    writefile("autoBuilder/" .. name,
-                        HttpService:JSONEncode({ blocks = data.blocks }))
-                end)
-                if ok then
-                    pcall(function() fileDropdown:Refresh(getFiles(), true) end)
-                    notifyOK("Saved", name .. " - " .. #data.blocks .. " blocks", 5)
-                else
-                    notifyErr("Save Failed", "Could not write " .. name, 5)
-                end
+                finishSaveBlocks(data.blocks, name)
             elseif saveTarget == "Inside Selection Box" then
                 if not selBoxOnly then
                     notifyWarn("Save", "Turn Show Selection Box on and place it first", 4)
@@ -12195,7 +12187,10 @@ local MODEL_MAX_CELLS = 600000
 -- grinding through those is what makes it look like a freeze.
 local MODEL_MAX_SAMPLES = 9000000
 
-local function glbToBlocks(data, gridCells, onProgress)
+-- Parse a GLB and hand back its meshes as world-space, posed vertices. Both
+-- the voxeliser and the mesh viewer start here, so there is one implementation
+-- of the node walk and of skinning rather than two that can drift apart.
+MODEL.readMeshes = function(data)
     local m, err = parseGLB(data)
     if not m then return nil, err end
     local gltf = m.gltf
@@ -12290,6 +12285,127 @@ local function glbToBlocks(data, gridCells, onProgress)
         end
         job.verts = verts
     end
+
+    return {
+        m = m, jobs = jobs, posed = posedAny,
+        minX = minX, minY = minY, minZ = minZ,
+        maxX = maxX, maxY = maxY, maxZ = maxZ,
+    }
+end
+
+-- ── the model as a mesh ────────────────────────────────────────────────────
+-- The thumbnail used to show the blocks a model turns into. That is useful,
+-- but it is not the model. Roblox can build a mesh at runtime from raw
+-- triangles through EditableMesh, so the viewer can show the real thing.
+--
+-- The API has changed shape more than once and is not present in every
+-- environment, so every call is guarded and the caller falls back to the block
+-- render. Colour is per-vertex, sampled from the base texture at that vertex's
+-- UV, which avoids needing an editable image as well.
+MODEL.meshFromGLB = function(data, maxTris)
+    local AssetService = game:GetService("AssetService")
+    if not AssetService then return nil, "no AssetService" end
+
+    local ok, em = pcall(function()
+        return AssetService:CreateEditableMesh({})
+    end)
+    if not ok or not em then
+        ok, em = pcall(function() return AssetService:CreateEditableMesh() end)
+    end
+    if not ok or not em then return nil, "this executor has no EditableMesh" end
+
+    local read, err = MODEL.readMeshes(data)
+    if type(read) ~= "table" then return nil, err or "could not read the model" end
+
+    local cx = (read.minX + read.maxX) / 2
+    local cy = (read.minY + read.maxY) / 2
+    local cz = (read.minZ + read.maxZ) / 2
+    local span = math.max(read.maxX - read.minX, read.maxY - read.minY,
+                          read.maxZ - read.minZ, 1e-6)
+    -- normalise into a sensible size for the viewport, centred on the origin
+    local scale = 20 / span
+
+    local tris, added = 0, 0
+    local budget = maxTris or 40000
+
+    for _, job in ipairs(read.jobs) do
+        local prim = job.prim
+        local verts = job.verts
+        local attrs = prim.attributes
+        local uvRead = attrs.TEXCOORD_0 ~= nil
+            and accessorReader(read.m, attrs.TEXCOORD_0) or nil
+        local base, tex = materialColour(read.m, prim.material)
+        if not uvRead then tex = nil end
+
+        local idxRead, idxCount
+        if prim.indices ~= nil then
+            idxRead, idxCount = accessorReader(read.m, prim.indices)
+        else
+            idxCount = #verts
+            idxRead = function(i) return i end
+        end
+        if not idxRead then break end
+
+        -- one editable vertex per glTF vertex, coloured once
+        local ids = {}
+        local function vertexId(vi)
+            local id = ids[vi]
+            if id then return id end
+            local v = verts[vi]
+            if not v then return nil end
+            local okv, made = pcall(function()
+                return em:AddVertex(Vector3.new(
+                    (v[1] - cx) * scale, (v[2] - cy) * scale, (v[3] - cz) * scale))
+            end)
+            if not okv or not made then return nil end
+            local r, g, b = base[1], base[2], base[3]
+            if tex then
+                local u, vv = uvRead(vi - 1)
+                if u then
+                    local tr, tg, tb = tex.get(
+                        math.floor((u % 1) * (tex.w - 1)) + 1,
+                        math.floor((vv % 1) * (tex.h - 1)) + 1)
+                    r, g, b = r * tr / 255, g * tg / 255, b * tb / 255
+                end
+            end
+            -- colour APIs differ between EditableMesh versions; try, shrug off
+            pcall(function() em:SetVertexColor(made, Color3.new(r, g, b)) end)
+            ids[vi] = made
+            return made
+        end
+
+        for t = 0, math.floor(idxCount / 3) - 1 do
+            if tris >= budget then break end
+            local a = vertexId(idxRead(t * 3) + 1)
+            local b = vertexId(idxRead(t * 3 + 1) + 1)
+            local c = vertexId(idxRead(t * 3 + 2) + 1)
+            if a and b and c then
+                local okt = pcall(function() em:AddTriangle(a, b, c) end)
+                if okt then added = added + 1 end
+            end
+            tris = tris + 1
+            if t % 400 == 0 then task.wait() end
+        end
+        if tris >= budget then break end
+    end
+
+    if added == 0 then return nil, "no triangles could be added" end
+
+    local okPart, part = pcall(function()
+        return AssetService:CreateMeshPartAsync(Content.fromObject(em))
+    end)
+    if not okPart or not part then
+        return nil, "this executor cannot turn an editable mesh into a part"
+    end
+    return part, nil, { triangles = added, posed = read.posed }
+end
+
+local function glbToBlocks(data, gridCells, onProgress)
+    local read, readErr = MODEL.readMeshes(data)
+    if type(read) ~= "table" then return nil, readErr or "Could not read that model" end
+    local m, jobs, posedAny = read.m, read.jobs, read.posed
+    local minX, minY, minZ = read.minX, read.minY, read.minZ
+    local maxX, maxY, maxZ = read.maxX, read.maxY, read.maxZ
 
     local sx, sy, sz = maxX - minX, maxY - minY, maxZ - minZ
     -- glTF is Y-up by spec, but plenty of exports are Z-up and land on their
@@ -13437,6 +13553,40 @@ local function templateFor(name)
 end
 
 local function render()
+    -- A model is shown as the model, not as the blocks it becomes. That is
+    -- what you actually want to check before converting. Falls back to the
+    -- block render when the executor has no EditableMesh.
+    if isModelFile(selectedFile) then
+        local path = filePathFor(selectedFile)
+        if isfile(path) then
+            infoLabel.Text = "Building the mesh..."
+            clearWorld()
+            local part, why, info
+            local ok = pcall(function()
+                part, why, info = MODEL.meshFromGLB(readfile(path))
+            end)
+            if ok and part then
+                part.Anchored = true
+                part.CanCollide = false
+                part.CanQuery = false
+                part.Parent = world
+                pcall(function() part:PivotTo(CFrame.new(0, 0, 0)) end)
+                -- same orbit the block view uses, sized to the mesh
+                local span = math.max(part.Size.X, part.Size.Y, part.Size.Z, 1)
+                T.count = (info and info.triangles) or 0
+                T.name = selectedFile
+                T.radius = span * 1.5 + 10
+                T.height = span * 0.55 + 5
+                infoLabel.Text = selectedFile .. "\n"
+                    .. T.count .. " triangles"
+                    .. ((info and info.posed) and ", posed from its skeleton" or "")
+                notifyOK("Thumbnail", "Showing the model itself", 3)
+                return
+            end
+            notifyWarn("Thumbnail", "Showing blocks instead - " .. tostring(why or "no mesh support"), 6)
+        end
+    end
+
     local data = loadSelectedBuild()
     if not data or not data.blocks or #data.blocks == 0 then
         notifyWarn("Thumbnail", "Pick a build file first", 3)
