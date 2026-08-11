@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 11 17:20"
+local IAB_BUILD = "Aug 11 18:05"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3044,7 +3044,7 @@ BuilderAPI.setModelStatus = function(text)
 end
 
 modelDropdown = auto:CreateDropdown({
-    Name = "Pick a Model",
+    Name = "Select Model",
     -- Shows the real mesh where the executor allows it, and the blocks it
     -- would become where it does not.
     GearAction = {
@@ -3105,7 +3105,7 @@ modelDropdown = auto:CreateDropdown({
 })
 
 auto:CreateSlider({
-    Name = "Model Size", Range = { 16, 512 }, Increment = 8, CurrentValue = 96,
+    Name = "Model Detail", Range = { 16, 512 }, Increment = 8, CurrentValue = 96,
     Suffix = "cells", Flag = "ModelDetail",
     Tooltip = "How big the model comes out, in blocks along its longest side. Bigger looks more like the real thing and costs a lot more blocks. Turn the preview off and on to redraw it.",
     Callback = function(v)
@@ -3155,7 +3155,7 @@ auto:CreateToggle({
     Flag = "ModelDither",
     Tooltip = "Off uses one block per colour. That looks clean, and it is usually better for skin and clothes. On mixes two close blocks so your eye sees the shade between them, which helps where colours fade into each other. The gear sets how much mixing.",
     Gear = {
-        { Type = "slider", Name = "How Much Mixing", Min = 0, Max = 100, Default = 45,
+        { Type = "slider", Name = "Blend Amount", Min = 0, Max = 100, Default = 45,
           Callback = function(v)
             if not MODEL then return end
             -- One dial over two: how often the second block is allowed, and
@@ -3694,20 +3694,20 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
         end,
     },
     Gear = {
-        { Type = "toggle", Name = "Real Blocks", Default = true,
+        { Type = "toggle", Name = "Use Real Models", Default = true,
           Callback = function(v) previewRealModels = v end },
-        { Type = "toggle", Name = "Faster, Rougher", Default = false,
+        { Type = "toggle", Name = "Low-Lag Preview", Default = false,
           Callback = function(v) previewMinimized = v end },
-        { Type = "toggle", Name = "Show Stairs", Default = true,
+        { Type = "toggle", Name = "Include Stairs", Default = true,
           Callback = function(v) includeStairs = v end },
-        { Type = "toggle", Name = "Show Slabs", Default = true,
+        { Type = "toggle", Name = "Include Slabs", Default = true,
           Callback = function(v) includeSlabs = v end },
-        { Type = "toggle", Name = "Outside Only", Default = false,
+        { Type = "toggle", Name = "No Interior", Default = false,
           Callback = function(v)
             noInterior = v
-            if v then notify("Outside Only", "Turn the preview off and on to redraw it", 5, "info") end
+            if v then notify("No Interior", "Turn the preview off and on to redraw it", 5, "info") end
           end },
-        { Type = "slider", Name = "See Through", Min = 0, Max = 90, Default = 50,
+        { Type = "slider", Name = "Transparency", Min = 0, Max = 90, Default = 50,
           Callback = function(v)
             previewTransparency = v / 100
             local folder = Workspace:FindFirstChild(previewFolderName)
@@ -3725,13 +3725,13 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
                 notifyWarn("Brush Preview", "Off - the ghost is see-through again", 4)
             end
           end },
-        { Type = "button", Name = "Turn 90", OnClick = function()
+        { Type = "button", Name = "Rotate 90", OnClick = function()
             if not previewModel or not previewModel.Parent then
                 notify("Nothing to Turn", "Turn the preview on first", 3)
                 return
             end
             rotatePreview(90)
-            notify("Turned", "Spun a quarter turn", 2)
+            notify("Rotated", "Turned 90 degrees", 2)
         end },
     },
     Callback = function(v)
@@ -13914,21 +13914,21 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 do
 
-local previewPanel = Duvome:MakeSidePanel({ Name = "Blocks Needed", Width = 210, Height = 320, Side = "right" })
+local previewPanel = Duvome:MakeSidePanel({ Name = "Required Blocks", Width = 210, Height = 320, Side = "right" })
 BuilderAPI.previewPanel = previewPanel
 
 -- ── Required blocks ────────────────────────────────────────────────────────
 previewPanel:AddButton({
-    Name = "What Do I Need",
+    Name = "Show Required Blocks",
     Tooltip = "Checks what blocks this build needs and how many you are short.",
     Callback = function()
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
-local reqSummary = previewPanel:AddParagraph("Blocks Needed", "Press What Do I Need to check.")
+local reqSummary = previewPanel:AddParagraph("Required", "Press Show Required Blocks to check.")
 
 previewPanel:AddSlider({
-    Name = "Hide Small Amounts", Min = 1, Max = 64, Increment = 1, Default = 1, ValueName = "blk",
+    Name = "Hide Under", Min = 1, Max = 64, Increment = 1, Default = 1, ValueName = "blk",
     Tooltip = "Hide blocks the build barely uses. Set it to 1 to see them all.",
     Callback = function(v)
         requiredMinCount = v
@@ -13943,7 +13943,7 @@ previewPanel:AddSlider({
 -- buttons per entry - that filled the panel with controls.
 local reqPick = nil
 local reqDrop = previewPanel:AddDropdown({
-    Name = "Pick a Line",
+    Name = "Pick Entry",
     Options = { "Scan first" }, Default = "Scan first", Search = true,
     -- the required list runs long; five visible rows was not enough to work with
     MaxElements = 12,
@@ -13951,7 +13951,7 @@ local reqDrop = previewPanel:AddDropdown({
     Callback = function(v) reqPick = (typeof(v) == "table") and v[1] or v end })
 
 previewPanel:AddButton({
-    Name = "Take It Off",
+    Name = "Remove Entry",
     Tooltip = "Takes that line off the list. If you swapped that block for another, this undoes the swap. If you did not, it takes that block out of the build.",
     Callback = function()
         if not reqPick or reqPick == "Scan first" then
@@ -14005,7 +14005,7 @@ previewPanel:AddButton({
     end })
 
 previewPanel:AddButton({
-    Name = "Put Them All Back",
+    Name = "Unhide All",
     Tooltip = "Puts back everything you took off the list.",
     Callback = function()
         requiredHidden = {}
@@ -14093,7 +14093,7 @@ objectPanel:AddParagraph("Objects",
     "Pick blocks in a preview with the brush or the selection box, then use these.")
 
 objectPanel:AddButton({
-    Name = "Copy",
+    Name = "Duplicate",
     Tooltip = "Makes a second copy of what you picked, one step to the side. Move it where you want with the arrows.",
     Callback = function()
         if not ready() or not haveSelection() then return end
@@ -14116,7 +14116,7 @@ objectPanel:AddButton({
             made = made + 1
             if made % 400 == 0 then task.wait() end
         end
-        notifyOK("Copied", made .. " blocks copied one step across", 4)
+        notifyOK("Duplicated", made .. " blocks copied one step across", 4)
     end })
 
 objectPanel:AddButton({
@@ -14166,7 +14166,7 @@ end
 objectPanel:AddDivider()
 
 objectPanel:AddButton({
-    Name = "Turn 90",
+    Name = "Rotate 90",
     Tooltip = "Spins what you picked a quarter turn around its own middle.",
     Callback = function()
         if not ready() or not haveSelection() then return end
@@ -14194,7 +14194,7 @@ objectPanel:AddButton({
                 else part:PivotTo(snapped) end
             end)
         end
-        notify("Turned", n .. " blocks turned a quarter", 3, "info")
+        notify("Rotated", n .. " blocks rotated", 3, "info")
     end })
 
 objectPanel:AddButton({
@@ -14226,7 +14226,7 @@ objectPanel:AddButton({
 objectPanel:AddDivider()
 
 objectPanel:AddButton({
-    Name = "Save Picked Blocks",
+    Name = "Save Selection",
     Tooltip = "Saves just what you picked as its own build file.",
     Callback = function()
         if not haveSelection() then return end
@@ -14234,7 +14234,7 @@ objectPanel:AddButton({
     end })
 
 objectPanel:AddButton({
-    Name = "Unpick All",
+    Name = "Clear Selection",
     Callback = function()
         clearBlockSelection()
         notify("Cleared", "Nothing is picked now", 2)
@@ -14245,10 +14245,10 @@ objectPanel:AddButton({
 -- These are the controls for those, which used to live in the Objects section
 -- on the tab.
 objectPanel:AddDivider()
-objectPanel:AddLabel("Stamped Shapes")
+objectPanel:AddLabel("Objects")
 
 objectPanel:AddButton({
-    Name = "Stamp This Build",
+    Name = "Stamp Build as Object",
     Tooltip = "Drops the build file you picked into the world as one movable piece.",
     Callback = function()
         task.spawn(function()
@@ -14266,30 +14266,30 @@ objectPanel:AddButton({
     end })
 
 objectPanel:AddButton({
-    Name = "Copy Stamped",
+    Name = "Duplicate Object",
     Tooltip = "Makes another one of the stamped shape you have selected.",
     Callback = function() objDuplicate() end })
 
 objectPanel:AddButton({
-    Name = "Delete Stamped",
+    Name = "Delete Object",
     Tooltip = "Removes the stamped shape you have selected.",
     Callback = function() objDeleteSel() end })
 
 local sceneName = "MyScene"
 objectPanel:AddTextbox({
-    Name = "Name For The File",
+    Name = "Scene Name",
     Default = sceneName,
     Callback = function(t) if t and t ~= "" then sceneName = t end end })
 
 objectPanel:AddButton({
-    Name = "Join Into One File",
+    Name = "Combine to Build File",
     Tooltip = "Puts every stamped shape together into a single build file.",
     Callback = function()
         task.spawn(function() objCombineToFile(sceneName) end)
     end })
 
 objectPanel:AddButton({
-    Name = "Clear Stamped",
+    Name = "Clear All Objects",
     Tooltip = "Removes every stamped shape from the world.",
     Callback = function()
         confirm("Clear Stamped Shapes",
