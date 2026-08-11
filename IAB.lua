@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 11 14:30"
+local IAB_BUILD = "Aug 11 17:20"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -353,6 +353,7 @@ MODEL = { grid = 96, cache = {}, lastName = nil, dither = true,
           ditherAmount = 0.45, ditherMin = 0.053, limit = 0 }
 
 brushPreview = false
+objStep = 3
 previewOmitted = {}
 previewOmittedCount = 0
 -- Whole block types dropped from the build, from Remove Entry on the required
@@ -2723,7 +2724,7 @@ auto:CreateToggle({
     Name = "Show Selection Box",
     CurrentValue = false,
     Flag = "ShowSelBox",
-    Tooltip = "Shows the box and limits Save Island Build to what is inside it.",
+    Tooltip = "Turn this on, then click where you want the box. Anything inside it is what gets saved.",
     Callback = function(v)
         selBoxOnly = v
         if v then
@@ -2738,17 +2739,23 @@ auto:CreateToggle({
 
 BuilderAPI.toggles.brush = auto:CreateToggle({
     Name = "Block Brush",
-    Tooltip = "Hold click and drag over blocks to add them to the selection. The icon opens the brush settings without arming the brush.",
+    Tooltip = "Hold click and drag over blocks to pick them. The gear opens the brush settings, and the dot menu opens the object tools.",
     CurrentValue = false,
     Flag = "BlockBrush",
-    -- The panel used to open with the toggle, which meant arming the brush just
-    -- to change its settings. It opens from the icon on this row instead.
+    -- The gear icon opens the brush settings; the dot menu next to it opens the
+    -- object tools. Neither needs the brush switched on.
     GearAction = {
         Icon = "gear",
         OnClick = function()
             local ok = pcall(function() BuilderAPI.brushPanel:Toggle() end)
             if not ok then notifyWarn("Brush", "Panel not ready yet", 3) end
         end,
+    },
+    Gear = {
+        { Type = "button", Name = "Object Tools", OnClick = function()
+            local ok = pcall(function() BuilderAPI.objectPanel:Toggle() end)
+            if not ok then notifyWarn("Objects", "Panel not ready yet", 3) end
+        end },
     },
     Callback = function(v)
         blockSelMode = v
@@ -2918,7 +2925,7 @@ BuilderAPI.toggles.build = auto:CreateToggle({
         { Type = "slider", Name = "Expand Reach", Min = 20, Max = 400, Default = 120,
           Callback = function(v) expandReach = v end },
     },
-    Tooltip = "Starts placing the selected build file. Turn off to stop mid-build.",
+    Tooltip = "Starts building. Turn it off to stop partway.",
     Callback = function(v)
         if v then
             if isBuilding then
@@ -3027,12 +3034,9 @@ auto:CreateSection("Model", { Collapsible = true, Column = "left", Order = 1 })
 
 -- declared before use: its own Actions refresh it
 
-local modelStatus = auto:CreateParagraph({
-    Title = "Model",
-    Content = "Put .glb models in autoBuilder/models, then Refresh the file list"
-        .. " and pick one - it previews like a build file.\nModel Detail sets"
-        .. " how big it comes out.",
-})
+-- Starts empty. It fills in while a model is being turned into blocks and
+-- shows the result, so it is progress rather than a wall of instructions.
+local modelStatus = auto:CreateParagraph({ Title = "Model", Content = "" })
 BuilderAPI.setModelStatus = function(text)
     pcall(function()
         modelStatus:Set({ Title = "Model", Content = tostring(text) })
@@ -3040,11 +3044,9 @@ BuilderAPI.setModelStatus = function(text)
 end
 
 modelDropdown = auto:CreateDropdown({
-    Name = "Select Model",
-    -- The same viewer the build files use. It renders the blocks the model
-    -- turns into rather than the mesh itself - Roblox will not build a mesh
-    -- from raw triangles at runtime - so what you see is what will be placed,
-    -- which is the more useful answer anyway.
+    Name = "Pick a Model",
+    -- Shows the real mesh where the executor allows it, and the blocks it
+    -- would become where it does not.
     GearAction = {
         Icon = "eye",
         OnClick = function()
@@ -3085,7 +3087,7 @@ modelDropdown = auto:CreateDropdown({
     CurrentOption = {},
     MultipleOptions = false,
     Flag = "ModelDropdown",
-    Tooltip = "Models live in autoBuilder/models. Picking one makes it what Preview Build and Start Build use.",
+    Tooltip = "Models go in the models folder inside autoBuilder. Pick one here and it becomes what you preview and build.",
     Callback = function(option)
         local name = (typeof(option) == "table") and option[1] or option
         if not name or not isModelFile(name) then return end
@@ -3103,9 +3105,9 @@ modelDropdown = auto:CreateDropdown({
 })
 
 auto:CreateSlider({
-    Name = "Model Detail", Range = { 16, 512 }, Increment = 8, CurrentValue = 96,
+    Name = "Model Size", Range = { 16, 512 }, Increment = 8, CurrentValue = 96,
     Suffix = "cells", Flag = "ModelDetail",
-    Tooltip = "How many blocks a .glb gets along its longest side. Higher is a closer likeness and a lot more blocks. Re-run Preview Build after changing it.",
+    Tooltip = "How big the model comes out, in blocks along its longest side. Bigger looks more like the real thing and costs a lot more blocks. Turn the preview off and on to redraw it.",
     Callback = function(v)
         if not MODEL then return end
         MODEL.grid = v
@@ -3121,7 +3123,7 @@ auto:CreateDropdown({
     CurrentOption = {},
     MultipleOptions = true,
     Flag = "ModelPalette",
-    Tooltip = "Which families of blocks a model may use. Pick none to allow all of them - that is almost always what you want for a textured model.",
+    Tooltip = "Which kinds of blocks the model is allowed to use. Leave it empty to allow all of them. That is usually best.",
     Callback = function(v)
         if not MODEL then return end
         local set = {}
@@ -3139,7 +3141,7 @@ auto:CreateDropdown({
 auto:CreateSlider({
     Name = "Simplify", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
     Suffix = "types", Flag = "ModelSimplify",
-    Tooltip = "Cap how many different blocks the whole model uses. 0 is off. Low values give a poster look - and a far shorter shopping list.",
+    Tooltip = "The most different blocks the whole model may use. 0 means no limit. A small number looks simpler and is much cheaper to build.",
     Callback = function(v)
         if not MODEL then return end
         MODEL.limit = v
@@ -3151,9 +3153,9 @@ auto:CreateToggle({
     Name = "Blend Colours",
     CurrentValue = true,
     Flag = "ModelDither",
-    Tooltip = "Off gives one flat block per colour - plain, and often what you want for skin or cloth. On mixes two nearby blocks so the eye reads the shade in between, which is worth it on gradients and metal. The gear sets how freely.",
+    Tooltip = "Off uses one block per colour. That looks clean, and it is usually better for skin and clothes. On mixes two close blocks so your eye sees the shade between them, which helps where colours fade into each other. The gear sets how much mixing.",
     Gear = {
-        { Type = "slider", Name = "Blend Amount", Min = 0, Max = 100, Default = 45,
+        { Type = "slider", Name = "How Much Mixing", Min = 0, Max = 100, Default = 45,
           Callback = function(v)
             if not MODEL then return end
             -- One dial over two: how often the second block is allowed, and
@@ -3171,14 +3173,7 @@ auto:CreateToggle({
     end
 })
 
-auto:CreateButton({
-    Name = "Re-read Model File",
-    Tooltip = "A model is turned into blocks once and kept, so previewing it again is instant. Press this after replacing the .glb on disk with a new version, otherwise you keep seeing the old one.",
-    Callback = function()
-        if MODEL then MODEL.cache = {} end
-        notify("Model", "Will read the file again on the next preview", 3, "info")
-    end
-})
+
 
 
 
@@ -3188,81 +3183,7 @@ auto:CreateButton({
 -- The Objects controls are identical on every tab that can stamp geometry, so
 -- they are built from one place instead of being copy-pasted per tab. Each tab
 -- keeps its own scene name, matching the previous behaviour.
-local function addObjectsSection(tab, stampLabel, getBlocks, opts)
-    local sceneName = "MyScene"
 
-    tab:CreateSection("Objects", { Collapsible = true, Column = opts and opts.Column or nil })
-
-    tab:CreateButton({
-        Name = stampLabel,
-        Tooltip = "Place the current blocks into the world as a movable object.",
-        Callback = function()
-            task.spawn(function()
-                -- stamping is only meaningful while a ghost is on screen,
-                -- otherwise there is nothing to place it against
-                if not (isPreviewing or structShowPreview) then
-                    notifyWarn("No Preview", "Turn a preview on first", 4)
-                    return
-                end
-                local blocks, label = getBlocks()
-                if blocks and #blocks > 0 then
-                    objStamp(blocks, label)
-                end
-            end)
-        end
-    })
-
-    tab:CreateButton({
-        Name = "Duplicate",
-        Tooltip = "Make a copy of the selected object.",
-        Callback = function() objDuplicate() end
-    })
-
-    tab:CreateButton({
-        Name = "Delete",
-        Tooltip = "Remove the selected object.",
-        Callback = function() objDeleteSel() end
-    })
-
-    tab:CreateDivider()
-
-    tab:CreateInput({
-        Name = "Scene Name",
-        Default = sceneName,
-        Callback = function(t) if t and t ~= "" then sceneName = t end end
-    })
-
-    tab:CreateButton({
-        Name = "Combine All to Build File",
-        Tooltip = "Merge every stamped object into a single build file.",
-        Callback = function()
-            task.spawn(function() objCombineToFile(sceneName) end)
-        end
-    })
-
-    tab:CreateButton({
-        Name = "Clear All Objects",
-        Tooltip = "Remove every stamped object from the world.",
-        Callback = function()
-            confirm("Clear All Objects",
-                "This removes every stamped object from the world. This cannot be undone.",
-                "Clear All", function() objClearAll() end)
-        end
-    })
-end
-
--- Blocks from the currently selected build file, used by Auto Build and Preview.
-local function selectedFileBlocks()
-    local data = loadSelectedBuild()
-    if not data then
-        notifyWarn("No File", "Pick a build file first", 3)
-        return nil
-    end
-    local label = (selectedFile or "build"):gsub("%.json$", "")
-    return data.blocks, label
-end
-
-addObjectsSection(auto, "Stamp File as Object", selectedFileBlocks, { Column = "left" })
 
 do
 local saveFileName = "MyBuild"
@@ -3763,14 +3684,55 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
     Name = "Preview Build",
     CurrentValue = false,
     Flag = "PreviewToggle",
-    -- The panel opens from the icon on this row rather than with the toggle,
-    -- so the required-blocks list can be read without rendering a preview.
+    -- The brick icon opens the block list; the gear holds the settings. Neither
+    -- needs a preview running, so you can check what a build needs first.
     GearAction = {
-        Icon = "gear",
+        Icon = "bricks",
         OnClick = function()
             local ok = pcall(function() BuilderAPI.previewPanel:Toggle() end)
-            if not ok then notifyWarn("Preview Panel", "Panel not ready yet", 3) end
+            if not ok then notifyWarn("Blocks Needed", "Not ready yet", 3) end
         end,
+    },
+    Gear = {
+        { Type = "toggle", Name = "Real Blocks", Default = true,
+          Callback = function(v) previewRealModels = v end },
+        { Type = "toggle", Name = "Faster, Rougher", Default = false,
+          Callback = function(v) previewMinimized = v end },
+        { Type = "toggle", Name = "Show Stairs", Default = true,
+          Callback = function(v) includeStairs = v end },
+        { Type = "toggle", Name = "Show Slabs", Default = true,
+          Callback = function(v) includeSlabs = v end },
+        { Type = "toggle", Name = "Outside Only", Default = false,
+          Callback = function(v)
+            noInterior = v
+            if v then notify("Outside Only", "Turn the preview off and on to redraw it", 5, "info") end
+          end },
+        { Type = "slider", Name = "See Through", Min = 0, Max = 90, Default = 50,
+          Callback = function(v)
+            previewTransparency = v / 100
+            local folder = Workspace:FindFirstChild(previewFolderName)
+            if folder then
+                for _, part in ipairs(folder:GetDescendants()) do
+                    if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
+                        part.Transparency = previewTransparency
+                    end
+                end
+            end
+            if previewTransparency > 0 and brushPreview then
+                brushPreview = false
+                pcall(function() BuilderAPI.setPreviewQueryable(false) end)
+                pcall(function() BuilderAPI.toggles.brushPreview:Set(false) end)
+                notifyWarn("Brush Preview", "Off - the ghost is see-through again", 4)
+            end
+          end },
+        { Type = "button", Name = "Turn 90", OnClick = function()
+            if not previewModel or not previewModel.Parent then
+                notify("Nothing to Turn", "Turn the preview on first", 3)
+                return
+            end
+            rotatePreview(90)
+            notify("Turned", "Spun a quarter turn", 2)
+        end },
     },
     Callback = function(v)
         if v then
@@ -3801,7 +3763,7 @@ BuilderAPI.toggles.handles = previewTab:CreateToggle({
     Name = "Move Handles",
     CurrentValue = false,
     Flag = "PreviewDrag",
-    Tooltip = "Show drag arrows so you can slide the ghost into place before building.",
+    Tooltip = "Shows arrows you can drag to slide the preview where you want it.",
     Callback = function(v) setDragMode(v) end
 })
 
@@ -4052,7 +4014,7 @@ saveTab:CreateDropdown({
     CurrentOption = { "Whole Island" },
     MultipleOptions = false,
     Flag = "SaveTarget",
-    Tooltip = "What Save writes. Inside Selection Box needs Show Selection Box on; Brush Selection needs blocks painted with the Block Brush; Model saves the .glb you picked as a build file.",
+    Tooltip = "What the Save button saves. The box option needs the selection box turned on. The brush option needs blocks picked with the brush. Model saves the model you picked as a build file.",
     Callback = function(v)
         saveTarget = (typeof(v) == "table") and v[1] or v
     end
@@ -4060,7 +4022,7 @@ saveTab:CreateDropdown({
 
 saveTab:CreateButton({
     Name = "Save",
-    Tooltip = "Saves the chosen target to a build file using the Build Name.",
+    Tooltip = "Saves it as a build file, named whatever you put in Build Name.",
     Callback = function()
         task.spawn(function()
             if saveTarget == "Brush Selection" then
@@ -12992,10 +12954,8 @@ auto:CreateSection("Image", { Collapsible = true, Column = "right", Order = 1 })
 
 -- Doubles as the status readout; say() writes here. No how-to wall of text -
 -- each control has its own hover tooltip.
-imgPara = auto:CreateParagraph({
-    Title = "Image",
-    Content = "",
-})
+-- Empty until something happens; say() writes progress and results here.
+imgPara = auto:CreateParagraph({ Title = "Image", Content = "" })
 
 -- Load and Check ride on the URL field itself rather than being separate
 -- controls below it.
@@ -13954,22 +13914,22 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 do
 
-local previewPanel = Duvome:MakeSidePanel({ Name = "Preview", Width = 200, Height = 320, Side = "right" })
+local previewPanel = Duvome:MakeSidePanel({ Name = "Blocks Needed", Width = 210, Height = 320, Side = "right" })
 BuilderAPI.previewPanel = previewPanel
 
 -- ── Required blocks ────────────────────────────────────────────────────────
 previewPanel:AddButton({
-    Name = "Show Required Blocks",
-    Tooltip = "Scan the build and list what you still need.",
+    Name = "What Do I Need",
+    Tooltip = "Checks what blocks this build needs and how many you are short.",
     Callback = function()
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
-local reqSummary = previewPanel:AddParagraph("Required", "Tap Show Required Blocks.")
+local reqSummary = previewPanel:AddParagraph("Blocks Needed", "Press What Do I Need to check.")
 
 previewPanel:AddSlider({
-    Name = "Hide Under", Min = 1, Max = 64, Increment = 1, Default = 1, ValueName = "blk",
-    Tooltip = "Leave out any block the build needs fewer of than this. 1 shows everything.",
+    Name = "Hide Small Amounts", Min = 1, Max = 64, Increment = 1, Default = 1, ValueName = "blk",
+    Tooltip = "Hide blocks the build barely uses. Set it to 1 to see them all.",
     Callback = function(v)
         requiredMinCount = v
         -- only re-render a list that already exists; scanning from here would
@@ -13983,16 +13943,16 @@ previewPanel:AddSlider({
 -- buttons per entry - that filled the panel with controls.
 local reqPick = nil
 local reqDrop = previewPanel:AddDropdown({
-    Name = "Pick Entry",
+    Name = "Pick a Line",
     Options = { "Scan first" }, Default = "Scan first", Search = true,
     -- the required list runs long; five visible rows was not enough to work with
     MaxElements = 12,
-    Tooltip = "Choose a line from the list above to act on.",
+    Tooltip = "Pick a line from the list so you can do something with it.",
     Callback = function(v) reqPick = (typeof(v) == "table") and v[1] or v end })
 
 previewPanel:AddButton({
-    Name = "Remove Entry",
-    Tooltip = "Drops the chosen line: undoes its replacement, or removes that block from the build entirely when there is none.",
+    Name = "Take It Off",
+    Tooltip = "Takes that line off the list. If you swapped that block for another, this undoes the swap. If you did not, it takes that block out of the build.",
     Callback = function()
         if not reqPick or reqPick == "Scan first" then
             notifyWarn("Required Blocks", "Pick an entry first", 3)
@@ -14045,8 +14005,8 @@ previewPanel:AddButton({
     end })
 
 previewPanel:AddButton({
-    Name = "Unhide All",
-    Tooltip = "Bring back every row you removed, and the blocks with them.",
+    Name = "Put Them All Back",
+    Tooltip = "Puts back everything you took off the list.",
     Callback = function()
         requiredHidden = {}
         omittedTypes = {}
@@ -14055,66 +14015,6 @@ previewPanel:AddButton({
         if BuilderAPI.scanRequired then BuilderAPI.scanRequired() end
     end })
 
-previewPanel:AddDivider()
-
-previewPanel:AddToggle({
-    Name = "Use Real Models", Default = true,
-    Callback = function(v) previewRealModels = v end })
-
-previewPanel:AddToggle({
-    Name = "Low-Lag Preview", Default = false,
-    Callback = function(v) previewMinimized = v end })
-
-previewPanel:AddToggle({
-    Name = "Include Stairs", Default = true,
-    Tooltip = "Off leaves every stair out of the preview and the build.",
-    Callback = function(v) includeStairs = v end })
-
-previewPanel:AddToggle({
-    Name = "Include Slabs", Default = true,
-    Tooltip = "Off leaves every slab out of the preview and the build.",
-    Callback = function(v) includeSlabs = v end })
-
-previewPanel:AddToggle({
-    Name = "No Interior", Default = false,
-    Tooltip = "Keeps only what you can see from outside. A house loses its contents, a solid shape becomes a shell. Re-run Preview Build to apply it.",
-    Callback = function(v)
-        noInterior = v
-        if v then
-            notify("No Interior", "Re-run Preview Build to hollow it out", 5, "info")
-        end
-    end })
-
-previewPanel:AddSlider({
-    Name = "Transparency", Min = 0, Max = 90, Increment = 5, Default = 50, ValueName = "%",
-    Callback = function(v)
-        previewTransparency = v / 100
-        local folder = Workspace:FindFirstChild(previewFolderName)
-        if folder then
-            for _, part in ipairs(folder:GetDescendants()) do
-                if part:IsA("BasePart") and part:GetAttribute("GhostPreview") then
-                    part.Transparency = previewTransparency
-                end
-            end
-        end
-        -- The brush only reaches a solid ghost, so making it see-through again
-        -- stands Brush Preview down rather than leaving it armed and useless.
-        if previewTransparency > 0 and brushPreview then
-            brushPreview = false
-            pcall(function() BuilderAPI.setPreviewQueryable(false) end)
-            pcall(function() BuilderAPI.toggles.brushPreview:Set(false) end)
-            notifyWarn("Brush Preview", "Off - the ghost is see-through again", 4)
-        end
-    end })
-
-previewPanel:AddButton({ Name = "Rotate 90", Callback = function()
-        if not previewModel or not previewModel.Parent then
-            notify("No Preview", "Preview a build first", 3)
-            return
-        end
-        rotatePreview(90)
-        notify("Rotated", "Turned 90 degrees", 2)
-    end })
 
 -- Fills the summary and the picker from requiredBlocksList.
 BuilderAPI.renderRequired = function(summaryText)
@@ -14139,6 +14039,267 @@ end
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- OBJECT PANEL — copy, move and delete parts of a preview
+-- ═══════════════════════════════════════════════════════════════════════════
+-- These act on what you have selected in a preview, so the ghost has to be
+-- solid to work with: at any transparency above zero you cannot see or click
+-- what you are picking, and every one of these would be a guess.
+do
+
+local objectPanel = Duvome:MakeSidePanel({ Name = "Objects", Width = 210, Height = 400, Side = "right" })
+BuilderAPI.objectPanel = objectPanel
+
+local function ready()
+    if not previewModel or not previewModel.Parent then
+        notifyWarn("Objects", "Turn on Preview Build first", 4)
+        return false
+    end
+    if previewTransparency > 0 then
+        notifyWarn("Objects", "Set Transparency to 0 first - the ghost has to be solid", 6)
+        return false
+    end
+    return true
+end
+
+local function haveSelection()
+    if blockSelCount == 0 then
+        notifyWarn("Objects", "Nothing picked. Use the brush or Select Box Contents", 5)
+        return false
+    end
+    return true
+end
+
+-- The blocks currently picked, as plain entries anchored to their own corner.
+local function selectionBlocks()
+    local out = {}
+    for part in pairs(selectedBlocks) do
+        local key = part:GetAttribute("SrcKey")
+        local ok, pos = pcall(function()
+            return part:IsA("BasePart") and part.Position or part:GetPivot().Position
+        end)
+        if ok and pos then
+            out[#out + 1] = {
+                blockType = part.Name,
+                upperBlock = false,
+                pos = pos,
+                key = key,
+            }
+        end
+    end
+    return out
+end
+
+objectPanel:AddParagraph("Objects",
+    "Pick blocks in a preview with the brush or the selection box, then use these.")
+
+objectPanel:AddButton({
+    Name = "Copy",
+    Tooltip = "Makes a second copy of what you picked, one step to the side. Move it where you want with the arrows.",
+    Callback = function()
+        if not ready() or not haveSelection() then return end
+        local picked = selectionBlocks()
+        local step = objStep or 3
+        local made = 0
+        for _, b in ipairs(picked) do
+            local part = Instance.new("Part")
+            part.Name = b.blockType
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanQuery = true
+            part.CastShadow = false
+            part.Material = Enum.Material.SmoothPlastic
+            part.Size = Vector3.new(previewBlockSize, previewBlockSize, previewBlockSize)
+            part.CFrame = CFrame.new(b.pos + Vector3.new(step, 0, 0))
+            part.Color = colorForBlockType(b.blockType)
+            part:SetAttribute("GhostPreview", true)
+            part.Parent = previewModel
+            made = made + 1
+            if made % 400 == 0 then task.wait() end
+        end
+        notifyOK("Copied", made .. " blocks copied one step across", 4)
+    end })
+
+objectPanel:AddButton({
+    Name = "Delete",
+    Tooltip = "Removes what you picked from the preview. The build will skip those blocks too.",
+    Callback = function()
+        if not ready() or not haveSelection() then return end
+        local n = blockSelCount
+        confirm("Delete Blocks", "Remove " .. n .. " block(s) from this build?",
+            "Delete", function()
+                local gone = deleteSelectedFromPreview()
+                notifyOK("Deleted", gone .. " blocks removed", 4)
+            end)
+    end })
+
+objectPanel:AddDivider()
+
+objectPanel:AddSlider({
+    Name = "Move Step", Min = 3, Max = 30, Increment = 3, Default = 3, ValueName = "studs",
+    Tooltip = "How far one nudge moves things. 3 studs is one block.",
+    Callback = function(v) objStep = v end })
+
+-- Nudging: one row of directions rather than six separate buttons.
+for _, d in ipairs({
+    { "Move Left",   -1,  0,  0 }, { "Move Right",  1, 0, 0 },
+    { "Move Up",      0,  1,  0 }, { "Move Down",   0, -1, 0 },
+    { "Move Forward", 0,  0, -1 }, { "Move Back",   0,  0, 1 },
+}) do
+    objectPanel:AddButton({
+        Name = d[1],
+        Callback = function()
+            if not ready() or not haveSelection() then return end
+            local step = objStep or 3
+            local shift = Vector3.new(d[2] * step, d[3] * step, d[4] * step)
+            for part in pairs(selectedBlocks) do
+                pcall(function()
+                    if part:IsA("BasePart") then
+                        part.CFrame = part.CFrame + shift
+                    else
+                        part:PivotTo(part:GetPivot() + shift)
+                    end
+                end)
+            end
+        end })
+end
+
+objectPanel:AddDivider()
+
+objectPanel:AddButton({
+    Name = "Turn 90",
+    Tooltip = "Spins what you picked a quarter turn around its own middle.",
+    Callback = function()
+        if not ready() or not haveSelection() then return end
+        local sum, n = Vector3.new(), 0
+        for part in pairs(selectedBlocks) do
+            local ok, pos = pcall(function()
+                return part:IsA("BasePart") and part.Position or part:GetPivot().Position
+            end)
+            if ok and pos then sum = sum + pos n = n + 1 end
+        end
+        if n == 0 then return end
+        local centre = sum / n
+        local turn = CFrame.Angles(0, math.rad(90), 0)
+        for part in pairs(selectedBlocks) do
+            pcall(function()
+                local cf = part:IsA("BasePart") and part.CFrame or part:GetPivot()
+                local moved = CFrame.new(centre) * turn * CFrame.new(-centre) * cf
+                -- keep it on the block grid after turning
+                local p = moved.Position
+                local snapped = CFrame.new(
+                    math.floor(p.X / 3 + 0.5) * 3,
+                    math.floor(p.Y / 3 + 0.5) * 3,
+                    math.floor(p.Z / 3 + 0.5) * 3) * moved.Rotation
+                if part:IsA("BasePart") then part.CFrame = snapped
+                else part:PivotTo(snapped) end
+            end)
+        end
+        notify("Turned", n .. " blocks turned a quarter", 3, "info")
+    end })
+
+objectPanel:AddButton({
+    Name = "Mirror",
+    Tooltip = "Flips what you picked left to right.",
+    Callback = function()
+        if not ready() or not haveSelection() then return end
+        local sum, n = Vector3.new(), 0
+        for part in pairs(selectedBlocks) do
+            local ok, pos = pcall(function()
+                return part:IsA("BasePart") and part.Position or part:GetPivot().Position
+            end)
+            if ok and pos then sum = sum + pos n = n + 1 end
+        end
+        if n == 0 then return end
+        local cx = sum.X / n
+        for part in pairs(selectedBlocks) do
+            pcall(function()
+                local cf = part:IsA("BasePart") and part.CFrame or part:GetPivot()
+                local p = cf.Position
+                local flipped = CFrame.new(2 * cx - p.X, p.Y, p.Z) * cf.Rotation
+                if part:IsA("BasePart") then part.CFrame = flipped
+                else part:PivotTo(flipped) end
+            end)
+        end
+        notify("Mirrored", n .. " blocks flipped", 3, "info")
+    end })
+
+objectPanel:AddDivider()
+
+objectPanel:AddButton({
+    Name = "Save Picked Blocks",
+    Tooltip = "Saves just what you picked as its own build file.",
+    Callback = function()
+        if not haveSelection() then return end
+        task.spawn(function() saveSelectedBrush() end)
+    end })
+
+objectPanel:AddButton({
+    Name = "Unpick All",
+    Callback = function()
+        clearBlockSelection()
+        notify("Cleared", "Nothing is picked now", 2)
+    end })
+
+-- ── stamped objects ────────────────────────────────────────────────────────
+-- The Structures tab can stamp a shape into the world as a movable object.
+-- These are the controls for those, which used to live in the Objects section
+-- on the tab.
+objectPanel:AddDivider()
+objectPanel:AddLabel("Stamped Shapes")
+
+objectPanel:AddButton({
+    Name = "Stamp This Build",
+    Tooltip = "Drops the build file you picked into the world as one movable piece.",
+    Callback = function()
+        task.spawn(function()
+            if not (isPreviewing or structShowPreview) then
+                notifyWarn("Objects", "Turn a preview on first", 4)
+                return
+            end
+            local data = loadSelectedBuild()
+            if not data or not data.blocks then
+                notifyWarn("Objects", "Pick a build file first", 3)
+                return
+            end
+            objStamp(data.blocks, (selectedFile or "build"):gsub("%.json$", ""))
+        end)
+    end })
+
+objectPanel:AddButton({
+    Name = "Copy Stamped",
+    Tooltip = "Makes another one of the stamped shape you have selected.",
+    Callback = function() objDuplicate() end })
+
+objectPanel:AddButton({
+    Name = "Delete Stamped",
+    Tooltip = "Removes the stamped shape you have selected.",
+    Callback = function() objDeleteSel() end })
+
+local sceneName = "MyScene"
+objectPanel:AddTextbox({
+    Name = "Name For The File",
+    Default = sceneName,
+    Callback = function(t) if t and t ~= "" then sceneName = t end end })
+
+objectPanel:AddButton({
+    Name = "Join Into One File",
+    Tooltip = "Puts every stamped shape together into a single build file.",
+    Callback = function()
+        task.spawn(function() objCombineToFile(sceneName) end)
+    end })
+
+objectPanel:AddButton({
+    Name = "Clear Stamped",
+    Tooltip = "Removes every stamped shape from the world.",
+    Callback = function()
+        confirm("Clear Stamped Shapes",
+            "This removes every stamped shape from the world. You cannot undo it.",
+            "Clear All", function() objClearAll() end)
+    end })
+
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- BRUSH PANEL — modes and actions for the block brush, off the tab
 -- ═══════════════════════════════════════════════════════════════════════════
 do
@@ -14149,7 +14310,7 @@ BuilderAPI.brushPanel = brushPanel
 local surfaceT, connectedT
 surfaceT = brushPanel:AddToggle({
     Name = "Surface Select", Default = false,
-    Tooltip = "Picks the whole flat run you clicked - a floor sideways, a wall along its face.",
+    Tooltip = "Picks the whole flat area you clicked, like a floor or one side of a wall.",
     Callback = function(v)
         brushSurface = v
         -- the modes are mutually exclusive
@@ -14175,7 +14336,7 @@ brushPanel:AddDivider()
 
 BuilderAPI.toggles.brushPreview = brushPanel:AddToggle({
     Name = "Brush Preview", Default = false,
-    Tooltip = "Paint on the ghost rather than the island. Needs Transparency at 0 - a see-through ghost lets the brush's ray straight through.",
+    Tooltip = "Paint on the preview instead of your island. The preview has to be solid first, so set See Through to 0.",
     Callback = function(v)
         if v then
             if not previewModel or not previewModel.Parent then
@@ -14202,7 +14363,7 @@ BuilderAPI.toggles.brushPreview = brushPanel:AddToggle({
 
 brushPanel:AddButton({
     Name = "Select Box Contents",
-    Tooltip = "Adds every previewed block inside the selection box to the selection, so a whole region can be deleted at once instead of painted over.",
+    Tooltip = "Picks everything inside the box at once, so you do not have to paint over it all.",
     Callback = function()
         local n = BuilderAPI.selectPreviewInBox and BuilderAPI.selectPreviewInBox(false) or 0
         if n > 0 then notify("Selection Box", n .. " block(s) added", 3, "info") end
@@ -14210,7 +14371,7 @@ brushPanel:AddButton({
 
 brushPanel:AddButton({
     Name = "Deselect Box Contents",
-    Tooltip = "The reverse: drops everything inside the box from the selection.",
+    Tooltip = "Unpicks everything inside the box.",
     Callback = function()
         local n = BuilderAPI.selectPreviewInBox and BuilderAPI.selectPreviewInBox(true) or 0
         if n > 0 then notify("Selection Box", n .. " block(s) removed", 3, "info") end
@@ -14218,7 +14379,7 @@ brushPanel:AddButton({
 
 brushPanel:AddButton({
     Name = "Delete Selected",
-    Tooltip = "Removes the painted blocks from the ghost and leaves them out of the build.",
+    Tooltip = "Takes the blocks you picked out of the preview, so they will not get built.",
     Callback = function()
         if blockSelCount == 0 then
             notifyWarn("Delete", "Paint ghost blocks with the brush, or use Select Box Contents", 5)
@@ -14235,7 +14396,7 @@ brushPanel:AddButton({
 
 brushPanel:AddButton({
     Name = "Restore Deleted",
-    Tooltip = "Puts every block you deleted from the preview back into the build.",
+    Tooltip = "Puts back every block you deleted.",
     Callback = function()
         local n = restorePreviewDeletions()
         if n == 0 then
