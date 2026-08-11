@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 11 18:05"
+local IAB_BUILD = "Aug 11 19:40"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2742,20 +2742,13 @@ BuilderAPI.toggles.brush = auto:CreateToggle({
     Tooltip = "Hold click and drag over blocks to pick them. The gear opens the brush settings, and the dot menu opens the object tools.",
     CurrentValue = false,
     Flag = "BlockBrush",
-    -- The gear icon opens the brush settings; the dot menu next to it opens the
-    -- object tools. Neither needs the brush switched on.
+    -- The gear opens the brush settings without arming the brush.
     GearAction = {
         Icon = "gear",
         OnClick = function()
             local ok = pcall(function() BuilderAPI.brushPanel:Toggle() end)
             if not ok then notifyWarn("Brush", "Panel not ready yet", 3) end
         end,
-    },
-    Gear = {
-        { Type = "button", Name = "Object Tools", OnClick = function()
-            local ok = pcall(function() BuilderAPI.objectPanel:Toggle() end)
-            if not ok then notifyWarn("Objects", "Panel not ready yet", 3) end
-        end },
     },
     Callback = function(v)
         blockSelMode = v
@@ -2785,6 +2778,15 @@ BuilderAPI.toggles.brush = auto:CreateToggle({
             blockSelDown = false
             notify("Block Brush Off", blockSelCount .. " blocks still selected", 3)
         end
+    end
+})
+
+auto:CreateButton({
+    Name = "Object Tools",
+    Tooltip = "Opens the tools for what you have picked in a preview: duplicate, delete, move, rotate and mirror.",
+    Callback = function()
+        local ok = pcall(function() BuilderAPI.objectPanel:Toggle() end)
+        if not ok then notifyWarn("Objects", "Panel not ready yet", 3) end
     end
 })
 
@@ -3034,14 +3036,6 @@ auto:CreateSection("Model", { Collapsible = true, Column = "left", Order = 1 })
 
 -- declared before use: its own Actions refresh it
 
--- Starts empty. It fills in while a model is being turned into blocks and
--- shows the result, so it is progress rather than a wall of instructions.
-local modelStatus = auto:CreateParagraph({ Title = "Model", Content = "" })
-BuilderAPI.setModelStatus = function(text)
-    pcall(function()
-        modelStatus:Set({ Title = "Model", Content = tostring(text) })
-    end)
-end
 
 modelDropdown = auto:CreateDropdown({
     Name = "Select Model",
@@ -3097,10 +3091,6 @@ modelDropdown = auto:CreateDropdown({
         -- becomes the selected file; the build dropdown does the same
         selectedFile = name
         savedPreviewTransform = nil
-        if BuilderAPI.setModelStatus then
-            BuilderAPI.setModelStatus(name .. " selected at detail " .. MODEL.grid
-                .. ".\nTurn on Preview Build to see it.")
-        end
     end
 })
 
@@ -3908,11 +3898,34 @@ buildTypeDropdown = previewTab:CreateDropdown({
 
 invBlockDropdown = previewTab:CreateDropdown({
     Name = "With Block",
-    Actions = { { Text = "Refresh", OnClick = function()
-        buildTypeDropdown:Refresh(getBuildTypeOptions(), true)
-        invBlockDropdown:Refresh(getInventoryOptions(), true)
-        notify("Refreshed", "Build & inventory lists updated", 2)
-    end } },
+    -- Refresh lists what you are carrying. All Blocks lists everything the
+    -- game has, for planning a swap to something you have not got yet.
+    Actions = {
+        { Text = "Refresh", OnClick = function()
+            buildTypeDropdown:Refresh(getBuildTypeOptions(), true)
+            invBlockDropdown:Refresh(getInventoryOptions(), true)
+            notify("Refreshed", "Back to the blocks you are carrying", 3)
+        end },
+        { Text = "All Blocks", OnClick = function()
+            local pal = BuilderAPI.blockPalette
+            if not pal or #pal == 0 then
+                notifyWarn("All Blocks", "The block list is not ready yet", 4)
+                return
+            end
+            invTypeMap = {}
+            local opts = {}
+            for _, blockName in ipairs(pal) do
+                local disp = resolveBlockDisplayName(blockName)
+                if not invTypeMap[disp] then
+                    invTypeMap[disp] = blockName
+                    opts[#opts + 1] = disp
+                end
+            end
+            table.sort(opts)
+            invBlockDropdown:Refresh(opts, true)
+            notify("All Blocks", #opts .. " blocks listed - Refresh goes back to yours", 5, "info")
+        end },
+    },
     Options = getInventoryOptions(),
     CurrentOption = {},
     MultipleOptions = false,
@@ -10908,10 +10921,10 @@ local IMG = {
     chosen = nil,     -- the reduced palette picked for this image, when limited
 }
 
-local imgPara
-
+-- The image status used to live in a paragraph on the tab, which sat there
+-- empty most of the time taking up space. It is a notification now.
 local function say(title, body)
-    pcall(function() imgPara:Set({ Title = title, Content = body }) end)
+    notify(title, body, 5, "info")
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -12637,17 +12650,21 @@ BuilderAPI.loadModelFile = function(name, data)
     MODEL.buildPalette()
     notify("Model", "Voxelising " .. name .. " at detail " .. MODEL.grid .. "...", 6, "info")
 
+    -- No status box any more, so progress arrives as a handful of notices at
+    -- the quarter marks rather than a running commentary nobody can read.
+    local lastMark = 0
     local blocks, err, info = glbToBlocks(data, MODEL.grid,
         function(done, total, cells, tri, tris)
-            if BuilderAPI.setModelStatus then
-                local pct = tris and tris > 0 and math.floor(tri / tris * 100) or 0
-                BuilderAPI.setModelStatus(("Voxelising mesh %d/%d - %d%% - %d blocks so far")
-                    :format(done, total, pct, cells))
+            if not tris or tris <= 0 then return end
+            local pct = math.floor(tri / tris * 100)
+            local mark = math.floor(pct / 25)
+            if mark > lastMark and mark < 4 then
+                lastMark = mark
+                notify("Model", (mark * 25) .. "% - " .. cells .. " blocks so far", 2, "info")
             end
         end)
     if not blocks then
         notifyErr("Model", err or "Could not read that model", 8)
-        if BuilderAPI.setModelStatus then BuilderAPI.setModelStatus(err or "Failed") end
         return nil
     end
 
@@ -12697,7 +12714,6 @@ BuilderAPI.loadModelFile = function(name, data)
     elseif info.stopped then
         msg = msg .. "\nHit the " .. MODEL_MAX_CELLS .. " block ceiling; lower Model Detail."
     end
-    if BuilderAPI.setModelStatus then BuilderAPI.setModelStatus(msg) end
     notifyOK("Model", msg, 8)
     return { blocks = blocks }
 end
@@ -12954,8 +12970,6 @@ auto:CreateSection("Image", { Collapsible = true, Column = "right", Order = 1 })
 
 -- Doubles as the status readout; say() writes here. No how-to wall of text -
 -- each control has its own hover tooltip.
--- Empty until something happens; say() writes progress and results here.
-imgPara = auto:CreateParagraph({ Title = "Image", Content = "" })
 
 -- Load and Check ride on the URL field itself rather than being separate
 -- controls below it.
