@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 16:45"
+local IAB_BUILD = "Aug 13 18:20"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1878,8 +1878,8 @@ end
 -- or position - both halves of a slab block sit at the same place, which is
 -- why two slabs in different halves used to save as identical data.
 function slabHalfOf(part)
-    local top = part:FindFirstChild("top")
-    local bottom = part:FindFirstChild("bottom")
+    local top = part:FindFirstChild("top") or part:FindFirstChild("Top")
+    local bottom = part:FindFirstChild("bottom") or part:FindFirstChild("Bottom")
     if not (top and bottom) then return nil end
     local function shown(d)
         if not d:IsA("BasePart") then return false end
@@ -1894,9 +1894,29 @@ end
 
 -- Show one half of a slab block and hide the other. `alpha` lets the preview
 -- keep its ghost transparency on the half that stays visible.
+-- Find the two mesh halves of a slab block.
+--
+-- A placed block names them 'top' and 'bottom' as direct children, but a
+-- template may wrap the block in a Model, and casing is not guaranteed. So
+-- search the whole clone case-insensitively rather than assuming the shape.
+local function slabHalves(inst)
+    local top, bottom = nil, nil
+    if inst:IsA("BasePart") then
+        local n = string.lower(inst.Name)
+        if n == "top" then top = inst elseif n == "bottom" then bottom = inst end
+    end
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("BasePart") then
+            local n = string.lower(d.Name)
+            if n == "top" and not top then top = d
+            elseif n == "bottom" and not bottom then bottom = d end
+        end
+    end
+    return top, bottom
+end
+
 function showSlabHalf(inst, upper, alpha)
-    local top = inst:FindFirstChild("top")
-    local bottom = inst:FindFirstChild("bottom")
+    local top, bottom = slabHalves(inst)
     if not (top and bottom) then return false end
     local shown = alpha or 0
     local show, hide = bottom, top
@@ -2080,6 +2100,7 @@ local function previewBuild(blocks)
     notify("Preview", "Rendering " .. #blocks .. " blocks...", 4)
 
     local work = 0
+    local slabSwapped, slabFellBack, slabStandIn = 0, 0, 0
     local renderList = blocks
     if previewMinimized then
         local occupied = {}
@@ -2171,6 +2192,11 @@ local function previewBuild(blocks)
                             return showSlabHalf(clone, upper, previewTransparency)
                         end)
                         slabOk = ok2 and res == true
+                        if slabOk then
+                            slabSwapped = slabSwapped + 1
+                        else
+                            slabFellBack = slabFellBack + 1
+                        end
                     end
                     if not slabOk then
                         -- the template is not shaped like a placed block, so
@@ -2201,6 +2227,7 @@ local function previewBuild(blocks)
             -- included, fills the whole cell and is left alone: a full-height
             -- cube nudged up or down only ends up inside its neighbour.
             if isSlab then
+                slabStandIn = slabStandIn + 1
                 local dy = (upper and 1 or -1) * (previewBlockSize / 4)
                 part.Size = Vector3.new(previewBlockSize, previewBlockSize / 2, previewBlockSize)
                 part.CFrame = cellCF + Vector3.new(0, dy, 0)
@@ -2222,7 +2249,16 @@ local function previewBuild(blocks)
     end
 
     if isPreviewing then
-        notify("Preview Ready", "Turn on Drag Mode, then drag it with your mouse.", 6)
+        -- Say what happened to the slabs. If they still look wrong, this is
+        -- the line that says which of the three paths drew them.
+        local total = slabSwapped + slabFellBack + slabStandIn
+        if total > 0 then
+            notify("Preview Ready", ("%d slabs: %d as real blocks, %d as stand-ins%s")
+                :format(total, slabSwapped, slabStandIn + slabFellBack,
+                        slabFellBack > 0 and (" (" .. slabFellBack .. " templates had no halves)") or ""), 8, "info")
+        else
+            notify("Preview Ready", "Turn on Drag Mode, then drag it with your mouse.", 6)
+        end
     end
 end
 
