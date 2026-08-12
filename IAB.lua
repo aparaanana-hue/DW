@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 17:40"
+local IAB_BUILD = "Aug 12 19:25"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2334,11 +2334,30 @@ local function setDragMode(on)
     notify("Move Handles ON", "Grab an arrow and drag. Snaps per block.", 6)
 end
 
+-- Half a slab's height. A slab records which half of its cell it is in by
+-- sitting this far off the centre.
+local SLAB_SEAT = 0.75
+
+-- Snap to the block grid, then put a slab back in its half.
+--
+-- Snapping rounds every coordinate to a multiple of 3, which lands a slab
+-- exactly on the line between the two halves it could be in - and the game
+-- seats one there low. Anything that snaps a position and then writes or
+-- places it has to come back through here, or every slab in the build ends up
+-- on the bottom, which is what left gaps along converted roofs.
+local function snapBlockPos(pos, blockType, upper)
+    local p = snapGridVec(pos)
+    if blockType and string.lower(tostring(blockType)):find("slab") then
+        return Vector3.new(p.X, p.Y + (upper and SLAB_SEAT or -SLAB_SEAT), p.Z)
+    end
+    return p
+end
+
 local function transformBlocks(blocks, transform)
     local out = {}
     for i, b in ipairs(blocks) do
         local cf = transform * arrayToCFrame(b.cframe)
-        local p = snapGridVec(cf.Position)
+        local p = snapBlockPos(cf.Position, b.blockType, b.upperBlock)
         local r = cf.RightVector
         local u = cf.UpVector
         out[i] = {
@@ -2549,7 +2568,7 @@ function objCombineToFile(fileName)
     for _, o in ipairs(objList) do
         for _, b in ipairs(o.blocks) do
             local cf = o.cframe * arrayToCFrame(b.cframe)
-            local p = snapGridVec(cf.Position)
+            local p = snapBlockPos(cf.Position, b.blockType, b.upperBlock)
             local key = p.X .. "_" .. p.Y .. "_" .. p.Z
             if not seen[key] then
                 seen[key] = true
@@ -12384,13 +12403,17 @@ function hollowBuried(blocks)
     local occ = {}
     for _, b in ipairs(blocks) do
         local c = b.cframe
-        occ[(math.floor(c[1] / 3) * 2048 + math.floor(c[2] / 3)) * 2048
-            + math.floor(c[3] / 3)] = true
+        occ[(math.floor(c[1] / 3 + 0.5) * 2048 + math.floor(c[2] / 3 + 0.5)) * 2048
+            + math.floor(c[3] / 3 + 0.5)] = true
     end
     local out = {}
     for i, b in ipairs(blocks) do
         local c = b.cframe
-        local x, y, z = math.floor(c[1] / 3), math.floor(c[2] / 3), math.floor(c[3] / 3)
+        -- round, not floor: a seated slab sits three quarters off the grid and
+        -- would otherwise be counted in the cell below its own
+        local x = math.floor(c[1] / 3 + 0.5)
+        local y = math.floor(c[2] / 3 + 0.5)
+        local z = math.floor(c[3] / 3 + 0.5)
         local hidden =
             occ[((x + 1) * 2048 + y) * 2048 + z] and occ[((x - 1) * 2048 + y) * 2048 + z]
             and occ[(x * 2048 + y + 1) * 2048 + z] and occ[(x * 2048 + y - 1) * 2048 + z]
