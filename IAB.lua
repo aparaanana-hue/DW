@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 09:15"
+local IAB_BUILD = "Aug 13 11:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3174,7 +3174,8 @@ auto:CreateButton({
                 return out
             end
 
-            if #found >= 2 then
+            local function compare()
+                if #found < 2 then return end
                 local a, b = snapshot(found[1]), snapshot(found[2])
                 local keys, seen = {}, {}
                 for k in pairs(a) do if not seen[k] then seen[k] = true keys[#keys+1] = k end end
@@ -3194,9 +3195,7 @@ auto:CreateButton({
                     for _, d in ipairs(diffs) do head[#head + 1] = d end
                 end
                 head[#head + 1] = ""
-                local text = table.concat(head, "\n")
-                warn(text)
-                pcall(function() setclipboard(text) end)
+                return table.concat(head, "\n")
             end
 
             local lines = { "=== SLAB INSPECTION ===" }
@@ -3226,21 +3225,30 @@ auto:CreateButton({
                         :format(tostring(p.MeshId), p.MeshSize.X, p.MeshSize.Y, p.MeshSize.Z)
                 end
 
-                local kids = {}
-                for _, d in ipairs(p:GetChildren()) do
-                    local extra = ""
-                    if d:IsA("SpecialMesh") then
-                        extra = (" offset=%.2f,%.2f,%.2f scale=%.2f,%.2f,%.2f mesh=%s")
-                            :format(d.Offset.X, d.Offset.Y, d.Offset.Z,
-                                    d.Scale.X, d.Scale.Y, d.Scale.Z, tostring(d.MeshId))
-                    elseif d:IsA("BasePart") then
+                -- The half that is showing is the whole question, so put it
+                -- on its own line per half rather than buried in a list.
+                for _, which in ipairs({ "bottom", "top" }) do
+                    local d = p:FindFirstChild(which)
+                    if d and d:IsA("BasePart") then
                         local rel = p.CFrame:PointToObjectSpace(d.Position)
-                        extra = (" relPos=%.2f,%.2f,%.2f size=%.2f,%.2f,%.2f")
-                            :format(rel.X, rel.Y, rel.Z, d.Size.X, d.Size.Y, d.Size.Z)
+                        lines[#lines + 1] = ("  %-6s transparency=%.2f  ltm=%.2f  size=%.2f,%.2f,%.2f  relY=%+.2f  collide=%s  -> %s")
+                            :format(which, d.Transparency, d.LocalTransparencyModifier,
+                                    d.Size.X, d.Size.Y, d.Size.Z, rel.Y,
+                                    tostring(d.CanCollide),
+                                    (d.Transparency < 0.5 and d.Size.Y > 0.01) and "SHOWING" or "hidden")
+                    else
+                        lines[#lines + 1] = ("  %-6s not present"):format(which)
                     end
-                    kids[#kids + 1] = d.ClassName .. " '" .. d.Name .. "'" .. extra
                 end
-                lines[#lines + 1] = "  children: " .. (#kids > 0 and table.concat(kids, " | ") or "none")
+                local others = {}
+                for _, d in ipairs(p:GetChildren()) do
+                    if d.Name ~= "top" and d.Name ~= "bottom" then
+                        local v = ""
+                        pcall(function() if d.Value ~= nil then v = "=" .. tostring(d.Value) end end)
+                        others[#others + 1] = d.ClassName .. " '" .. d.Name .. "'" .. v
+                    end
+                end
+                lines[#lines + 1] = "  other children: " .. (#others > 0 and table.concat(others, " | ") or "none")
 
                 -- and the parent, in case the marker lives above the part
                 if p.Parent then
@@ -3248,6 +3256,11 @@ auto:CreateButton({
                 end
             end
             lines[#lines + 1] = "=== " .. #found .. " slabs near you ==="
+            local diff = compare()
+            if diff then
+                lines[#lines + 1] = ""
+                lines[#lines + 1] = diff
+            end
             local text = table.concat(lines, "\n")
             warn(text)
             pcall(function() setclipboard(text) end)
