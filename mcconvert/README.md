@@ -124,6 +124,16 @@ work: a 1024px texture lands at 128px, finer than any model will resolve, and
 it measures within about 5/255 of a true decode. Progressive JPEGs cannot be
 read this way and are refused by name.
 
+### When hollowing is not enough
+
+Hollowing removes what you cannot see. A build that is already hollow - a
+castle of thin walls - has nothing left to remove: Mawglass Citadel came in at
+386,197 blocks, dropped to 182,124 on the first outer-skin pass, and lost
+nothing at all on a second. Surface area grows with the square of size, so past
+that point the only way down is `rescale_build.py`, which merges groups of
+cells into single blocks. Each group takes the block that covered most of it,
+rotation included, so stairs keep facing the way most of them faced.
+
 ### `--hollow`
 
 Drops every block whose six neighbours are all filled. Those are invisible from
@@ -168,6 +178,7 @@ large; skip it if you want the solid interior.
 | DreamSpawn | 25,687 | 22,514 | 79x151x79 |
 | PinkPalace | 83,717 | 31,843 | 160x128x181 | generated, not converted |
 | FemaleTitan | 79,860 | 42,361 | 108x290x113 | from a .glb model, posed and dithered |
+| MawglassCitadel | 192,316 | 79,934 | 152x214x142 | from a .schem, scaled to 1/1.52 to fit 80k |
 
 `world_to_islands.py` strips generated terrain via `BULK`; `schem_to_islands.py`
 does not, because in a schematic every block was placed on purpose. Only air and
