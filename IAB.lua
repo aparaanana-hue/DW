@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 21:10"
+local IAB_BUILD = "Aug 12 22:40"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3134,16 +3134,56 @@ auto:CreateButton({
                 return (a.Position - origin).Magnitude < (b.Position - origin).Magnitude
             end)
 
+            -- Two slabs in different halves save as identical data, so the
+            -- thing that tells them apart is not the position, the rotation or
+            -- the size. Dump everything the part carries and find it.
             local lines = { "=== SLAB INSPECTION ===" }
-            for i = 1, math.min(8, #found) do
+            for i = 1, math.min(4, #found) do
                 local p = found[i]
                 local y = p.Position.Y
                 local cell = math.floor(y / 3 + 0.5) * 3
-                local entry = partToBlockEntry(p)
-                lines[#lines + 1] = string.format(
-                    "%s  size=%.2fx%.2fx%.2f  y=%.3f  cell=%.0f  offset=%+.3f  reads back as upperBlock=%s",
-                    p.Name, p.Size.X, p.Size.Y, p.Size.Z, y, cell, y - cell,
-                    tostring(entry.upperBlock))
+                lines[#lines + 1] = ("--- slab %d: %s ---"):format(i, p.Name)
+                lines[#lines + 1] = ("  class=%s  size=%.3f,%.3f,%.3f")
+                    :format(p.ClassName, p.Size.X, p.Size.Y, p.Size.Z)
+                lines[#lines + 1] = ("  pos=%.3f,%.3f,%.3f  cell=%.0f  yOffset=%+.3f")
+                    :format(p.Position.X, y, p.Position.Z, cell, y - cell)
+                lines[#lines + 1] = ("  orientation=%.1f,%.1f,%.1f")
+                    :format(p.Orientation.X, p.Orientation.Y, p.Orientation.Z)
+
+                local attrs = {}
+                pcall(function()
+                    for k, v in pairs(p:GetAttributes()) do
+                        attrs[#attrs + 1] = k .. "=" .. tostring(v)
+                    end
+                end)
+                table.sort(attrs)
+                lines[#lines + 1] = "  attributes: " .. (#attrs > 0 and table.concat(attrs, ", ") or "none")
+
+                if p:IsA("MeshPart") then
+                    lines[#lines + 1] = ("  meshId=%s  meshSize=%.3f,%.3f,%.3f")
+                        :format(tostring(p.MeshId), p.MeshSize.X, p.MeshSize.Y, p.MeshSize.Z)
+                end
+
+                local kids = {}
+                for _, d in ipairs(p:GetChildren()) do
+                    local extra = ""
+                    if d:IsA("SpecialMesh") then
+                        extra = (" offset=%.2f,%.2f,%.2f scale=%.2f,%.2f,%.2f mesh=%s")
+                            :format(d.Offset.X, d.Offset.Y, d.Offset.Z,
+                                    d.Scale.X, d.Scale.Y, d.Scale.Z, tostring(d.MeshId))
+                    elseif d:IsA("BasePart") then
+                        local rel = p.CFrame:PointToObjectSpace(d.Position)
+                        extra = (" relPos=%.2f,%.2f,%.2f size=%.2f,%.2f,%.2f")
+                            :format(rel.X, rel.Y, rel.Z, d.Size.X, d.Size.Y, d.Size.Z)
+                    end
+                    kids[#kids + 1] = d.ClassName .. " '" .. d.Name .. "'" .. extra
+                end
+                lines[#lines + 1] = "  children: " .. (#kids > 0 and table.concat(kids, " | ") or "none")
+
+                -- and the parent, in case the marker lives above the part
+                if p.Parent then
+                    lines[#lines + 1] = ("  parent=%s '%s'"):format(p.Parent.ClassName, p.Parent.Name)
+                end
             end
             lines[#lines + 1] = "=== " .. #found .. " slabs near you ==="
             local text = table.concat(lines, "\n")
