@@ -1,10 +1,10 @@
-"""Seat slabs in the half of the cell they belong to.
+"""Put slabs back on the block grid.
 
-Islands records which half a slab is in by where it sits, not by the
-upperBlock flag - see partToBlockEntry in IAB.lua, which reads a block back as
-upper when a half-height part is above the cell centre. Builds written dead on
-the grid have every slab in neither half, and the game seats them low, so
-roofs come out a slab short and full of gaps.
+A real island capture has its slabs at exactly the same heights as its full
+blocks, so Islands does not record which half of a cell a slab is in by where
+it sits - upperBlock carries that. An earlier version of this script moved
+slabs three quarters of a stud off the grid on the opposite theory; this undoes
+it.
 
     python3 fix_slab_height.py ../builds/solid/*.json
 """
@@ -12,7 +12,7 @@ import json
 import pathlib
 import sys
 
-from blockmap import seat_slabs
+from blockmap import unseat_slabs
 
 
 def main(paths):
@@ -20,13 +20,12 @@ def main(paths):
     for p in paths:
         path = pathlib.Path(p)
         data = json.loads(path.read_text())
-        moved = seat_slabs(data["blocks"])
+        moved = unseat_slabs(data["blocks"])
         if moved:
             path.write_text(json.dumps(data, separators=(",", ":")))
+            print(f"{moved:>7} put back on the grid  {p}")
         total += moved
-        if moved:
-            print(f"{moved:>7} slabs seated  {p}")
-    print(f"\n{total} slabs seated across {len(paths)} files")
+    print(f"\n{total} blocks re-aligned across {len(paths)} files")
 
 
 if __name__ == "__main__":

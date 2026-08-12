@@ -9,13 +9,11 @@ name suffix).
 1 Minecraft block = 3 studs. Blocks are anchored at the build's own corner, so
 a file drops in anywhere.
 
-Slabs record which half of a cell they are in by **where they sit**, not by the
-`upperBlock` flag alone. `partToBlockEntry` in IAB.lua reads a block back as
-upper when a half-height part is above the cell centre, so a slab written dead
-on the grid is in neither half and the game seats it low — which made converted
-roofs come out a slab short and full of gaps. Every converter seats its slabs
-three quarters of a stud either side of the cell centre now, and
-`fix_slab_height.py` repairs files written before that.
+Slabs sit on the block grid like everything else. A capture of a real island
+has its slabs at exactly the same heights as its full blocks, so the position
+is just the cell and `upperBlock` carries which half. An earlier version of
+these scripts moved slabs three quarters of a stud off the grid on the opposite
+theory; `fix_slab_height.py` undoes that.
 
 Orientation carries over: an Islands cframe is `[x, y, z, Rx,Ry,Rz, Ux,Uy,Uz]`
 — position, then the RightVector and UpVector. Identity looks toward -Z, which

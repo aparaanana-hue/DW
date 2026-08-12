@@ -18,7 +18,7 @@ import pathlib
 import random
 import sys
 
-from blockmap import FACING_ROT, IDENTITY, is_slab, seat_slabs
+from blockmap import FACING_ROT, IDENTITY, is_slab
 
 CELL = 3
 
@@ -732,9 +732,6 @@ def main():
         b["cframe"][0] -= minx
         b["cframe"][1] -= miny
         b["cframe"][2] -= minz
-
-    # slabs record their half by position, not by the flag alone
-    seat_slabs(blocks)
 
     out.write_text(json.dumps({"blocks": blocks}, separators=(",", ":")))
 

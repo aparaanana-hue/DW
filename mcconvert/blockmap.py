@@ -1142,32 +1142,21 @@ def is_slab(target):
     return "slab" in target.lower()
 
 
-# Half the height of a slab. A cell is 3 studs and a slab fills half of it, so
-# its centre sits three quarters of a stud either side of the cell's.
-SLAB_OFFSET = 0.75
+def unseat_slabs(blocks):
+    """Put slabs back on the block grid.
 
-
-def seat_slabs(blocks):
-    """Move every slab into the half of its cell it belongs to.
-
-    Islands records which half a slab is in by *where it is*, not by a flag:
-    partToBlockEntry in IAB.lua reads a block back as upper when a half-height
-    part sits above the cell centre. A slab written dead on the grid is
-    therefore a slab in neither half, and the game seats it low - which is why
-    converted roofs came out a slab's thickness short and full of gaps.
-
-    upperBlock is still written, because it is what the placement call takes;
-    this puts the position in agreement with it.
+    An earlier version moved them three quarters of a stud into the half the
+    upperBlock flag claimed, on the theory that Islands records the half by
+    position. A capture of a real island says otherwise: its slabs sit at
+    exactly the same heights as its full blocks. The flag carries the half;
+    the position is just the cell.
     """
     moved = 0
     for b in blocks:
-        if not is_slab(b["blockType"]):
-            continue
         c = b["cframe"]
-        want = SLAB_OFFSET if b.get("upperBlock") else -SLAB_OFFSET
-        # only if it has not already been seated
-        if abs(c[1] - round(c[1] / 3) * 3) < 1e-6:
-            c[1] = c[1] + want
+        on_grid = round(c[1] / 3) * 3
+        if abs(c[1] - on_grid) > 1e-6:
+            c[1] = on_grid
             moved += 1
     return moved
 

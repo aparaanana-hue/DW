@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 19:25"
+local IAB_BUILD = "Aug 12 21:10"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2334,30 +2334,11 @@ local function setDragMode(on)
     notify("Move Handles ON", "Grab an arrow and drag. Snaps per block.", 6)
 end
 
--- Half a slab's height. A slab records which half of its cell it is in by
--- sitting this far off the centre.
-local SLAB_SEAT = 0.75
-
--- Snap to the block grid, then put a slab back in its half.
---
--- Snapping rounds every coordinate to a multiple of 3, which lands a slab
--- exactly on the line between the two halves it could be in - and the game
--- seats one there low. Anything that snaps a position and then writes or
--- places it has to come back through here, or every slab in the build ends up
--- on the bottom, which is what left gaps along converted roofs.
-local function snapBlockPos(pos, blockType, upper)
-    local p = snapGridVec(pos)
-    if blockType and string.lower(tostring(blockType)):find("slab") then
-        return Vector3.new(p.X, p.Y + (upper and SLAB_SEAT or -SLAB_SEAT), p.Z)
-    end
-    return p
-end
-
 local function transformBlocks(blocks, transform)
     local out = {}
     for i, b in ipairs(blocks) do
         local cf = transform * arrayToCFrame(b.cframe)
-        local p = snapBlockPos(cf.Position, b.blockType, b.upperBlock)
+        local p = snapGridVec(cf.Position)
         local r = cf.RightVector
         local u = cf.UpVector
         out[i] = {
@@ -2568,7 +2549,7 @@ function objCombineToFile(fileName)
     for _, o in ipairs(objList) do
         for _, b in ipairs(o.blocks) do
             local cf = o.cframe * arrayToCFrame(b.cframe)
-            local p = snapBlockPos(cf.Position, b.blockType, b.upperBlock)
+            local p = snapGridVec(cf.Position)
             local key = p.X .. "_" .. p.Y .. "_" .. p.Z
             if not seen[key] then
                 seen[key] = true
@@ -3122,6 +3103,54 @@ schemDropdown = auto:CreateDropdown({
         CONVERT.file = name
         selectedFile = name
         savedPreviewTransform = nil
+    end
+})
+
+auto:CreateButton({
+    Name = "Inspect Slabs",
+    Tooltip = "Place one slab in the bottom half and one in the top half near you, then press this. It reports how the game itself stores them, which is what decides how a converted slab has to be written.",
+    Callback = function()
+        task.spawn(function()
+            local folder = getBlocksFolder()
+            if not folder then
+                notifyWarn("Inspect", "No island found near you", 4)
+                return
+            end
+            local _, _, hrp = getCharacterParts()
+            local origin = hrp and hrp.Position or Vector3.new()
+
+            local found = {}
+            for _, part in ipairs(folder:GetChildren()) do
+                if part:IsA("BasePart") and string.lower(part.Name):find("slab")
+                    and (part.Position - origin).Magnitude < 60 then
+                    found[#found + 1] = part
+                end
+            end
+            if #found == 0 then
+                notifyWarn("Inspect", "No slabs within 60 studs - place one and try again", 6)
+                return
+            end
+            table.sort(found, function(a, b)
+                return (a.Position - origin).Magnitude < (b.Position - origin).Magnitude
+            end)
+
+            local lines = { "=== SLAB INSPECTION ===" }
+            for i = 1, math.min(8, #found) do
+                local p = found[i]
+                local y = p.Position.Y
+                local cell = math.floor(y / 3 + 0.5) * 3
+                local entry = partToBlockEntry(p)
+                lines[#lines + 1] = string.format(
+                    "%s  size=%.2fx%.2fx%.2f  y=%.3f  cell=%.0f  offset=%+.3f  reads back as upperBlock=%s",
+                    p.Name, p.Size.X, p.Size.Y, p.Size.Z, y, cell, y - cell,
+                    tostring(entry.upperBlock))
+            end
+            lines[#lines + 1] = "=== " .. #found .. " slabs near you ==="
+            local text = table.concat(lines, "\n")
+            warn(text)
+            pcall(function() setclipboard(text) end)
+            notifyOK("Inspect", #found .. " slabs - written to the console and copied to your clipboard", 9)
+        end)
     end
 })
 
@@ -12337,25 +12366,20 @@ BuilderAPI.convertSchematic = function(name, data, onProgress)
                 local z = math.floor(rem / w)
                 local x = rem % w
                 local px, py, pz = x * 3, y * 3, z * 3
-                -- Islands records which half of a cell a slab is in by where
-                -- it sits, not by the flag: partToBlockEntry reads a block
-                -- back as upper when a half-height part is above the cell
-                -- centre. A slab written dead on the grid is in neither half
-                -- and the game seats it low, which is why roofs came out a
-                -- slab short with gaps along them.
-                local isSlab = target:lower():find("slab") ~= nil
-                local sy = py
-                if isSlab then sy = py + (upper and 0.75 or -0.75) end
+                -- On the grid, like every other block. A capture of a real
+                -- island has its slabs at exactly the same heights as its full
+                -- blocks, so Islands does not record the half in the position;
+                -- upperBlock carries it.
                 blocks[#blocks + 1] = {
                     blockType = target, upperBlock = upper,
-                    cframe = { px, sy, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
+                    cframe = { px, py, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
                     parts = {},
                 }
                 kept[target] = (kept[target] or 0) + 1
                 if doubled then
                     blocks[#blocks + 1] = {
                         blockType = target, upperBlock = true,
-                        cframe = { px, py + 0.75, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
+                        cframe = { px, py, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
                         parts = {},
                     }
                 end
@@ -12380,8 +12404,6 @@ BuilderAPI.convertSchematic = function(name, data, onProgress)
         if b.cframe[2] < mny then mny = b.cframe[2] end
         if b.cframe[3] < mnz then mnz = b.cframe[3] end
     end
-    -- anchor on the grid, not on a seated slab, or every block shifts by 0.75
-    mny = math.floor(mny / 3 + 0.5) * 3
     for i, b in ipairs(blocks) do
         b.cframe[1] = b.cframe[1] - mnx
         b.cframe[2] = b.cframe[2] - mny

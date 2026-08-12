@@ -13,7 +13,7 @@ from collections import Counter
 
 import nbtlib
 from anvil import unpack_states
-from blockmap import DROP, base_of, resolve, seat_slabs
+from blockmap import DROP, base_of, resolve
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -123,8 +123,6 @@ def main():
 
     os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
     out = os.path.join(ROOT, "builds", outname + ".json")
-    # slabs record their half by position, not by the flag alone
-    seat_slabs(blocks)
 
     with open(out, "w") as fh:
         json.dump({"blocks": blocks}, fh, separators=(",", ":"))
