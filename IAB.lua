@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 13:10"
+local IAB_BUILD = "Aug 14 15:00"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1828,49 +1828,24 @@ local function getCandidateFolders()
     return candidateFolders
 end
 
--- A block's model is not stored under its own name directly. There are two
--- layouts: blocks/<name>, which is the model, and Blocks/<name>/Root, where
--- the name is a container and Root is the model inside it. Handing back the
--- container is no use - it is not a part and not a model, so it cannot be
--- positioned - and that is what made the preview fall back to plain coloured
--- boxes for every block that lives in the second layout.
-local BLOCK_ALIASES = { dirt = "soil" }
-
-local function resolveBlockModel(name)
-    local want = BLOCK_ALIASES[name] or name
-
-    local lower = ReplicatedStorage:FindFirstChild("blocks")
-    local hit = lower and lower:FindFirstChild(want)
-    if hit then return hit end
-
-    local upper = ReplicatedStorage:FindFirstChild("Blocks")
-    local entry = upper and upper:FindFirstChild(want)
-    if entry then return entry:FindFirstChild("Root") or entry end
-
-    -- anything else that keeps blocks around, deep search as a last resort
-    for _, folder in ipairs(getCandidateFolders()) do
-        local found = folder:FindFirstChild(want)
-        if found then return found:FindFirstChild("Root") or found end
-    end
-    for _, folder in ipairs(getCandidateFolders()) do
-        local found = folder:FindFirstChild(want, true)
-        if found then return found end
-    end
-    return nil
-end
-
 local function getTemplate(blockType)
     if templateCache[blockType] ~= nil then
         return templateCache[blockType] or nil
     end
     local t = nil
-    pcall(function() t = resolveBlockModel(blockType) end)
-    -- Only remember a miss once the game has actually loaded its blocks;
-    -- caching nil during the first seconds of a session would keep every block
-    -- grey for the rest of it.
-    if t or #getCandidateFolders() > 0 then
-        templateCache[blockType] = t or false
-    end
+    pcall(function()
+        for _, folder in ipairs(getCandidateFolders()) do
+            local found = folder:FindFirstChild(blockType)
+            if found then t = found break end
+        end
+        if not t then
+            for _, folder in ipairs(getCandidateFolders()) do
+                local found = folder:FindFirstChild(blockType, true)
+                if found then t = found break end
+            end
+        end
+    end)
+    templateCache[blockType] = t or false
     return t
 end
 
@@ -1919,26 +1894,12 @@ end
 
 -- Show one half of a slab block and hide the other. `alpha` lets the preview
 -- keep its ghost transparency on the half that stays visible.
--- The colour the game itself uses for a block, when the colour index has been
--- built. colorForBlockType is a hash of the name - fine for telling blocks
--- apart, no relation to what they look like - so a stand-in drawn with it is
--- the grey box you see instead of a slab.
-local measuredCache = nil
-function measuredColour(blockType)
-    if measuredCache == nil then
-        measuredCache = (BuilderAPI.blockColours and BuilderAPI.blockColours()) or false
-    end
-    if not measuredCache then return nil end
-    local e = measuredCache[blockType]
-    return e and e.col or nil
-end
-
 -- Find the two mesh halves of a slab block.
 --
 -- A placed block names them 'top' and 'bottom' as direct children, but a
 -- template may wrap the block in a Model, and casing is not guaranteed. So
 -- search the whole clone case-insensitively rather than assuming the shape.
-function slabHalves(inst)
+local function slabHalves(inst)
     local top, bottom = nil, nil
     if inst:IsA("BasePart") then
         local n = string.lower(inst.Name)
@@ -2140,7 +2101,6 @@ local function previewBuild(blocks)
 
     local work = 0
     local slabSwapped, slabFellBack, slabStandIn = 0, 0, 0
-    local slabMissing = nil
     -- Two ghosts in one cell z-fight, which reads as a flickering block with
     -- something grey behind it. Count them rather than guess.
     local occupied, clashes, clashSample = {}, 0, nil
@@ -2207,77 +2167,7 @@ local function previewBuild(blocks)
         end
         local rendered = false
 
-        -- A slab block is one part holding both halves, and persuading a clone
-        -- of the whole thing to show the other half turned out to depend on
-        -- how each template is built. So take the half itself: the block keeps
-        -- its two halves as separate MeshParts, and one of those, cloned and
-        -- placed on its own, is the real slab with its real texture, in the
-        -- right half, with nothing to swap and nothing to go wrong.
-        -- Deliberately not gated on Use Real Models or Low-Lag. A slab drawn
-        -- as a plain box is the wrong shape in the wrong half, which is worse
-        -- than useless, so it always uses the real block when one exists.
-        if isSlab then
-            -- Draw the real slab, whatever shape the template turns out to be.
-            --
-            -- A placed block keeps its two halves as separate MeshParts, so if
-            -- they are there, clone the one wanted. A template often is not
-            -- built that way - it may just be the slab mesh on its own - so
-            -- fall back to cloning the whole thing. Either way, measure what
-            -- came out: something half a cell tall gets moved into the right
-            -- half, something a full cell tall is already whole and stays put.
-            -- The grey box is only for when there is no template at all.
-            local template = getTemplate(blockType)
-            if template then
-                local top, bottom = slabHalves(template)
-                local want = (upper and top or bottom) or template
-                local ok, piece = pcall(function() return want:Clone() end)
-                if ok and piece then
-                    ghostifyClone(piece, previewTransparency)
-                    -- it may have been the hidden half in the template, which
-                    -- ghostify leaves invisible
-                    if piece:IsA("BasePart") then
-                        piece.Transparency = previewTransparency
-                    else
-                        for _, d in ipairs(piece:GetDescendants()) do
-                            if d:IsA("BasePart") and d.Transparency >= 1 then
-                                d.Transparency = previewTransparency
-                            end
-                        end
-                    end
-                    piece.Name = blockType
-
-                    local height = previewBlockSize
-                    pcall(function()
-                        if piece:IsA("BasePart") then
-                            height = piece.Size.Y
-                        else
-                            local _, size = piece:GetBoundingBox()
-                            height = size.Y
-                        end
-                    end)
-                    local dy = 0
-                    if height <= previewBlockSize * 0.75 then
-                        dy = upper and 0.75 or -0.75
-                    end
-                    local place = cellCF + Vector3.new(0, dy, 0)
-                    if piece:IsA("BasePart") then
-                        piece.CFrame = place
-                    else
-                        pcall(function() piece:PivotTo(place) end)
-                    end
-
-                    tagGhost(piece, blockSrcKey(block), brushPreview)
-                    piece.Parent = model
-                    rendered = true
-                    slabSwapped = slabSwapped + 1
-                    work = work + 4
-                end
-            end
-            if not rendered then
-                slabFellBack = slabFellBack + 1
-                slabMissing = slabMissing or blockType
-            end
-        elseif previewRealModels and not previewMinimized and isModelType(blockType) then
+        if previewRealModels and not previewMinimized and isModelType(blockType) then
             local template = getTemplate(blockType)
             if template then
                 local ok, clone = pcall(function()
@@ -2291,10 +2181,36 @@ local function previewBuild(blocks)
                     elseif clone:IsA("BasePart") then
                         clone.CFrame = targetCF
                     end
-                    tagGhost(clone, blockSrcKey(block), brushPreview)
-                    clone.Parent = model
-                    rendered = true
-                    work = work + 8
+                    -- A slab block is one 3x3x3 part holding both halves as
+                    -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
+                    -- half you see is whichever is not transparent. The
+                    -- template shows its bottom, so a clone is always a bottom
+                    -- slab however the block was flagged - which is why every
+                    -- previewed slab looked low. Swap the halves instead of
+                    -- moving the part: the geometry is already in the right
+                    -- place, it is just the wrong half showing.
+                    local slabOk = true
+                    if isSlab then
+                        local ok2, res = pcall(function()
+                            return showSlabHalf(clone, upper, previewTransparency)
+                        end)
+                        slabOk = ok2 and res == true
+                        if slabOk then
+                            slabSwapped = slabSwapped + 1
+                        else
+                            slabFellBack = slabFellBack + 1
+                        end
+                    end
+                    if not slabOk then
+                        -- the template is not shaped like a placed block, so
+                        -- it cannot show one half; the stand-in below can
+                        pcall(function() clone:Destroy() end)
+                    else
+                        tagGhost(clone, blockSrcKey(block), brushPreview)
+                        clone.Parent = model
+                        rendered = true
+                        work = work + 8
+                    end
                 end
             end
         end
@@ -2332,7 +2248,7 @@ local function previewBuild(blocks)
                                         previewBlockSize - SHRINK)
                 part.CFrame = cellCF
             end
-            part.Color = measuredColour(blockType) or colorForBlockType(blockType)
+            part.Color = colorForBlockType(blockType)
             part:SetAttribute("GhostPreview", true)
             tagGhost(part, blockSrcKey(block), brushPreview)
             part.Parent = model
@@ -2369,11 +2285,6 @@ local function previewBuild(blocks)
             msg = ("%d slabs: %d real, %d stand-ins%s"):format(
                 total, slabSwapped, slabStandIn + slabFellBack,
                 slabFellBack > 0 and (" (" .. slabFellBack .. " had no halves)") or "")
-        end
-        if slabFellBack > 0 then
-            msg = msg .. ("\n%d slabs had no block to copy (first: %s), so they"
-                .. " are drawn as plain colour. Place one of that block once so"
-                .. " the game loads it."):format(slabFellBack, tostring(slabMissing))
         end
         if clashes > 0 then
             msg = msg .. ("\n%d blocks share a cell with another - that is the"
@@ -15020,9 +14931,22 @@ end
 -- Clone the real model for a block type, stripped of anything a viewport
 -- cannot use. Cached, because cloning per block would be brutal.
 local templateCache = {}
--- One resolver for both, so the preview and the thumbnail can never disagree
--- about where a block's model lives.
-local findBlockTemplate = resolveBlockModel
+-- Block names are not always what a build file calls them, and templates live
+-- in two places: blocks/<name> and Blocks/<name>/Root. Try both.
+local BLOCK_ALIASES = { dirt = "soil" }
+
+local function findBlockTemplate(name)
+    local want = BLOCK_ALIASES[name] or name
+    local lower = ReplicatedStorage:FindFirstChild("blocks")
+    local hit = lower and lower:FindFirstChild(want)
+    if hit then return hit end
+    local upper = ReplicatedStorage:FindFirstChild("Blocks")
+    local entry = upper and upper:FindFirstChild(want)
+    if entry then
+        return entry:FindFirstChild("Root") or entry
+    end
+    return nil
+end
 
 BuilderAPI.findBlockTemplate = findBlockTemplate
 
