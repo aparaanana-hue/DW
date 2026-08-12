@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 22:40"
+local IAB_BUILD = "Aug 13 09:15"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -3137,6 +3137,68 @@ auto:CreateButton({
             -- Two slabs in different halves save as identical data, so the
             -- thing that tells them apart is not the position, the rotation or
             -- the size. Dump everything the part carries and find it.
+            -- A slab block is one 3x3x3 part holding a 'bottom' and a 'top'
+            -- MeshPart. Both are always present, so which half you see is a
+            -- property of those children. Rather than dump everything again,
+            -- compare the two nearest slabs and print only what differs -
+            -- that difference is the thing the converter has to reproduce.
+            local PROPS = {
+                "Transparency", "LocalTransparencyModifier", "CanCollide",
+                "CanQuery", "CanTouch", "CastShadow", "Massless", "Anchored",
+                "Reflectance", "Material", "Color", "Size", "Name",
+                "MeshId", "TextureID", "MeshSize", "Archivable",
+            }
+            local function snapshot(part)
+                local out = {}
+                for _, d in ipairs(part:GetChildren()) do
+                    for _, prop in ipairs(PROPS) do
+                        local ok, v = pcall(function() return d[prop] end)
+                        if ok and v ~= nil then
+                            out[d.Name .. "." .. prop] = tostring(v)
+                        end
+                    end
+                    pcall(function()
+                        for k, v in pairs(d:GetAttributes()) do
+                            out[d.Name .. ".@" .. k] = tostring(v)
+                        end
+                    end)
+                    if d:IsA("BasePart") then
+                        local rel = part.CFrame:PointToObjectSpace(d.Position)
+                        out[d.Name .. ".relY"] = string.format("%.3f", rel.Y)
+                    end
+                end
+                for _, prop in ipairs(PROPS) do
+                    local ok, v = pcall(function() return part[prop] end)
+                    if ok and v ~= nil then out["SELF." .. prop] = tostring(v) end
+                end
+                return out
+            end
+
+            if #found >= 2 then
+                local a, b = snapshot(found[1]), snapshot(found[2])
+                local keys, seen = {}, {}
+                for k in pairs(a) do if not seen[k] then seen[k] = true keys[#keys+1] = k end end
+                for k in pairs(b) do if not seen[k] then seen[k] = true keys[#keys+1] = k end end
+                table.sort(keys)
+                local diffs = {}
+                for _, k in ipairs(keys) do
+                    if a[k] ~= b[k] then
+                        diffs[#diffs + 1] = ("   %-34s  slab1=%-22s slab2=%s")
+                            :format(k, tostring(a[k]), tostring(b[k]))
+                    end
+                end
+                local head = { "=== WHAT DIFFERS BETWEEN THE TWO NEAREST SLABS ===" }
+                if #diffs == 0 then
+                    head[#head + 1] = "   nothing - they are identical in every property checked"
+                else
+                    for _, d in ipairs(diffs) do head[#head + 1] = d end
+                end
+                head[#head + 1] = ""
+                local text = table.concat(head, "\n")
+                warn(text)
+                pcall(function() setclipboard(text) end)
+            end
+
             local lines = { "=== SLAB INSPECTION ===" }
             for i = 1, math.min(4, #found) do
                 local p = found[i]
@@ -3655,16 +3717,40 @@ function blockUnderCursor()
     return nil
 end
 
+-- Which half of its cell a slab block is showing.
+--
+-- An Islands slab is a 3x3x3 part holding two MeshParts, 'bottom' at -0.75 and
+-- 'top' at +0.75, each 3x1.5x3. Both are always there; the one you see is the
+-- one that is not hidden. So the half cannot be read from the part's own size
+-- or position - both halves of a slab block sit at the same place, which is
+-- why two slabs in different halves used to save as identical data.
+local function slabHalfOf(part)
+    local top = part:FindFirstChild("top")
+    local bottom = part:FindFirstChild("bottom")
+    if not (top and bottom) then return nil end
+    local function shown(d)
+        if not d:IsA("BasePart") then return false end
+        return d.Transparency < 0.5 and d.Size.Y > 0.01
+    end
+    local topOn, botOn = shown(top), shown(bottom)
+    if topOn and not botOn then return "top" end
+    if botOn and not topOn then return "bottom" end
+    if topOn and botOn then return "double" end
+    return nil
+end
+
 function partToBlockEntry(part)
     local cf = part.CFrame
     local p = cf.Position
     local r = cf.RightVector
     local u = cf.UpVector
+
+    -- The old test here was `part.Size.Y < 2.9`, which no Islands block ever
+    -- satisfies - every one of them is a 3x3x3 part - so upperBlock came back
+    -- false for every slab ever saved, and top slabs were quietly lost.
     local upper = false
-    if part.Size.Y < 2.9 then
-        local frac = p.Y - (math.floor(p.Y / 3 + 0.5) * 3)
-        if frac > 0.35 then upper = true end
-    end
+    local half = slabHalfOf(part)
+    if half == "top" then upper = true end
     return {
         blockType = part.Name,
         upperBlock = upper,
