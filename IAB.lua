@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 19:50"
+local IAB_BUILD = "Aug 13 21:15"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1894,6 +1894,20 @@ end
 
 -- Show one half of a slab block and hide the other. `alpha` lets the preview
 -- keep its ghost transparency on the half that stays visible.
+-- The colour the game itself uses for a block, when the colour index has been
+-- built. colorForBlockType is a hash of the name - fine for telling blocks
+-- apart, no relation to what they look like - so a stand-in drawn with it is
+-- the grey box you see instead of a slab.
+local measuredCache = nil
+function measuredColour(blockType)
+    if measuredCache == nil then
+        measuredCache = (BuilderAPI.blockColours and BuilderAPI.blockColours()) or false
+    end
+    if not measuredCache then return nil end
+    local e = measuredCache[blockType]
+    return e and e.col or nil
+end
+
 -- Find the two mesh halves of a slab block.
 --
 -- A placed block names them 'top' and 'bottom' as direct children, but a
@@ -2167,7 +2181,16 @@ local function previewBuild(blocks)
         end
         local rendered = false
 
-        if previewRealModels and not previewMinimized and isModelType(blockType) then
+        -- Slabs are always drawn as a half-height stand-in rather than as the
+        -- real block. The real block is one part holding both halves, and
+        -- getting a clone to show the other one depends on how the template
+        -- happens to be built - which is not something worth relying on when
+        -- the stand-in lands in the right half every time. Colour comes from
+        -- the game's own measurements, so it reads as the block rather than as
+        -- a grey box.
+        if isSlab then
+            -- fall through to the stand-in below
+        elseif previewRealModels and not previewMinimized and isModelType(blockType) then
             local template = getTemplate(blockType)
             if template then
                 local ok, clone = pcall(function()
@@ -2248,7 +2271,7 @@ local function previewBuild(blocks)
                                         previewBlockSize - SHRINK)
                 part.CFrame = cellCF
             end
-            part.Color = colorForBlockType(blockType)
+            part.Color = measuredColour(blockType) or colorForBlockType(blockType)
             part:SetAttribute("GhostPreview", true)
             tagGhost(part, blockSrcKey(block), brushPreview)
             part.Parent = model
