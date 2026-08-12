@@ -2225,14 +2225,6 @@ local function previewBuild(blocks)
                     elseif clone:IsA("BasePart") then
                         clone.CFrame = targetCF
                     end
-                    -- A slab block is one 3x3x3 part holding both halves as
-                    -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
-                    -- half you see is whichever is not transparent. The
-                    -- template shows its bottom, so a clone is always a bottom
-                    -- slab however the block was flagged - which is why every
-                    -- previewed slab looked low. Swap the halves instead of
-                    -- moving the part: the geometry is already in the right
-                    -- place, it is just the wrong half showing.
                     tagGhost(clone, blockSrcKey(block), brushPreview)
                     clone.Parent = model
                     rendered = true
