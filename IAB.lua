@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 11 19:40"
+local IAB_BUILD = "Aug 12 10:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -237,6 +237,7 @@ end
 local tabBuild    = main:CreateTab("Build", "layout-fluid")
 local tabGenerate = main:CreateTab("Generate", "star")
 local tabEdit     = main:CreateTab("Edit", "three-sliders-horizontal")
+local tabConvert  = main:CreateTab("Convert", "gear")
 
 -- Build: placing, previewing and saving a build file
 local auto        = tabBuild
@@ -288,6 +289,12 @@ end
 MODEL_DIR = "autoBuilder/models"
 if not isfolder(MODEL_DIR) then
     makefolder(MODEL_DIR)
+end
+
+-- Schematics dropped in here are converted on the Convert tab.
+CONVERT_DIR = "autoBuilder/converter"
+if not isfolder(CONVERT_DIR) then
+    makefolder(CONVERT_DIR)
 end
 
 local placeDelay = 0.03
@@ -8643,6 +8650,18 @@ local function ensureCache()
     return C.cache ~= nil and #C.cache > 0
 end
 
+-- The measured in-game colour of every placeable block, for anything that
+-- needs to reason about how blocks look rather than what they are called.
+-- Scans on first use, which takes a moment and only happens once.
+BuilderAPI.blockColours = function()
+    if not ensureCache() then return nil end
+    local out = {}
+    for _, e in ipairs(C.cache) do
+        out[e.name] = { col = e.col, L = e.L, a = e.a, b = e.b }
+    end
+    return out
+end
+
 -- ── nearest matches ────────────────────────────────────────────────────────
 local function nearestBlocks(col, n)
     if not ensureCache() then return {} end
@@ -11069,9 +11088,11 @@ local function parseHuffmanTables(bitStream)
     return decode(numLits + 257), decode(numDists + 1)
 end
 
-local function inflate(reader, out)
+-- `skipHeader` is for gzip, whose header the caller has already stepped over;
+-- a zlib stream still needs its two-byte header read off the front.
+local function inflate(reader, out, skipHeader)
     local bitStream = createBitStream(reader)
-    parseZlibHeader(bitStream)
+    if not skipHeader then parseZlibHeader(bitStream) end
     local window, pos = {}, 1
     -- Yield every so many bytes written. Without this the whole stream is
     -- decompressed in one uninterrupted go, and a megabyte-scale PNG - a
@@ -11478,6 +11499,745 @@ local function blockFor(r, g, b)
     local rec = best and { best.name, best.col } or { O.activeBlock, Color3.fromRGB(r, g, b) }
     IMG.match[k] = rec
     return rec[1], rec[2]
+end
+
+-- Generated from mcconvert/blockmap.py. Do not hand-edit: run
+-- mcconvert/export_blockmap.py to rebuild it when the table changes.
+MC_MAP = {
+    ["acacia_button"]="furnitureLampWall", ["acacia_door"]="doorPine2", ["acacia_fence"]="fenceMaple",
+    ["acacia_fence_gate"]="fenceMaple", ["acacia_hanging_sign"]="mapleSlab", ["acacia_leaves"]="leavesMapleBlock",
+    ["acacia_log"]="woodMaple", ["acacia_planks"]="maplePlank", ["acacia_pressure_plate"]="mapleSlab",
+    ["acacia_sapling"]="saplingMaple", ["acacia_sign"]="signPostMaple", ["acacia_slab"]="mapleSlab",
+    ["acacia_stairs"]="stairMaple", ["acacia_trapdoor"]="trapDoorMapleFlipped",
+    ["acacia_wall_hanging_sign"]="mapleSlab", ["acacia_wall_sign"]="signPostMaple", ["acacia_wood"]="woodMaple",
+    ["allium"]="tallGrass", ["amethyst_block"]="amethystBlock", ["ancient_debris"]="basaltCarved",
+    ["andesite"]="andesite", ["andesite_slab"]="andesiteBrickSlab", ["andesite_stairs"]="andesiteBrickStair",
+    ["andesite_wall"]="andesite", ["anvil"]="ironBlock", ["azalea"]="leavesBlock", ["azalea_leaves"]="leavesBlock",
+    ["azure_bluet"]="tallGrass", ["bamboo"]="bambooBlock", ["bamboo_block"]="bambooBlock",
+    ["bamboo_button"]="furnitureLampWall", ["bamboo_door"]="doorPine2", ["bamboo_fence"]="fenceMaple",
+    ["bamboo_fence_gate"]="fenceMaple", ["bamboo_hanging_sign"]="bambooDriedBlock",
+    ["bamboo_mosaic"]="bambooDriedBlock", ["bamboo_mosaic_slab"]="bambooDriedBlock",
+    ["bamboo_mosaic_stairs"]="bambooDriedBlock", ["bamboo_planks"]="bambooBlock",
+    ["bamboo_pressure_plate"]="trapDoorMapleFlipped", ["bamboo_sapling"]="saplingMaple",
+    ["bamboo_shelf"]="bambooDriedBlock", ["bamboo_sign"]="signPostMaple", ["bamboo_slab"]="bambooDriedBlock",
+    ["bamboo_stairs"]="bambooDriedBlock", ["bamboo_trapdoor"]="trapDoorMapleFlipped",
+    ["bamboo_wall_sign"]="signPostMaple", ["barrel"]="pinePlank", ["barrel_open"]="pinePlank", ["basalt"]="basalt",
+    ["beacon"]="glassBlockChrome", ["bed"]="woolRed", ["bee_nest"]="honeycombBlock", ["beehive"]="honeycombBlock",
+    ["bell"]="goldBlock", ["big_dripleaf"]="leavesBlock", ["big_dripleaf_stem"]="tallGrass",
+    ["birch_button"]="furnitureLampWall", ["birch_door"]="doorPine2", ["birch_fence"]="fenceBirch",
+    ["birch_fence_gate"]="fenceBirch", ["birch_hanging_sign"]="birchSlab", ["birch_leaves"]="leavesBlock",
+    ["birch_log"]="woodBirch", ["birch_planks"]="birchPlank", ["birch_pressure_plate"]="birchSlab",
+    ["birch_sapling"]="saplingBirch", ["birch_shelf"]="birchSlab", ["birch_sign"]="signPostBirch",
+    ["birch_slab"]="birchSlab", ["birch_stairs"]="stairBirch", ["birch_trapdoor"]="trapDoorBirchFlipped",
+    ["birch_wall_hanging_sign"]="birchSlab", ["birch_wall_sign"]="signPostBirch", ["birch_wood"]="woodBirch",
+    ["black_banner"]="woolBlack", ["black_bed"]="woolBlack", ["black_candle"]="clayBlack",
+    ["black_carpet"]="carpetBlack", ["black_concrete"]="blackBlock", ["black_concrete_powder"]="clayBlack",
+    ["black_glazed_terracotta"]="clayBlack", ["black_shulker_box"]="clayBlack",
+    ["black_stained_glass"]="glassBlockBlack", ["black_stained_glass_pane"]="glassPaneBlack",
+    ["black_terracotta"]="clayBlack", ["black_wall_banner"]="woolBlack", ["black_wool"]="woolBlack",
+    ["blackstone"]="basalt", ["blackstone_slab"]="basaltSlab", ["blackstone_stairs"]="basaltStair",
+    ["blackstone_wall"]="basalt", ["blast_furnace"]="ironBlock", ["blue_banner"]="woolBlue", ["blue_bed"]="woolBlue",
+    ["blue_candle"]="clayBlue", ["blue_carpet"]="carpetBlue", ["blue_concrete"]="blueBlock",
+    ["blue_concrete_powder"]="pastelBlueBlock", ["blue_glazed_terracotta"]="clayBlue", ["blue_ice"]="iceCompact",
+    ["blue_orchid"]="tallGrass", ["blue_shulker_box"]="clayBlue", ["blue_stained_glass"]="glassBlockBlue",
+    ["blue_stained_glass_pane"]="glassPaneBlue", ["blue_terracotta"]="clayBlue", ["blue_wall_banner"]="woolBlue",
+    ["blue_wool"]="woolBlue", ["bone_block"]="boneBlock", ["bookshelf"]="hickoryPlank",
+    ["brain_coral_block"]="coralBlockPink", ["brain_coral_fan"]="coralBlockPink", ["brewing_stand"]="ironBlock",
+    ["brick_slab"]="brickSlab", ["brick_stairs"]="stairBrick", ["brick_wall"]="brick", ["bricks"]="brick",
+    ["brown_banner"]="clayOrange", ["brown_bed"]="clayOrange", ["brown_candle"]="clayOrange",
+    ["brown_carpet"]="carpetOrange", ["brown_concrete"]="clayOrange", ["brown_concrete_powder"]="pastelOrangeBlock",
+    ["brown_glazed_terracotta"]="clayOrange", ["brown_mushroom"]="tallGrass",
+    ["brown_mushroom_block"]="mushroomBlock", ["brown_shulker_box"]="clayOrange",
+    ["brown_stained_glass"]="glassBlockOrange", ["brown_stained_glass_pane"]="glassPaneOrange",
+    ["brown_terracotta"]="clayOrange", ["brown_wall_banner"]="clayOrange", ["brown_wool"]="clayOrange",
+    ["bubble_coral_block"]="coralBlockBlue", ["bubble_coral_fan"]="coralBlockBlue",
+    ["budding_amethyst"]="amethystBlock", ["cake"]="woolWhite", ["calcite"]="pearlBlock",
+    ["calibrated_sculk_sensor"]="voidStoneCarved", ["campfire"]="magmaBlock", ["candle"]="clayWhite",
+    ["cartography_table"]="woodPlank", ["carved_pumpkin"]="jackOLantern", ["cauldron"]="ironBlock",
+    ["chain"]="ironBlock", ["cherry_button"]="furnitureLampWall", ["cherry_door"]="doorPine2",
+    ["cherry_fence"]="fenceCherryBlossom", ["cherry_fence_gate"]="fenceCherryBlossom",
+    ["cherry_hanging_sign"]="cherryBlossomSlab", ["cherry_leaves"]="leavesBlock", ["cherry_log"]="woodCherryBlossom",
+    ["cherry_planks"]="cherryBlossomPlank", ["cherry_pressure_plate"]="cherryBlossomSlab",
+    ["cherry_sapling"]="saplingCherryBlossom", ["cherry_sign"]="signPostCherryBlossom",
+    ["cherry_slab"]="cherryBlossomSlab", ["cherry_stairs"]="stairCherryBlossom",
+    ["cherry_trapdoor"]="trapDoorMapleFlipped", ["cherry_wall_sign"]="signPostCherryBlossom",
+    ["cherry_wood"]="woodCherryBlossom", ["chest"]="woodPlank", ["chipped_anvil"]="ironBlock",
+    ["chiseled_bookshelf"]="hickoryPlank", ["chiseled_copper"]="copperBlock", ["chiseled_deepslate"]="slateCarved",
+    ["chiseled_nether_bricks"]="basaltCarved", ["chiseled_polished_blackstone"]="basaltCarved",
+    ["chiseled_quartz_block"]="marbleCarved", ["chiseled_red_sandstone"]="sandstoneRedBrick",
+    ["chiseled_red_sandstone_slab"]="sandstoneRedBrickSlab", ["chiseled_resin_bricks"]="sandstoneSmoothRedBrick",
+    ["chiseled_sandstone"]="sandstoneBrick", ["chiseled_stone_bricks"]="stoneCarved",
+    ["chiseled_tuff"]="andesiteCarved", ["chiseled_tuff_bricks"]="andesiteCarved", ["clay"]="clay",
+    ["coal_block"]="coalBlock", ["coal_ore"]="coalBlock", ["coarse_dirt"]="mudBlock",
+    ["cobbled_deepslate"]="slateBlock", ["cobbled_deepslate_slab"]="slateSlab",
+    ["cobbled_deepslate_stairs"]="stairSlate", ["cobbled_deepslate_wall"]="slateBlock",
+    ["cobblestone"]="cobblestoneBlock", ["cobblestone_slab"]="cobblestoneSlab",
+    ["cobblestone_stairs"]="cobblestoneStair", ["cobblestone_wall"]="cobblestoneBlock", ["cobweb"]="woolWhite",
+    ["cocoa"]="clayOrange", ["command_block"]="stoneSmooth", ["comparator"]="stoneSmooth", ["composter"]="woodPlank",
+    ["conduit"]="prismarineBrick", ["copper_block"]="copperBlock", ["copper_bulb"]="ledLight",
+    ["copper_chain"]="copperBlock", ["copper_door"]="doorIron", ["copper_grate"]="copperBlock",
+    ["copper_trapdoor"]="trapDoorIronFlipped", ["cornflower"]="tallGrass", ["cracked_deepslate_bricks"]="slateBrick",
+    ["cracked_deepslate_tiles"]="slateTiles", ["cracked_nether_bricks"]="basaltTiles",
+    ["cracked_polished_blackstone_bricks"]="basaltBrick", ["cracked_stone_bricks"]="stoneBrick",
+    ["crafter"]="hickoryPlank", ["crafting_table"]="workbench4", ["creaking_heart"]="woodBirch",
+    ["creeper_head"]="clayLightGreen", ["crimson_button"]="furnitureLampWall", ["crimson_door"]="doorPine2",
+    ["crimson_fence"]="fenceCherryBlossom", ["crimson_fence_gate"]="fenceCherryBlossom",
+    ["crimson_fungus"]="saplingCherryBlossom", ["crimson_hanging_sign"]="cherryBlossomSlab",
+    ["crimson_hyphae"]="woodCherryBlossom", ["crimson_nylium"]="glowingMushroomPinkBlock",
+    ["crimson_planks"]="cherryBlossomPlank", ["crimson_pressure_plate"]="cherryBlossomSlab",
+    ["crimson_sign"]="signPostCherryBlossom", ["crimson_slab"]="cherryBlossomSlab",
+    ["crimson_stairs"]="stairCherryBlossom", ["crimson_stem"]="woodCherryBlossom",
+    ["crimson_trapdoor"]="trapDoorMapleFlipped", ["crimson_wall_sign"]="signPostCherryBlossom",
+    ["crying_obsidian"]="voidStonePolished", ["cut_copper"]="copperBlock", ["cut_copper_slab"]="copperBlock",
+    ["cut_copper_stairs"]="copperBlock", ["cut_red_sandstone"]="sandstoneRedBrick",
+    ["cut_sandstone"]="sandstoneBrick", ["cut_sandstone_slab"]="sandstoneBrickSlab", ["cyan_banner"]="woolCyan",
+    ["cyan_bed"]="woolCyan", ["cyan_candle"]="clayCyan", ["cyan_carpet"]="carpetCyan", ["cyan_concrete"]="cyanBlock",
+    ["cyan_concrete_powder"]="pastelBlueBlock", ["cyan_glazed_terracotta"]="clayCyan",
+    ["cyan_shulker_box"]="clayCyan", ["cyan_stained_glass"]="glassBlockCyan",
+    ["cyan_stained_glass_pane"]="glassPaneCyan", ["cyan_terracotta"]="clayCyan", ["cyan_wall_banner"]="woolCyan",
+    ["cyan_wool"]="woolCyan", ["damaged_anvil"]="ironBlock", ["dandelion"]="tallGrass",
+    ["dark_oak_button"]="furnitureLampWall", ["dark_oak_door"]="doorPine2", ["dark_oak_fence"]="fenceHickory",
+    ["dark_oak_fence_gate"]="fenceHickory", ["dark_oak_hanging_sign"]="hickorySlab",
+    ["dark_oak_leaves"]="leavesBlock", ["dark_oak_log"]="woodHickory", ["dark_oak_planks"]="hickoryPlank",
+    ["dark_oak_pressure_plate"]="hickorySlab", ["dark_oak_sapling"]="saplingHickory",
+    ["dark_oak_shelf"]="hickorySlab", ["dark_oak_sign"]="signPostHickory", ["dark_oak_slab"]="hickorySlab",
+    ["dark_oak_stairs"]="stairHickory", ["dark_oak_trapdoor"]="trapDoorHickoryFlipped",
+    ["dark_oak_wall_hanging_sign"]="hickorySlab", ["dark_oak_wall_sign"]="signPostHickory",
+    ["dark_oak_wood"]="woodHickory", ["dark_prismarine"]="prismarineBrick",
+    ["dark_prismarine_slab"]="prismarineBrickSlab", ["dark_prismarine_stairs"]="prismarineBrickStair",
+    ["daylight_detector"]="hickorySlab", ["dead_brain_coral"]="clayWhite", ["dead_brain_coral_block"]="clayWhite",
+    ["dead_brain_coral_fan"]="clayWhite", ["dead_brain_coral_wall_fan"]="clayWhite",
+    ["dead_bubble_coral"]="clayWhite", ["dead_bubble_coral_block"]="clayWhite", ["dead_bubble_coral_fan"]="clayWhite",
+    ["dead_bubble_coral_wall_fan"]="clayWhite", ["dead_bush"]="saplingHickory", ["dead_fire_coral"]="clayWhite",
+    ["dead_fire_coral_block"]="clayWhite", ["dead_fire_coral_fan"]="clayWhite",
+    ["dead_fire_coral_wall_fan"]="clayWhite", ["dead_horn_coral"]="clayWhite", ["dead_horn_coral_block"]="clayWhite",
+    ["dead_horn_coral_fan"]="clayWhite", ["dead_horn_coral_wall_fan"]="clayWhite", ["dead_tube_coral"]="clayWhite",
+    ["dead_tube_coral_block"]="clayWhite", ["dead_tube_coral_fan"]="clayWhite",
+    ["dead_tube_coral_wall_fan"]="clayWhite", ["decorated_pot"]="clayOrange", ["deepslate"]="slateBlock",
+    ["deepslate_brick_slab"]="slateBrickSlab", ["deepslate_brick_stairs"]="stairSlateBrick",
+    ["deepslate_brick_wall"]="slateBrick", ["deepslate_bricks"]="slateBrick", ["deepslate_coal_ore"]="coalBlock",
+    ["deepslate_copper_ore"]="copperBlock", ["deepslate_diamond_ore"]="diamondBlock",
+    ["deepslate_emerald_ore"]="slimeBlockGreen", ["deepslate_gold_ore"]="goldBlock",
+    ["deepslate_iron_ore"]="ironBlock", ["deepslate_lapis_ore"]="buffalkorCrystalBlock",
+    ["deepslate_redstone_ore"]="rubyBlock", ["deepslate_tile_slab"]="slateSlab",
+    ["deepslate_tile_stairs"]="stairSlate", ["deepslate_tile_wall"]="slateTiles", ["deepslate_tiles"]="slateTiles",
+    ["diamond_block"]="diamondBlock", ["diamond_ore"]="diamondBlock", ["diorite"]="diorite",
+    ["diorite_slab"]="dioriteSlab", ["diorite_stairs"]="dioriteStair", ["diorite_wall"]="diorite",
+    ["dirt"]="mudBlock", ["dirt_path"]="grassDry", ["dispenser"]="cobblestoneBlock", ["dragon_egg"]="voidStoneBlock",
+    ["dragon_head"]="clayBlack", ["dried_ghast"]="boneBlock", ["dried_kelp_block"]="clayDarkGreen",
+    ["dripstone_block"]="sandstoneSmooth", ["dropper"]="cobblestoneBlock", ["emerald_block"]="slimeBlockGreen",
+    ["emerald_ore"]="amethystBlock", ["enchanting_table"]="voidStoneBlock", ["end_portal_frame"]="voidStoneCarved",
+    ["end_rod"]="ledLight", ["end_stone"]="sandstoneSmooth", ["end_stone_brick_slab"]="sandstoneSmoothBrickSlab",
+    ["end_stone_brick_stairs"]="stairSandstoneSmoothBrick", ["end_stone_brick_wall"]="sandstoneSmoothBrick",
+    ["end_stone_bricks"]="sandstoneSmoothBrick", ["ender_chest"]="voidStoneBlock",
+    ["exposed_chiseled_copper"]="copperBlock", ["exposed_copper"]="copperBlock",
+    ["exposed_copper_chain"]="copperBlock", ["exposed_copper_trapdoor"]="trapDoorIronFlipped",
+    ["exposed_cut_copper"]="copperBlock", ["exposed_cut_copper_slab"]="copperBlock",
+    ["exposed_cut_copper_stairs"]="copperBlock", ["farmland"]="soil", ["fern"]="tallGrass",
+    ["fire_coral_block"]="coralBlockPink", ["fire_coral_fan"]="coralBlockPink", ["fletching_table"]="woodPlank",
+    ["flower_pot"]="clayOrange", ["flowering_azalea"]="leavesBlock", ["flowering_azalea_leaves"]="leavesBlock",
+    ["furnace"]="stoneTiles", ["gilded_blackstone"]="basaltBrick", ["glass"]="glassBlock", ["glass_pane"]="glassPane",
+    ["glow_lichen"]="mossyBlock", ["glowstone"]="ledLight", ["gold_block"]="goldBlock", ["gold_ore"]="goldBlock",
+    ["granite"]="granite", ["granite_slab"]="graniteSlab", ["granite_stairs"]="graniteStair",
+    ["granite_wall"]="granite", ["grass"]="tallGrass", ["grass_block"]="grass", ["grass_path"]="grassDry",
+    ["gravel"]="cobblestoneBlock", ["gray_banner"]="clayBlack", ["gray_bed"]="clayBlack", ["gray_candle"]="clayBlack",
+    ["gray_carpet"]="carpetBlack", ["gray_concrete"]="slateSmooth", ["gray_concrete_powder"]="clayBlack",
+    ["gray_glazed_terracotta"]="clayBlack", ["gray_shulker_box"]="clayBlack",
+    ["gray_stained_glass"]="glassBlockBlack", ["gray_stained_glass_pane"]="glassPaneBlack",
+    ["gray_terracotta"]="clayBlack", ["gray_wall_banner"]="clayBlack", ["gray_wool"]="clayBlack",
+    ["green_banner"]="woolDarkGreen", ["green_bed"]="woolDarkGreen", ["green_candle"]="clayDarkGreen",
+    ["green_carpet"]="carpetDarkGreen", ["green_concrete"]="darkGreenBlock",
+    ["green_concrete_powder"]="pastelGreenBlock", ["green_glazed_terracotta"]="clayDarkGreen",
+    ["green_shulker_box"]="clayDarkGreen", ["green_stained_glass"]="glassBlockDarkGreen",
+    ["green_stained_glass_pane"]="glassPaneDarkGreen", ["green_terracotta"]="clayDarkGreen",
+    ["green_wall_banner"]="woolDarkGreen", ["green_wool"]="woolDarkGreen", ["grindstone"]="woodPlank",
+    ["hay_block"]="haybaleBlock", ["heavy_core"]="basaltCarved", ["heavy_weighted_pressure_plate"]="ironBlock",
+    ["honey_block"]="honeyBlock", ["honeycomb_block"]="honeycombBlock", ["hopper"]="ironBlock",
+    ["horn_coral_block"]="coralBlockYellow", ["horn_coral_fan"]="coralBlockYellow", ["ice"]="ice",
+    ["infested_cobblestone"]="cobblestoneBlock", ["infested_deepslate"]="slateBlock",
+    ["infested_mossy_stone_bricks"]="stoneBrickMossy", ["infested_stone_bricks"]="stoneBrick",
+    ["iron_bars"]="ironBlock", ["iron_block"]="ironBlock", ["iron_chain"]="ironBlock", ["iron_door"]="doorIron",
+    ["iron_ore"]="ironBlock", ["iron_trapdoor"]="trapDoorIronFlipped", ["item_frame"]="woodPlank",
+    ["jack_o_lantern"]="jackOLantern", ["jukebox"]="hickoryPlank", ["jungle_button"]="furnitureLampWall",
+    ["jungle_door"]="doorPine2", ["jungle_fence"]="fenceMaple", ["jungle_fence_gate"]="fenceMaple",
+    ["jungle_hanging_sign"]="mapleSlab", ["jungle_leaves"]="leavesMapleBlock", ["jungle_log"]="woodMaple",
+    ["jungle_planks"]="maplePlank", ["jungle_pressure_plate"]="mapleSlab", ["jungle_sapling"]="saplingMaple",
+    ["jungle_sign"]="signPostMaple", ["jungle_slab"]="mapleSlab", ["jungle_stairs"]="stairMaple",
+    ["jungle_trapdoor"]="trapDoorMapleFlipped", ["jungle_wall_hanging_sign"]="mapleSlab",
+    ["jungle_wall_sign"]="signPostMaple", ["jungle_wood"]="woodMaple", ["kelp"]="tallGrass",
+    ["kelp_plant"]="tallGrass", ["ladder"]="oakSlab", ["lantern"]="furnitureLampWall",
+    ["lapis_block"]="buffalkorCrystalBlock", ["lapis_ore"]="blueBlock", ["large_fern"]="tallGrass",
+    ["lava_cauldron"]="ironBlock", ["lectern"]="woodPlank", ["lever"]="oakSlab", ["light_blue_banner"]="woolCyan",
+    ["light_blue_bed"]="woolCyan", ["light_blue_candle"]="clayCyan", ["light_blue_carpet"]="carpetCyan",
+    ["light_blue_concrete"]="cyanBlock", ["light_blue_concrete_powder"]="pastelBlueBlock",
+    ["light_blue_glazed_terracotta"]="clayCyan", ["light_blue_shulker_box"]="clayCyan",
+    ["light_blue_stained_glass"]="glassBlockCyan", ["light_blue_stained_glass_pane"]="glassPaneCyan",
+    ["light_blue_terracotta"]="clayCyan", ["light_blue_wall_banner"]="woolCyan", ["light_blue_wool"]="woolCyan",
+    ["light_gray_banner"]="clayWhite", ["light_gray_bed"]="clayWhite", ["light_gray_candle"]="clayWhite",
+    ["light_gray_carpet"]="carpet", ["light_gray_concrete"]="marbleSmooth",
+    ["light_gray_concrete_powder"]="clayWhite", ["light_gray_glazed_terracotta"]="clayWhite",
+    ["light_gray_shulker_box"]="clayWhite", ["light_gray_stained_glass"]="glassBlockChrome",
+    ["light_gray_stained_glass_pane"]="glassPane", ["light_gray_terracotta"]="clayWhite",
+    ["light_gray_wall_banner"]="clayWhite", ["light_gray_wool"]="clayWhite", ["lightning_rod"]="copperBlock",
+    ["lilac"]="tallGrass", ["lily_of_the_valley"]="tallGrass", ["lily_pad"]="carpetDarkGreen",
+    ["lime_banner"]="woolLightGreen", ["lime_bed"]="woolLightGreen", ["lime_candle"]="clayLightGreen",
+    ["lime_carpet"]="carpetLightGreen", ["lime_concrete"]="lightGreenBlock",
+    ["lime_concrete_powder"]="pastelGreenBlock", ["lime_glazed_terracotta"]="clayLightGreen",
+    ["lime_shulker_box"]="clayLightGreen", ["lime_stained_glass"]="glassBlockLightGreen",
+    ["lime_stained_glass_pane"]="glassPaneLightGreen", ["lime_terracotta"]="clayLightGreen",
+    ["lime_wall_banner"]="woolLightGreen", ["lime_wool"]="woolLightGreen", ["lodestone"]="stoneSmooth",
+    ["loom"]="woodPlank", ["magenta_banner"]="woolPink", ["magenta_bed"]="woolPink", ["magenta_candle"]="clayPink",
+    ["magenta_carpet"]="carpetPink", ["magenta_concrete"]="pinkBlock",
+    ["magenta_concrete_powder"]="pastelPurpleBlock", ["magenta_glazed_terracotta"]="clayPink",
+    ["magenta_shulker_box"]="clayPink", ["magenta_stained_glass"]="glassBlockPink",
+    ["magenta_stained_glass_pane"]="glassPanePink", ["magenta_terracotta"]="clayPink",
+    ["magenta_wall_banner"]="woolPink", ["magenta_wool"]="woolPink", ["magma_block"]="magmaBlock",
+    ["mangrove_button"]="furnitureLampWall", ["mangrove_door"]="doorPine2", ["mangrove_fence"]="fenceCherryBlossom",
+    ["mangrove_fence_gate"]="fenceCherryBlossom", ["mangrove_hanging_sign"]="cherryBlossomSlab",
+    ["mangrove_leaves"]="leavesBlock", ["mangrove_log"]="woodCherryBlossom", ["mangrove_planks"]="cherryBlossomPlank",
+    ["mangrove_pressure_plate"]="cherryBlossomSlab", ["mangrove_roots"]="woodCherryBlossom",
+    ["mangrove_sapling"]="saplingCherryBlossom", ["mangrove_sign"]="signPostCherryBlossom",
+    ["mangrove_slab"]="cherryBlossomSlab", ["mangrove_stairs"]="stairCherryBlossom",
+    ["mangrove_trapdoor"]="trapDoorMapleFlipped", ["mangrove_wall_sign"]="signPostCherryBlossom",
+    ["mangrove_wood"]="woodCherryBlossom", ["melon"]="melonHarvested", ["moss_block"]="mossyBlock",
+    ["moss_carpet"]="carpetDarkGreen", ["mossy_cobblestone"]="mossyCobblestoneBlock",
+    ["mossy_cobblestone_slab"]="mossyCobblestoneSlab", ["mossy_cobblestone_stairs"]="cobblestoneStair",
+    ["mossy_cobblestone_wall"]="mossyCobblestoneBlock", ["mossy_stone_brick_slab"]="stoneBrickSlab",
+    ["mossy_stone_brick_stairs"]="stairStoneBrick", ["mossy_stone_brick_wall"]="stoneBrickMossy",
+    ["mossy_stone_bricks"]="stoneBrickMossy", ["moving_piston"]="ironBlock", ["mud"]="mudBlock",
+    ["mud_brick_slab"]="mudBlock", ["mud_brick_stairs"]="mudBlock", ["mud_brick_wall"]="mudBlock",
+    ["mud_bricks"]="mudBlock", ["mud_bricks_wall"]="mudBlock", ["muddy_mangrove_roots"]="mudBlock",
+    ["mushroom_stem"]="mushroomBlock", ["nether_brick_fence"]="fenceHickory", ["nether_brick_slab"]="basaltSlab",
+    ["nether_brick_stairs"]="basaltStair", ["nether_brick_wall"]="basaltTiles", ["nether_bricks"]="basaltTiles",
+    ["nether_gold_ore"]="goldBlock", ["nether_portal"]="voidBlock", ["nether_quartz_ore"]="marbleBlock",
+    ["nether_wart_block"]="glowingMushroomPinkBlock", ["netherite_block"]="basaltCarved", ["netherrack"]="magmaBlock",
+    ["note_block"]="woodPlank", ["oak_button"]="furnitureLampWall", ["oak_door"]="doorPine",
+    ["oak_fence"]="woodFence", ["oak_fence_gate"]="woodFence", ["oak_hanging_sign"]="oakSlab",
+    ["oak_leaves"]="leavesBlock", ["oak_log"]="wood", ["oak_planks"]="woodPlank", ["oak_pressure_plate"]="oakSlab",
+    ["oak_sapling"]="sapling", ["oak_shelf"]="oakSlab", ["oak_sign"]="signPostOak", ["oak_slab"]="oakSlab",
+    ["oak_stairs"]="stairOak", ["oak_trapdoor"]="trapDoorOakFlipped", ["oak_wall_hanging_sign"]="oakSlab",
+    ["oak_wall_sign"]="signPostOak", ["oak_wood"]="wood", ["observer"]="slateSmooth", ["obsidian"]="voidStoneBlock",
+    ["ochre_froglight"]="glowingMushroomGreenBlock", ["orange_banner"]="woolOrange", ["orange_bed"]="woolOrange",
+    ["orange_candle"]="clayOrange", ["orange_carpet"]="carpetOrange", ["orange_concrete"]="orangeBlock",
+    ["orange_concrete_powder"]="pastelOrangeBlock", ["orange_glazed_terracotta"]="clayOrange",
+    ["orange_shulker_box"]="clayOrange", ["orange_stained_glass"]="glassBlockOrange",
+    ["orange_stained_glass_pane"]="glassPaneOrange", ["orange_terracotta"]="clayOrange",
+    ["orange_wall_banner"]="woolOrange", ["orange_wool"]="woolOrange", ["oxeye_daisy"]="tallGrass",
+    ["oxidized_chiseled_copper"]="prismarineBlock", ["oxidized_copper"]="prismarineBlock",
+    ["oxidized_copper_chain"]="prismarineBlock", ["oxidized_copper_trapdoor"]="trapDoorIronFlipped",
+    ["oxidized_cut_copper"]="prismarineBlock", ["oxidized_cut_copper_slab"]="prismarineSlab",
+    ["oxidized_cut_copper_stairs"]="prismarineStair", ["packed_ice"]="iceCompact", ["packed_mud"]="mudBlock",
+    ["painting"]="woodPlank", ["pale_hanging_moss"]="mossyBlock", ["pale_moss_block"]="mossyBlock",
+    ["pale_moss_carpet"]="carpetLightGreen", ["pale_oak_button"]="furnitureLampWall", ["pale_oak_door"]="doorPine2",
+    ["pale_oak_fence"]="fenceBirch", ["pale_oak_fence_gate"]="fenceBirch", ["pale_oak_hanging_sign"]="birchSlab",
+    ["pale_oak_leaves"]="leavesBlock", ["pale_oak_log"]="woodBirch", ["pale_oak_planks"]="birchPlank",
+    ["pale_oak_pressure_plate"]="birchSlab", ["pale_oak_sapling"]="saplingBirch", ["pale_oak_shelf"]="birchSlab",
+    ["pale_oak_sign"]="signPostBirch", ["pale_oak_slab"]="birchSlab", ["pale_oak_stairs"]="stairBirch",
+    ["pale_oak_trapdoor"]="trapDoorBirchFlipped", ["pale_oak_wall_sign"]="signPostBirch",
+    ["pale_oak_wood"]="woodBirch", ["pearlescent_froglight"]="ledLight", ["peony"]="tallGrass",
+    ["petrified_oak_slab"]="oakSlab", ["pink_banner"]="woolPink", ["pink_bed"]="woolPink", ["pink_candle"]="clayPink",
+    ["pink_carpet"]="carpetPink", ["pink_concrete"]="pinkBlock", ["pink_concrete_powder"]="pastelPinkBlock",
+    ["pink_glazed_terracotta"]="clayPink", ["pink_shulker_box"]="clayPink", ["pink_stained_glass"]="glassBlockPink",
+    ["pink_stained_glass_pane"]="glassPanePink", ["pink_terracotta"]="clayPink", ["pink_wall_banner"]="woolPink",
+    ["pink_wool"]="woolPink", ["piston"]="ironBlock", ["piston_head"]="hickoryPlank", ["player_head"]="boneBlock",
+    ["player_wall_head"]="boneBlock", ["podzol"]="mudBlock", ["polished_andesite"]="andesiteSmooth",
+    ["polished_andesite_slab"]="andesiteSlab", ["polished_andesite_stairs"]="andesiteStair",
+    ["polished_basalt"]="basaltSmooth", ["polished_blackstone"]="basaltSmooth",
+    ["polished_blackstone_brick_slab"]="basaltBrickSlab", ["polished_blackstone_brick_stairs"]="basaltBrickStair",
+    ["polished_blackstone_brick_wall"]="basaltBrick", ["polished_blackstone_bricks"]="basaltBrick",
+    ["polished_blackstone_button"]="furnitureLampWall", ["polished_blackstone_pressure_plate"]="basaltSlab",
+    ["polished_blackstone_slab"]="basaltBrickSlab", ["polished_blackstone_stairs"]="basaltBrickStair",
+    ["polished_blackstone_wall"]="basaltBrick", ["polished_deepslate"]="slateSmooth",
+    ["polished_deepslate_slab"]="slateSlab", ["polished_deepslate_stairs"]="stairSlate",
+    ["polished_deepslate_wall"]="slateSmooth", ["polished_diorite"]="dioriteSmooth",
+    ["polished_diorite_slab"]="dioriteSlab", ["polished_diorite_stairs"]="dioriteStair",
+    ["polished_granite"]="graniteSmooth", ["polished_granite_slab"]="graniteSlab",
+    ["polished_granite_stairs"]="graniteStair", ["polished_tuff"]="andesiteSmooth",
+    ["polished_tuff_slab"]="andesiteSlab", ["polished_tuff_stairs"]="andesiteStair",
+    ["polished_tuff_wall"]="andesiteSmooth", ["poppy"]="tallGrass", ["powder_snow_cauldron"]="ironBlock",
+    ["prismarine"]="prismarineBlock", ["prismarine_brick_slab"]="prismarineBrickSlab",
+    ["prismarine_brick_stairs"]="prismarineBrickStair", ["prismarine_bricks"]="prismarineBrick",
+    ["prismarine_slab"]="prismarineSlab", ["prismarine_stairs"]="prismarineStair",
+    ["prismarine_wall"]="prismarineBlock", ["pumpkin"]="pumpkinHarvested", ["purple_banner"]="woolPurple",
+    ["purple_bed"]="woolPurple", ["purple_candle"]="clayPurple", ["purple_carpet"]="carpetPurple",
+    ["purple_concrete"]="purpleBlock", ["purple_concrete_powder"]="pastelPurpleBlock",
+    ["purple_glazed_terracotta"]="clayPurple", ["purple_shulker_box"]="clayPurple",
+    ["purple_stained_glass"]="glassBlockPurple", ["purple_stained_glass_pane"]="glassPanePurple",
+    ["purple_terracotta"]="clayPurple", ["purple_wall_banner"]="woolPurple", ["purple_wool"]="woolPurple",
+    ["purpur_block"]="clayPurple", ["purpur_pillar"]="clayPurple", ["purpur_slab"]="pastelPurpleSlab",
+    ["purpur_stairs"]="pastelPurpleStair", ["quartz_block"]="marbleBlock", ["quartz_bricks"]="marbleBrick",
+    ["quartz_pillar"]="marblePillar", ["quartz_slab"]="marbleSlab", ["quartz_stairs"]="stairMarble",
+    ["raw_copper_block"]="copperBlock", ["raw_gold_block"]="goldBlock", ["raw_iron_block"]="ironBlock",
+    ["red_banner"]="woolRed", ["red_bed"]="woolRed", ["red_candle"]="clayRed", ["red_carpet"]="carpetRed",
+    ["red_concrete"]="redBlock", ["red_concrete_powder"]="pastelRedBlock", ["red_glazed_terracotta"]="clayRed",
+    ["red_mushroom"]="tallGrass", ["red_mushroom_block"]="mushroomBlock",
+    ["red_nether_brick_slab"]="sandstoneRedBrickSlab", ["red_nether_brick_stairs"]="sandstoneRedBrick",
+    ["red_nether_brick_wall"]="sandstoneRedBrick", ["red_nether_bricks"]="sandstoneRedBrick",
+    ["red_sand"]="sandstoneRed", ["red_sandstone"]="sandstoneRed", ["red_sandstone_slab"]="sandstoneRedSlab",
+    ["red_sandstone_stairs"]="stairSandstoneRed", ["red_sandstone_wall"]="sandstoneRed",
+    ["red_shulker_box"]="clayRed", ["red_stained_glass"]="glassBlockRed", ["red_stained_glass_pane"]="glassPaneRed",
+    ["red_terracotta"]="clayRed", ["red_wall_banner"]="woolRed", ["red_wool"]="woolRed",
+    ["redstone_block"]="rubyBlock", ["redstone_lamp"]="ledLight", ["redstone_ore"]="redBlock",
+    ["redstone_torch"]="ledLight", ["redstone_wall_torch"]="ledLight", ["reinforced_deepslate"]="slateCarved",
+    ["repeater"]="stoneSmooth", ["repeating_command_block"]="stoneSmooth", ["resin_block"]="clayOrange",
+    ["resin_brick_slab"]="sandstoneSmoothRedBrickSlab", ["resin_brick_stairs"]="stairSandstoneSmoothRedBrick",
+    ["resin_brick_wall"]="sandstoneSmoothRedBrick", ["resin_bricks"]="sandstoneSmoothRedBrick",
+    ["respawn_anchor"]="voidStonePolished", ["rooted_dirt"]="mudBlock", ["rose_bush"]="tallGrass", ["sand"]="sand",
+    ["sandstone"]="sandstone", ["sandstone_slab"]="sandstoneSlab", ["sandstone_stairs"]="stairSandstone",
+    ["sandstone_wall"]="sandstone", ["sandstone_wall_red"]="sandstoneRed", ["scaffolding"]="bambooBlock",
+    ["sculk"]="voidBlock", ["sculk_catalyst"]="voidStoneCarved", ["sculk_sensor"]="voidStoneCarved",
+    ["sculk_shrieker"]="voidStoneCarved", ["sea_lantern"]="opalBlock", ["sea_pickle"]="glowingMushroomGreenBlock",
+    ["seagrass"]="tallGrass", ["short_grass"]="tallGrass", ["shroomlight"]="ledLight", ["shulker_box"]="clayPurple",
+    ["skeleton_skull"]="boneBlock", ["skeleton_wall_skull"]="boneBlock", ["slime_block"]="slimeBlockGreen",
+    ["smithing_table"]="hickoryPlank", ["smoker"]="pinePlank", ["smooth_basalt"]="basaltSmooth",
+    ["smooth_quartz"]="marbleTiles", ["smooth_quartz_slab"]="marbleSlab", ["smooth_quartz_stairs"]="stairMarble",
+    ["smooth_red_sandstone"]="sandstoneSmoothRed", ["smooth_red_sandstone_slab"]="sandstoneSmoothRedSlab",
+    ["smooth_red_sandstone_stairs"]="stairSandstoneSmoothRed", ["smooth_sandstone"]="sandstoneSmooth",
+    ["smooth_sandstone_slab"]="sandstoneSmoothSlab", ["smooth_sandstone_stairs"]="stairSandstoneSmooth",
+    ["smooth_stone"]="stoneSmooth", ["smooth_stone_slab"]="stoneBrickSlab", ["snow_block"]="snowCompact",
+    ["soul_lantern"]="furnitureLampWall", ["soul_sand"]="mudBlock", ["soul_soil"]="mudBlock", ["soul_torch"]="torch",
+    ["soul_wall_torch"]="torch", ["spawner"]="voidStoneCobble", ["sponge"]="clayYellow",
+    ["spruce_button"]="furnitureLampWall", ["spruce_door"]="doorPine", ["spruce_fence"]="fencePine",
+    ["spruce_fence_gate"]="fencePine", ["spruce_hanging_sign"]="pineSlab", ["spruce_leaves"]="leavesBlock",
+    ["spruce_log"]="woodPine", ["spruce_planks"]="pinePlank", ["spruce_pressure_plate"]="pineSlab",
+    ["spruce_sapling"]="saplingPine", ["spruce_shelf"]="pineSlab", ["spruce_sign"]="signPostPine",
+    ["spruce_slab"]="pineSlab", ["spruce_stairs"]="stairPine", ["spruce_trapdoor"]="trapDoorPineFlipped",
+    ["spruce_wall_hanging_sign"]="pineSlab", ["spruce_wall_sign"]="signPostPine", ["spruce_wood"]="woodPine",
+    ["sticky_piston"]="slimeBlockGreen", ["stone"]="stone", ["stone_brick_slab"]="stoneBrickSlab",
+    ["stone_brick_stairs"]="stairStoneBrick", ["stone_brick_wall"]="stoneBrick", ["stone_bricks"]="stoneBrick",
+    ["stone_button"]="furnitureLampWall", ["stone_pressure_plate"]="stoneSmooth", ["stone_slab"]="stoneBrickSlab",
+    ["stone_stairs"]="stairStoneBrick", ["stonecutter"]="stoneSmooth", ["stripped_acacia_log"]="woodMaple",
+    ["stripped_acacia_wood"]="woodMaple", ["stripped_bamboo_block"]="bambooDriedBlock",
+    ["stripped_birch_log"]="woodBirch", ["stripped_birch_wood"]="woodBirch",
+    ["stripped_cherry_log"]="woodCherryBlossom", ["stripped_cherry_wood"]="woodCherryBlossom",
+    ["stripped_crimson_hyphae"]="woodCherryBlossom", ["stripped_crimson_stem"]="woodCherryBlossom",
+    ["stripped_dark_oak_log"]="woodHickory", ["stripped_dark_oak_wood"]="woodHickory",
+    ["stripped_jungle_log"]="woodMaple", ["stripped_jungle_wood"]="woodMaple",
+    ["stripped_mangrove_log"]="woodCherryBlossom", ["stripped_mangrove_wood"]="woodCherryBlossom",
+    ["stripped_oak_log"]="wood", ["stripped_oak_wood"]="wood", ["stripped_pale_oak_log"]="woodBirch",
+    ["stripped_pale_oak_wood"]="woodBirch", ["stripped_spruce_log"]="woodPine", ["stripped_spruce_wood"]="woodPine",
+    ["stripped_warped_hyphae"]="woodSpirit", ["stripped_warped_stem"]="woodSpirit", ["sulfur_block"]="clayYellow",
+    ["sulfur_wall"]="clayYellow", ["sunflower"]="tallGrass", ["suspicious_gravel"]="cobblestoneBlock",
+    ["suspicious_sand"]="sand", ["sweet_berry_bush"]="tallGrass", ["tall_grass"]="tallGrass",
+    ["tall_seagrass"]="tallGrass", ["target"]="targetBlockWood", ["terracotta"]="clayOrange",
+    ["tinted_glass"]="glassBlockBlack", ["tnt"]="redBlock", ["torch"]="torch", ["trapped_chest"]="woodPlank",
+    ["trial_spawner"]="voidStoneCarved", ["tripwire_hook"]="oakSlab", ["tube_coral_block"]="coralBlockLightBlue",
+    ["tube_coral_fan"]="coralBlockLightBlue", ["tuff"]="andesiteTiles", ["tuff_brick_slab"]="andesiteBrickSlab",
+    ["tuff_brick_stairs"]="andesiteBrickStair", ["tuff_brick_wall"]="andesiteBrick", ["tuff_bricks"]="andesiteBrick",
+    ["tuff_slab"]="andesiteBrickSlab", ["tuff_stairs"]="andesiteBrickStair", ["tuff_wall"]="andesiteTiles",
+    ["turtle_egg"]="boneBlock", ["vault"]="voidStoneCarved", ["verdant_froglight"]="glowingMushroomBlueBlock",
+    ["vine"]="leavesBlock", ["wall_torch"]="torch", ["warped_button"]="furnitureLampWall",
+    ["warped_door"]="doorPine2", ["warped_fence"]="fenceSpirit", ["warped_fence_gate"]="fenceSpirit",
+    ["warped_fungus"]="saplingSpirit", ["warped_hanging_sign"]="spiritSlab", ["warped_hyphae"]="woodSpirit",
+    ["warped_nylium"]="glowingMushroomCyanBlock", ["warped_planks"]="spiritPlank",
+    ["warped_pressure_plate"]="spiritSlab", ["warped_shelf"]="spiritSlab", ["warped_sign"]="signPostSpirit",
+    ["warped_slab"]="spiritSlab", ["warped_stairs"]="stairSpirit", ["warped_stem"]="woodSpirit",
+    ["warped_trapdoor"]="trapDoorSpiritFlipped", ["warped_wall_sign"]="signPostSpirit",
+    ["warped_wart_block"]="glowingMushroomCyanBlock", ["water"]="slimeBlockBlue", ["water_cauldron"]="ironBlock",
+    ["waxed_chiseled_copper"]="copperBlock", ["waxed_copper_block"]="copperBlock",
+    ["waxed_copper_chain"]="copperBlock", ["waxed_copper_trapdoor"]="trapDoorIronFlipped",
+    ["waxed_cut_copper"]="copperBlock", ["waxed_cut_copper_slab"]="copperBlock",
+    ["waxed_cut_copper_stairs"]="copperBlock", ["waxed_exposed_copper"]="copperBlock",
+    ["waxed_exposed_copper_chain"]="copperBlock", ["waxed_exposed_copper_trapdoor"]="trapDoorIronFlipped",
+    ["waxed_exposed_cut_copper"]="copperBlock", ["waxed_exposed_cut_copper_slab"]="copperBlock",
+    ["waxed_exposed_cut_copper_stairs"]="copperBlock", ["waxed_lightning_rod"]="copperBlock",
+    ["waxed_oxidized_copper"]="prismarineBlock", ["waxed_oxidized_copper_chain"]="prismarineBlock",
+    ["waxed_oxidized_copper_trapdoor"]="trapDoorIronFlipped", ["waxed_oxidized_cut_copper"]="prismarineBlock",
+    ["waxed_oxidized_cut_copper_slab"]="prismarineSlab", ["waxed_oxidized_cut_copper_stairs"]="prismarineStair",
+    ["waxed_weathered_copper"]="prismarineBlock", ["waxed_weathered_copper_chain"]="prismarineBlock",
+    ["waxed_weathered_copper_trapdoor"]="trapDoorIronFlipped", ["waxed_weathered_cut_copper"]="prismarineBlock",
+    ["waxed_weathered_cut_copper_slab"]="prismarineSlab", ["waxed_weathered_cut_copper_stairs"]="prismarineStair",
+    ["weathered_chiseled_copper"]="prismarineBlock", ["weathered_copper"]="prismarineBlock",
+    ["weathered_copper_chain"]="prismarineBlock", ["weathered_copper_trapdoor"]="trapDoorIronFlipped",
+    ["weathered_cut_copper"]="prismarineBlock", ["weathered_cut_copper_slab"]="prismarineSlab",
+    ["weathered_cut_copper_stairs"]="prismarineStair", ["wet_sponge"]="clayYellow", ["white_banner"]="woolWhite",
+    ["white_bed"]="woolWhite", ["white_candle"]="clayWhite", ["white_carpet"]="carpet",
+    ["white_concrete"]="whiteBlock", ["white_concrete_powder"]="clayWhite", ["white_glazed_terracotta"]="clayWhite",
+    ["white_shulker_box"]="clayWhite", ["white_stained_glass"]="glassBlockChrome",
+    ["white_stained_glass_pane"]="glassPane", ["white_terracotta"]="clayWhite", ["white_wall_banner"]="woolWhite",
+    ["white_wool"]="woolWhite", ["wither_skeleton_skull"]="coalBlock", ["wither_skeleton_wall_skull"]="coalBlock",
+    ["yellow_banner"]="woolYellow", ["yellow_bed"]="woolYellow", ["yellow_candle"]="clayYellow",
+    ["yellow_carpet"]="carpetYellow", ["yellow_concrete"]="yellowBlock",
+    ["yellow_concrete_powder"]="pastelYellowBlock", ["yellow_glazed_terracotta"]="clayYellow",
+    ["yellow_shulker_box"]="clayYellow", ["yellow_stained_glass"]="glassBlockYellow",
+    ["yellow_stained_glass_pane"]="glassPaneYellow", ["yellow_terracotta"]="clayYellow",
+    ["yellow_wall_banner"]="woolYellow", ["yellow_wool"]="woolYellow", ["zombie_head"]="clayDarkGreen",
+}
+MC_DROP = {
+    ["air"]=true, ["amethyst_cluster"]=true, ["barrier"]=true, ["beetroots"]=true, ["bush"]=true,
+    ["cactus_flower"]=true, ["carrots"]=true, ["cave_air"]=true, ["cave_vines"]=true, ["cave_vines_plant"]=true,
+    ["crimson_roots"]=true, ["dead_bush"]=true, ["fire"]=true, ["firefly_bush"]=true, ["hanging_roots"]=true,
+    ["large_amethyst_bud"]=true, ["large_fern"]=true, ["leaf_litter"]=true, ["light"]=true,
+    ["mangrove_propagule"]=true, ["medium_amethyst_bud"]=true, ["nether_sprouts"]=true, ["orange_tulip"]=true,
+    ["pink_petals"]=true, ["pink_tulip"]=true, ["pitcher_plant"]=true, ["pointed_dripstone"]=true, ["potatoes"]=true,
+    ["rail"]=true, ["red_tulip"]=true, ["redstone_wire"]=true, ["resin_clump"]=true, ["sea_pickle"]=true,
+    ["sea_pickle_single"]=true, ["seagrass"]=true, ["small_amethyst_bud"]=true, ["small_dripleaf"]=true,
+    ["snow"]=true, ["soul_fire"]=true, ["spore_blossom"]=true, ["structure_void"]=true, ["sugar_cane"]=true,
+    ["torchflower"]=true, ["tripwire"]=true, ["twisting_vines"]=true, ["twisting_vines_plant"]=true,
+    ["void_air"]=true, ["warped_roots"]=true, ["weeping_vines"]=true, ["weeping_vines_plant"]=true, ["wheat"]=true,
+    ["white_tulip"]=true, ["wildflowers"]=true, ["wither_rose"]=true,
+}
+MC_FACING = {
+    north = { 1, 0, 0, 0, 1, 0 },
+    east = { 0, 0, 1, 0, 1, 0 },
+    south = { -1, 0, 0, 0, 1, 0 },
+    west = { 0, 0, -1, 0, 1, 0 },
+}
+MC_AXIS = {
+    y = { 1, 0, 0, 0, 1, 0 },
+    x = { 0, 1, 0, 1, 0, 0 },
+    z = { 1, 0, 0, 0, 0, 1 },
+}
+MC_IDENTITY = { 1, 0, 0, 0, 1, 0 }
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- MINECRAFT CONVERTER — .schem and .litematic straight into a build file
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Drop a schematic into autoBuilder/converter and turn it into a build file
+-- without leaving the game. The block table is generated from the same
+-- mcconvert/blockmap.py the offline converters use, so a schematic converts
+-- the same way here as it does on a desktop.
+--
+-- Both formats are gzipped NBT. The inflate that reads PNGs reads these too,
+-- once the gzip header is stepped over.
+do
+
+-- ── gzip ───────────────────────────────────────────────────────────────────
+local function gunzip(data)
+    if data:byte(1) ~= 0x1F or data:byte(2) ~= 0x8B then
+        -- some tools hand out plain NBT, and a few hand out zlib
+        if data:byte(1) == 0x78 then
+            local out = {}
+            local ok = pcall(inflate, Reader.new(data), function(b)
+                out[#out + 1] = string.char(b)
+            end)
+            if ok then return table.concat(out) end
+        end
+        return data
+    end
+    if data:byte(3) ~= 8 then return nil, "unsupported gzip method" end
+
+    local flags = data:byte(4)
+    local pos = 11                     -- 10-byte header, 1-based
+    if bit32.band(flags, 4) ~= 0 then  -- FEXTRA
+        local xlen = data:byte(pos) + data:byte(pos + 1) * 256
+        pos = pos + 2 + xlen
+    end
+    if bit32.band(flags, 8) ~= 0 then  -- FNAME
+        while data:byte(pos) and data:byte(pos) ~= 0 do pos = pos + 1 end
+        pos = pos + 1
+    end
+    if bit32.band(flags, 16) ~= 0 then -- FCOMMENT
+        while data:byte(pos) and data:byte(pos) ~= 0 do pos = pos + 1 end
+        pos = pos + 1
+    end
+    if bit32.band(flags, 2) ~= 0 then pos = pos + 2 end  -- FHCRC
+
+    local out = {}
+    local n = 0
+    local ok, err = pcall(inflate, Reader.new(data:sub(pos)), function(b)
+        n = n + 1
+        out[n] = string.char(b)
+    end, true)
+    if not ok then return nil, "could not unpack: " .. tostring(err) end
+    return table.concat(out)
+end
+
+-- ── NBT ────────────────────────────────────────────────────────────────────
+-- Big-endian, tag-prefixed. Only what a schematic uses is read; the tags for
+-- entities and block entities are stepped over rather than decoded.
+local function readNBT(data)
+    local pos = 1
+
+    local function u8() local v = data:byte(pos) pos = pos + 1 return v end
+    local function u16() local v = string.unpack(">I2", data, pos) pos = pos + 2 return v end
+    local function i32() local v = string.unpack(">i4", data, pos) pos = pos + 4 return v end
+    local function i64() local v = string.unpack(">i8", data, pos) pos = pos + 8 return v end
+    local function f32() local v = string.unpack(">f", data, pos) pos = pos + 4 return v end
+    local function f64() local v = string.unpack(">d", data, pos) pos = pos + 8 return v end
+    local function str()
+        local len = u16()
+        local v = data:sub(pos, pos + len - 1)
+        pos = pos + len
+        return v
+    end
+
+    local readPayload
+    local function readList()
+        local kind = u8()
+        local count = i32()
+        local out = { _kind = kind }
+        for i = 1, count do out[i] = readPayload(kind) end
+        return out
+    end
+
+    readPayload = function(kind)
+        if kind == 1 then local v = u8() if v > 127 then v = v - 256 end return v
+        elseif kind == 2 then local v = u16() if v > 32767 then v = v - 65536 end return v
+        elseif kind == 3 then return i32()
+        elseif kind == 4 then return i64()
+        elseif kind == 5 then return f32()
+        elseif kind == 6 then return f64()
+        elseif kind == 7 then
+            local len = i32()
+            local v = data:sub(pos, pos + len - 1)
+            pos = pos + len
+            return { _bytes = v }
+        elseif kind == 8 then return str()
+        elseif kind == 9 then return readList()
+        elseif kind == 10 then
+            local out = {}
+            while true do
+                local t = u8()
+                if t == 0 then break end
+                local name = str()
+                out[name] = readPayload(t)
+                if pos % 262144 == 0 then task.wait() end
+            end
+            return out
+        elseif kind == 11 then
+            local len = i32()
+            local out = table.create(len)
+            for i = 1, len do out[i] = i32() end
+            return out
+        elseif kind == 12 then
+            local len = i32()
+            local out = table.create(len)
+            for i = 1, len do out[i] = i64() end
+            return out
+        end
+        error("unknown NBT tag " .. tostring(kind))
+    end
+
+    local kind = u8()
+    if kind ~= 10 then return nil, "not NBT data" end
+    str()                               -- root name
+    return readPayload(10)
+end
+
+-- ── block states ───────────────────────────────────────────────────────────
+-- "minecraft:oak_stairs[facing=north,half=top]" -> name, properties
+local function parseState(state)
+    state = state:gsub("^minecraft:", "")
+    local base, rest = state:match("^([^%[]+)%[(.*)%]$")
+    if not base then return state, {} end
+    local props = {}
+    for k, v in rest:gmatch("([%w_]+)=([%w_]+)") do props[k] = v end
+    return base, props
+end
+
+local function resolveState(state)
+    local base, props = parseState(state)
+    if MC_DROP[base] or base == "air" or base == "cave_air" or base == "void_air" then
+        return nil
+    end
+    local target = MC_MAP[base]
+    if not target then
+        if base:match("^potted_") then target = "clayOrange" else return nil, base end
+    end
+
+    local rot = MC_IDENTITY
+    if props.facing and MC_FACING[props.facing] then
+        rot = MC_FACING[props.facing]
+    elseif props.axis and MC_AXIS[props.axis] then
+        rot = MC_AXIS[props.axis]
+    end
+
+    -- Only a slab is half-height in Islands, so half=top on a stair and a
+    -- double slab that maps to a full block are both ignored. This is the same
+    -- rule blockmap.py applies, and skipping it is what put stairs inside
+    -- their neighbours.
+    local isSlab = target:lower():find("slab") ~= nil
+    local upper, doubled = false, false
+    if isSlab then
+        if props.half == "top" or props.type == "top" then upper = true end
+        if props.type == "double" then doubled = true end
+    end
+    return target, rot, upper, doubled
+end
+
+-- ── Sponge .schem ──────────────────────────────────────────────────────────
+local function readSchem(root)
+    local d = root.Schematic or root
+    local w, h, l = d.Width, d.Height, d.Length
+    local palette, blockData
+    if d.Blocks then                    -- version 3
+        palette = d.Blocks.Palette
+        blockData = d.Blocks.Data and d.Blocks.Data._bytes
+    else                                -- version 2
+        palette = d.Palette
+        blockData = d.BlockData and d.BlockData._bytes
+    end
+    if not (w and h and l and palette and blockData) then
+        return nil, "this file is missing the parts a schematic needs"
+    end
+
+    -- palette maps state -> index; flip it
+    local byIndex = {}
+    for state, idx in pairs(palette) do byIndex[idx] = state end
+
+    -- Sponge stores the blocks as unsigned LEB128 varints
+    local ids = table.create(w * h * l)
+    local n, pos, len = 0, 1, #blockData
+    while pos <= len do
+        local value, shift = 0, 0
+        while true do
+            local byte = blockData:byte(pos)
+            pos = pos + 1
+            value = value + (byte % 128) * (2 ^ shift)
+            if byte < 128 then break end
+            shift = shift + 7
+        end
+        n = n + 1
+        ids[n] = value
+        if n % 200000 == 0 then task.wait() end
+    end
+
+    return { w = w, h = h, l = l, ids = ids, byIndex = byIndex, count = n }
+end
+
+-- ── Litematica .litematic ──────────────────────────────────────────────────
+local function readLitematic(root)
+    local regions = root.Regions
+    if not regions then return nil, "no regions in this litematic" end
+    local name, region = next(regions)
+    if not region then return nil, "no regions in this litematic" end
+
+    local size = region.Size
+    local w = math.abs(size.x or size.X or 0)
+    local h = math.abs(size.y or size.Y or 0)
+    local l = math.abs(size.z or size.Z or 0)
+    local palette = region.BlockStatePalette
+    local states = region.BlockStates
+    if not (palette and states and w > 0) then
+        return nil, "this litematic is missing its block data"
+    end
+
+    local byIndex = {}
+    for i, entry in ipairs(palette) do
+        local nm = entry.Name or "minecraft:air"
+        local props = entry.Properties
+        if props and next(props) then
+            local parts = {}
+            for k, v in pairs(props) do parts[#parts + 1] = k .. "=" .. tostring(v) end
+            table.sort(parts)
+            nm = nm .. "[" .. table.concat(parts, ",") .. "]"
+        end
+        byIndex[i - 1] = nm
+    end
+
+    -- Entries are packed into a long array, and an entry may straddle two
+    -- longs. Litematica keeps the pre-1.16 spanning layout whatever the game
+    -- version, so this always unpacks that way.
+    local bits = 2
+    while bit32.lshift(1, bits) < #palette do bits = bits + 1 end
+    local vol = w * h * l
+    local ids = table.create(vol)
+    local mask = 2 ^ bits - 1
+
+    for i = 0, vol - 1 do
+        local at = i * bits
+        local word = math.floor(at / 64) + 1
+        local offset = at % 64
+        local low = states[word] or 0
+        local value
+        if offset + bits <= 64 then
+            value = math.floor(low / 2 ^ offset) % (mask + 1)
+        else
+            local high = states[word + 1] or 0
+            local lowBits = 64 - offset
+            value = math.floor(low / 2 ^ offset) % (2 ^ lowBits)
+                + (high % 2 ^ (bits - lowBits)) * 2 ^ lowBits
+        end
+        ids[i + 1] = value
+        if i % 200000 == 0 then task.wait() end
+    end
+
+    return { w = w, h = h, l = l, ids = ids, byIndex = byIndex, count = vol, name = name }
+end
+
+-- ── the conversion ─────────────────────────────────────────────────────────
+BuilderAPI.convertSchematic = function(name, data, onProgress)
+    local raw, err = gunzip(data)
+    if not raw then return nil, err or "could not unpack the file" end
+
+    local root
+    local ok, res = pcall(readNBT, raw)
+    if not ok or not res then return nil, "could not read the schematic data" end
+    root = res
+
+    local parsed, perr
+    if string.lower(name):sub(-10) == ".litematic" then
+        parsed, perr = readLitematic(root)
+    else
+        parsed, perr = readSchem(root)
+    end
+    if not parsed then return nil, perr or "unrecognised schematic" end
+
+    local w, h, l = parsed.w, parsed.h, parsed.l
+    local blocks = {}
+    local kept = {}
+    local unmapped = {}
+    local dropped = 0
+
+    for i = 1, parsed.count do
+        local state = parsed.byIndex[parsed.ids[i]]
+        if state then
+            local target, rot, upper, doubled = resolveState(state)
+            if target then
+                -- schematics store blocks in Y, Z, X order
+                local idx = i - 1
+                local y = math.floor(idx / (w * l))
+                local rem = idx % (w * l)
+                local z = math.floor(rem / w)
+                local x = rem % w
+                local px, py, pz = x * 3, y * 3, z * 3
+                blocks[#blocks + 1] = {
+                    blockType = target, upperBlock = upper,
+                    cframe = { px, py, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
+                    parts = {},
+                }
+                kept[target] = (kept[target] or 0) + 1
+                if doubled then
+                    blocks[#blocks + 1] = {
+                        blockType = target, upperBlock = true,
+                        cframe = { px, py, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
+                        parts = {},
+                    }
+                end
+            elseif rot then
+                unmapped[rot] = (unmapped[rot] or 0) + 1
+            else
+                dropped = dropped + 1
+            end
+        end
+        if i % 40000 == 0 then
+            task.wait()
+            if onProgress then onProgress(i, parsed.count, #blocks) end
+        end
+    end
+
+    if #blocks == 0 then return nil, "nothing in that file mapped to an Islands block" end
+
+    -- anchor to the build's own corner, like every other converter
+    local mnx, mny, mnz = math.huge, math.huge, math.huge
+    for _, b in ipairs(blocks) do
+        if b.cframe[1] < mnx then mnx = b.cframe[1] end
+        if b.cframe[2] < mny then mny = b.cframe[2] end
+        if b.cframe[3] < mnz then mnz = b.cframe[3] end
+    end
+    for i, b in ipairs(blocks) do
+        b.cframe[1] = b.cframe[1] - mnx
+        b.cframe[2] = b.cframe[2] - mny
+        b.cframe[3] = b.cframe[3] - mnz
+        if i % 60000 == 0 then task.wait() end
+    end
+
+    return blocks, nil, {
+        size = { w, h, l }, kept = kept, unmapped = unmapped, dropped = dropped,
+    }
+end
+
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -14439,6 +15199,230 @@ brushPanel:AddButton({ Name = "Save Selected Blocks", Callback = function()
             saveSelectedBrush()
         end)
     end })
+
+end
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CONVERT TAB — schematics into build files, without leaving the game
+-- ═══════════════════════════════════════════════════════════════════════════
+do
+
+CONVERT = { simplify = 0, blend = true, file = nil }
+
+local function converterFiles()
+    local files = {}
+    if isfolder(CONVERT_DIR) then
+        for _, f in ipairs(listfiles(CONVERT_DIR)) do
+            local low = string.lower(f)
+            if low:sub(-6) == ".schem" or low:sub(-10) == ".litematic" then
+                table.insert(files, f:match("[^/\\]+$"))
+            end
+        end
+    end
+    table.sort(files)
+    if #files == 0 then files[1] = "Nothing in autoBuilder/converter" end
+    return files
+end
+
+-- ── blending ───────────────────────────────────────────────────────────────
+-- A converted build often reads as noise: Minecraft's stone, andesite,
+-- diorite, smooth stone and their polished cousins all map to different
+-- Islands blocks, so a wall that was one material over there arrives as five
+-- slightly different greys over here. Nothing is wrong with any single choice;
+-- together they look like blocks thrown at a wall.
+--
+-- This keeps the most-used blocks and moves the rest onto the nearest one that
+-- survived, judged by the colours measured in game. Two blocks that look the
+-- same become the same block, so surfaces read as surfaces. When two kept
+-- blocks sit either side of the colour being replaced, it alternates between
+-- them by position, which reads as the shade in between rather than a hard
+-- edge - the same trick the model converter uses.
+BuilderAPI.blendBuild = function(blocks, limit, dither, onProgress)
+    local colours = BuilderAPI.blockColours()
+    if not colours then
+        notifyWarn("Blend", "Could not read block colours - left as it was", 5)
+        return blocks
+    end
+
+    local counts = {}
+    for _, b in ipairs(blocks) do
+        counts[b.blockType] = (counts[b.blockType] or 0) + 1
+    end
+
+    local ranked = {}
+    for name in pairs(counts) do
+        if colours[name] then ranked[#ranked + 1] = name end
+    end
+    table.sort(ranked, function(p, q) return counts[p] > counts[q] end)
+    if limit <= 0 or limit >= #ranked then return blocks end
+
+    local keep = {}
+    for i = 1, limit do keep[i] = ranked[i] end
+
+    -- work out, once per block type, which kept block it becomes
+    local swap = {}
+    for _, name in ipairs(ranked) do
+        local c = colours[name]
+        local best, bestD, second, secondD
+        for _, k in ipairs(keep) do
+            local e = colours[k]
+            local dL, da, db = c.L - e.L, c.a - e.a, c.b - e.b
+            local d = dL * dL + da * da + db * db
+            if not bestD or d < bestD then
+                second, secondD = best, bestD
+                best, bestD = k, d
+            elseif not secondD or d < secondD then
+                second, secondD = k, d
+            end
+        end
+        -- how far between the two nearest this colour sits, so the mix leans
+        -- the right way rather than being an even scatter
+        local t = 0
+        if second and dither then
+            local e1, e2 = colours[best], colours[second]
+            local vx, vy, vz = e2.L - e1.L, e2.a - e1.a, e2.b - e1.b
+            local dx, dy, dz = c.L - e1.L, c.a - e1.a, c.b - e1.b
+            local den = vx * vx + vy * vy + vz * vz
+            if den > 1e-12 then
+                t = math.clamp((dx * vx + dy * vy + dz * vz) / den, 0, 1)
+            end
+        end
+        swap[name] = { best, second, t }
+    end
+
+    local changed = 0
+    for i, b in ipairs(blocks) do
+        local rule = swap[b.blockType]
+        if rule and rule[1] ~= b.blockType then
+            local pick = rule[1]
+            if dither and rule[2] and rule[3] > 0 then
+                local c = b.cframe
+                local x = math.floor(c[1] / 3) % 4
+                local y = math.floor(c[2] / 3) % 4
+                local z = math.floor(c[3] / 3) % 4
+                if MODEL.bayer[z][y][x] < rule[3] then pick = rule[2] end
+            end
+            if pick ~= b.blockType then
+                b.blockType = pick
+                changed = changed + 1
+            end
+        end
+        if i % 40000 == 0 then
+            task.wait()
+            if onProgress then onProgress(i, #blocks) end
+        end
+    end
+
+    notify("Blended", changed .. " blocks moved onto " .. limit .. " colours", 5, "info")
+    return blocks
+end
+
+-- ── UI ─────────────────────────────────────────────────────────────────────
+tabConvert:CreateSection("Minecraft Schematics", { Collapsible = true })
+
+tabConvert:CreateParagraph({
+    Title = "How",
+    Content = "Drop a .schem or .litematic into autoBuilder/converter, press"
+        .. " Refresh, pick it, then Convert. It becomes a build file you can"
+        .. " preview and build like any other.",
+})
+
+convertDropdown = tabConvert:CreateDropdown({
+    Name = "Schematic",
+    Actions = { { Text = "Refresh", OnClick = function()
+        pcall(function() convertDropdown:Refresh(converterFiles(), true) end)
+        notify("Converter", "List refreshed", 2, "info")
+    end } },
+    Options = converterFiles(),
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "ConvertFile",
+    Tooltip = "Schematics live in the converter folder inside autoBuilder.",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        if name and name ~= "Nothing in autoBuilder/converter" then
+            CONVERT.file = name
+        end
+    end
+})
+
+tabConvert:CreateSlider({
+    Name = "Blend to Colours", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
+    Suffix = "types", Flag = "ConvertSimplify",
+    Tooltip = "Minecraft's stone, andesite and diorite all arrive as different Islands blocks, so one wall turns into several greys and looks like scattered blocks. This keeps the most-used blocks and moves the rest onto the nearest one that looks the same. 0 leaves every block as it converted.",
+    Callback = function(v) CONVERT.simplify = v end
+})
+
+tabConvert:CreateToggle({
+    Name = "Smooth the Blend",
+    CurrentValue = true,
+    Flag = "ConvertBlend",
+    Tooltip = "When a colour sits between two of the blocks you kept, alternate between them so it reads as the shade in between instead of jumping to one. Off snaps every block to its single nearest match.",
+    Callback = function(v) CONVERT.blend = v end
+})
+
+tabConvert:CreateInput({
+    Name = "Save As",
+    PlaceholderText = "MyBuild",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(t) if t and t ~= "" then CONVERT.name = t end end
+})
+
+tabConvert:CreateButton({
+    Name = "Convert",
+    Tooltip = "Reads the schematic and writes it out as a build file.",
+    Callback = function()
+        task.spawn(function()
+            if not CONVERT.file then
+                notifyWarn("Converter", "Pick a schematic first", 4)
+                return
+            end
+            local path = CONVERT_DIR .. "/" .. CONVERT.file
+            if not isfile(path) then
+                notifyErr("Converter", "That file is gone - press Refresh", 5)
+                return
+            end
+
+            notify("Converter", "Reading " .. CONVERT.file .. "...", 5, "info")
+            local data = readfile(path)
+            local lastMark = 0
+            local blocks, err, info = BuilderAPI.convertSchematic(CONVERT.file, data,
+                function(done, total)
+                    local mark = math.floor(done / total * 4)
+                    if mark > lastMark and mark < 4 then
+                        lastMark = mark
+                        notify("Converter", (mark * 25) .. "% read", 2, "info")
+                    end
+                end)
+            if not blocks then
+                notifyErr("Converter", err or "Could not convert that file", 9)
+                return
+            end
+
+            if CONVERT.simplify > 0 then
+                notify("Converter", "Blending colours...", 4, "info")
+                blocks = BuilderAPI.blendBuild(blocks, CONVERT.simplify, CONVERT.blend)
+            end
+
+            local name = CONVERT.name
+            if not name or name == "" then
+                name = CONVERT.file:gsub("%.[Ss][Cc][Hh][Ee][Mm]$", "")
+                                   :gsub("%.[Ll][Ii][Tt][Ee][Mm][Aa][Tt][Ii][Cc]$", "")
+                                   :gsub("%s+", "")
+            end
+            finishSaveBlocks(blocks, name)
+
+            local kinds = 0
+            for _ in pairs(info.kept) do kinds = kinds + 1 end
+            local un = 0
+            for _ in pairs(info.unmapped) do un = un + 1 end
+            notifyOK("Converted", ("%d blocks, %dx%dx%d, %d block types%s")
+                :format(#blocks, info.size[1], info.size[2], info.size[3], kinds,
+                        un > 0 and (", " .. un .. " kinds had no match") or ""), 9)
+        end)
+    end
+})
 
 end
 
