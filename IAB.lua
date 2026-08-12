@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 21:15"
+local IAB_BUILD = "Aug 13 22:40"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1913,7 +1913,7 @@ end
 -- A placed block names them 'top' and 'bottom' as direct children, but a
 -- template may wrap the block in a Model, and casing is not guaranteed. So
 -- search the whole clone case-insensitively rather than assuming the shape.
-local function slabHalves(inst)
+function slabHalves(inst)
     local top, bottom = nil, nil
     if inst:IsA("BasePart") then
         local n = string.lower(inst.Name)
@@ -2181,15 +2181,36 @@ local function previewBuild(blocks)
         end
         local rendered = false
 
-        -- Slabs are always drawn as a half-height stand-in rather than as the
-        -- real block. The real block is one part holding both halves, and
-        -- getting a clone to show the other one depends on how the template
-        -- happens to be built - which is not something worth relying on when
-        -- the stand-in lands in the right half every time. Colour comes from
-        -- the game's own measurements, so it reads as the block rather than as
-        -- a grey box.
-        if isSlab then
-            -- fall through to the stand-in below
+        -- A slab block is one part holding both halves, and persuading a clone
+        -- of the whole thing to show the other half turned out to depend on
+        -- how each template is built. So take the half itself: the block keeps
+        -- its two halves as separate MeshParts, and one of those, cloned and
+        -- placed on its own, is the real slab with its real texture, in the
+        -- right half, with nothing to swap and nothing to go wrong.
+        if isSlab and previewRealModels and not previewMinimized then
+            local template = getTemplate(blockType)
+            if template then
+                local top, bottom = slabHalves(template)
+                local want = upper and top or bottom
+                if want then
+                    local ok, half = pcall(function() return want:Clone() end)
+                    if ok and half then
+                        ghostifyClone(half, previewTransparency)
+                        -- the half may have been the hidden one in the
+                        -- template, in which case ghostify left it invisible
+                        half.Transparency = previewTransparency
+                        half.Name = blockType
+                        half.CFrame = cellCF
+                            + Vector3.new(0, upper and 0.75 or -0.75, 0)
+                        tagGhost(half, blockSrcKey(block), brushPreview)
+                        half.Parent = model
+                        rendered = true
+                        slabSwapped = slabSwapped + 1
+                        work = work + 4
+                    end
+                end
+            end
+            if not rendered then slabFellBack = slabFellBack + 1 end
         elseif previewRealModels and not previewMinimized and isModelType(blockType) then
             local template = getTemplate(blockType)
             if template then
@@ -2212,28 +2233,10 @@ local function previewBuild(blocks)
                     -- previewed slab looked low. Swap the halves instead of
                     -- moving the part: the geometry is already in the right
                     -- place, it is just the wrong half showing.
-                    local slabOk = true
-                    if isSlab then
-                        local ok2, res = pcall(function()
-                            return showSlabHalf(clone, upper, previewTransparency)
-                        end)
-                        slabOk = ok2 and res == true
-                        if slabOk then
-                            slabSwapped = slabSwapped + 1
-                        else
-                            slabFellBack = slabFellBack + 1
-                        end
-                    end
-                    if not slabOk then
-                        -- the template is not shaped like a placed block, so
-                        -- it cannot show one half; the stand-in below can
-                        pcall(function() clone:Destroy() end)
-                    else
-                        tagGhost(clone, blockSrcKey(block), brushPreview)
-                        clone.Parent = model
-                        rendered = true
-                        work = work + 8
-                    end
+                    tagGhost(clone, blockSrcKey(block), brushPreview)
+                    clone.Parent = model
+                    rendered = true
+                    work = work + 8
                 end
             end
         end
