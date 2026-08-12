@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 15:00"
+local IAB_BUILD = "Aug 13 16:45"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1899,13 +1899,18 @@ function showSlabHalf(inst, upper, alpha)
     local bottom = inst:FindFirstChild("bottom")
     if not (top and bottom) then return false end
     local shown = alpha or 0
-    if upper then
-        top.Transparency = shown
-        bottom.Transparency = 1
-    else
-        top.Transparency = 1
-        bottom.Transparency = shown
-    end
+    local show, hide = bottom, top
+    if upper then show, hide = top, bottom end
+    show.Transparency = shown
+    hide.Transparency = 1
+    -- Take the ghost tag off the half that is meant to be invisible. The
+    -- transparency slider and the pulse both repaint every tagged part, which
+    -- would otherwise bring the hidden half back and turn the slab into a
+    -- full block the moment either ran.
+    pcall(function()
+        show:SetAttribute("GhostPreview", true)
+        hide:SetAttribute("GhostPreview", nil)
+    end)
     return true
 end
 
@@ -2160,13 +2165,23 @@ local function previewBuild(blocks)
                     -- previewed slab looked low. Swap the halves instead of
                     -- moving the part: the geometry is already in the right
                     -- place, it is just the wrong half showing.
-                    if isSlab and upper then
-                        pcall(function() showSlabHalf(clone, true, previewTransparency) end)
+                    local slabOk = true
+                    if isSlab then
+                        local ok2, res = pcall(function()
+                            return showSlabHalf(clone, upper, previewTransparency)
+                        end)
+                        slabOk = ok2 and res == true
                     end
-                    tagGhost(clone, blockSrcKey(block), brushPreview)
-                    clone.Parent = model
-                    rendered = true
-                    work = work + 8
+                    if not slabOk then
+                        -- the template is not shaped like a placed block, so
+                        -- it cannot show one half; the stand-in below can
+                        pcall(function() clone:Destroy() end)
+                    else
+                        tagGhost(clone, blockSrcKey(block), brushPreview)
+                        clone.Parent = model
+                        rendered = true
+                        work = work + 8
+                    end
                 end
             end
         end
