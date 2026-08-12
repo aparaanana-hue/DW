@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 18:20"
+local IAB_BUILD = "Aug 13 19:50"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2101,6 +2101,9 @@ local function previewBuild(blocks)
 
     local work = 0
     local slabSwapped, slabFellBack, slabStandIn = 0, 0, 0
+    -- Two ghosts in one cell z-fight, which reads as a flickering block with
+    -- something grey behind it. Count them rather than guess.
+    local occupied, clashes, clashSample = {}, 0, nil
     local renderList = blocks
     if previewMinimized then
         local occupied = {}
@@ -2226,13 +2229,23 @@ local function previewBuild(blocks)
             -- and seated in the half it belongs to. Everything else, stairs
             -- included, fills the whole cell and is left alone: a full-height
             -- cube nudged up or down only ends up inside its neighbour.
+            -- A hair under a full cell. A stand-in that exactly matches the
+            -- block it sits over shares its surfaces, and two coplanar faces
+            -- flicker as the camera moves - which is the grey block that
+            -- appears to fight with the real one. Shrinking it by a fiftieth
+            -- of a stud is invisible at this scale and stops that outright.
+            local SHRINK = 0.02
             if isSlab then
                 slabStandIn = slabStandIn + 1
                 local dy = (upper and 1 or -1) * (previewBlockSize / 4)
-                part.Size = Vector3.new(previewBlockSize, previewBlockSize / 2, previewBlockSize)
+                part.Size = Vector3.new(previewBlockSize - SHRINK,
+                                        previewBlockSize / 2 - SHRINK,
+                                        previewBlockSize - SHRINK)
                 part.CFrame = cellCF + Vector3.new(0, dy, 0)
             else
-                part.Size = Vector3.new(previewBlockSize, previewBlockSize, previewBlockSize)
+                part.Size = Vector3.new(previewBlockSize - SHRINK,
+                                        previewBlockSize - SHRINK,
+                                        previewBlockSize - SHRINK)
                 part.CFrame = cellCF
             end
             part.Color = colorForBlockType(blockType)
@@ -2240,6 +2253,21 @@ local function previewBuild(blocks)
             tagGhost(part, blockSrcKey(block), brushPreview)
             part.Parent = model
             work = work + 1
+        end
+
+        do
+            local c = cellCF.Position
+            local key = (math.floor(c.X / 3 + 0.5) * 4096
+                + math.floor(c.Y / 3 + 0.5)) * 4096 + math.floor(c.Z / 3 + 0.5)
+            local was = occupied[key]
+            -- a slab cell legitimately holds a top and a bottom; anything
+            -- else sharing a cell is two things drawn in one place
+            local slot = isSlab and (upper and "t" or "b") or "f"
+            if was and (was == slot or was == "f" or slot == "f") then
+                clashes = clashes + 1
+                clashSample = clashSample or blockType
+            end
+            occupied[key] = slot
         end
 
         if work >= 600 then
@@ -2252,12 +2280,18 @@ local function previewBuild(blocks)
         -- Say what happened to the slabs. If they still look wrong, this is
         -- the line that says which of the three paths drew them.
         local total = slabSwapped + slabFellBack + slabStandIn
+        local msg = "Turn on Move Handles, then drag it into place."
         if total > 0 then
-            notify("Preview Ready", ("%d slabs: %d as real blocks, %d as stand-ins%s")
-                :format(total, slabSwapped, slabStandIn + slabFellBack,
-                        slabFellBack > 0 and (" (" .. slabFellBack .. " templates had no halves)") or ""), 8, "info")
+            msg = ("%d slabs: %d real, %d stand-ins%s"):format(
+                total, slabSwapped, slabStandIn + slabFellBack,
+                slabFellBack > 0 and (" (" .. slabFellBack .. " had no halves)") or "")
+        end
+        if clashes > 0 then
+            msg = msg .. ("\n%d blocks share a cell with another - that is the"
+                .. " flicker. First one: %s"):format(clashes, tostring(clashSample))
+            notifyWarn("Preview Ready", msg, 10)
         else
-            notify("Preview Ready", "Turn on Drag Mode, then drag it with your mouse.", 6)
+            notify("Preview Ready", msg, 7, "info")
         end
     end
 end
