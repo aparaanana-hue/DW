@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 09:30"
+local IAB_BUILD = "Aug 14 11:00"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2115,6 +2115,7 @@ local function previewBuild(blocks)
 
     local work = 0
     local slabSwapped, slabFellBack, slabStandIn = 0, 0, 0
+    local slabMissing = nil
     -- Two ghosts in one cell z-fight, which reads as a flickering block with
     -- something grey behind it. Count them rather than guess.
     local occupied, clashes, clashSample = {}, 0, nil
@@ -2187,7 +2188,10 @@ local function previewBuild(blocks)
         -- its two halves as separate MeshParts, and one of those, cloned and
         -- placed on its own, is the real slab with its real texture, in the
         -- right half, with nothing to swap and nothing to go wrong.
-        if isSlab and previewRealModels and not previewMinimized then
+        -- Deliberately not gated on Use Real Models or Low-Lag. A slab drawn
+        -- as a plain box is the wrong shape in the wrong half, which is worse
+        -- than useless, so it always uses the real block when one exists.
+        if isSlab then
             -- Draw the real slab, whatever shape the template turns out to be.
             --
             -- A placed block keeps its two halves as separate MeshParts, so if
@@ -2244,7 +2248,10 @@ local function previewBuild(blocks)
                     work = work + 4
                 end
             end
-            if not rendered then slabFellBack = slabFellBack + 1 end
+            if not rendered then
+                slabFellBack = slabFellBack + 1
+                slabMissing = slabMissing or blockType
+            end
         elseif previewRealModels and not previewMinimized and isModelType(blockType) then
             local template = getTemplate(blockType)
             if template then
@@ -2339,9 +2346,9 @@ local function previewBuild(blocks)
                 slabFellBack > 0 and (" (" .. slabFellBack .. " had no halves)") or "")
         end
         if slabFellBack > 0 then
-            msg = msg .. ("\n%d slabs had no block to copy, so they are drawn"
-                .. " as plain colour. Build the block palette so the game has"
-                .. " one to copy from."):format(slabFellBack)
+            msg = msg .. ("\n%d slabs had no block to copy (first: %s), so they"
+                .. " are drawn as plain colour. Place one of that block once so"
+                .. " the game loads it."):format(slabFellBack, tostring(slabMissing))
         end
         if clashes > 0 then
             msg = msg .. ("\n%d blocks share a cell with another - that is the"
