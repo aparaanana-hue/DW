@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 13:15"
+local IAB_BUILD = "Aug 12 15:05"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -361,7 +361,7 @@ MODEL = { grid = 96, cache = {}, lastName = nil, dither = true,
 
 -- Schematics, for the same reason: the Schematic section's controls write to
 -- this, and a restored config fires their callbacks early.
-CONVERT = { simplify = 0, blend = true, file = nil, cache = {} }
+CONVERT = { simplify = 0, blend = true, hollow = "Off", file = nil, cache = {} }
 
 brushPreview = false
 objStep = 3
@@ -680,8 +680,8 @@ end
 -- sounds right but is not what is wanted here - one doorway, window or open
 -- roof and the flood pours in, lighting up every interior floor and platform
 -- behind it. Working from the outside in ignores openings entirely.
-function hollowExterior(blocks)
-    if not noInterior or #blocks == 0 then return blocks end
+function hollowExterior(blocks, force)
+    if (not force and not noInterior) or #blocks == 0 then return blocks end
 
     local cells = {}
     -- extremes along each axis, keyed by the two coordinates held fixed
@@ -3103,6 +3103,24 @@ schemDropdown = auto:CreateDropdown({
         CONVERT.file = name
         selectedFile = name
         savedPreviewTransform = nil
+    end
+})
+
+auto:CreateDropdown({
+    Name = "Hollow",
+    -- Two settings rather than one toggle, because the two do very different
+    -- amounts of work depending on the build. On Mawglass Citadel, Hidden
+    -- Blocks finds 1.5% and Outside Only finds 58.5%: the first is for solid
+    -- masses, the second for anything you only ever see from outside.
+    Options = { "Off", "Hidden Blocks", "Outside Only" },
+    CurrentOption = { "Off" },
+    MultipleOptions = false,
+    Flag = "ConvertHollow",
+    Tooltip = "Off builds every block. Hidden Blocks drops only the ones sealed inside, so it looks exactly the same and costs less. Outside Only keeps the shell you can see and throws away everything behind it, which is far cheaper but loses interior floors and rooms.",
+    Callback = function(v)
+        if not CONVERT then return end
+        CONVERT.hollow = (typeof(v) == "table") and v[1] or v
+        CONVERT.cache = {}
     end
 })
 
@@ -12346,6 +12364,32 @@ BuilderAPI.convertSchematic = function(name, data, onProgress)
     }
 end
 
+-- ── hollowing ──────────────────────────────────────────────────────────────
+-- Drops every block whose six neighbours are all filled. Those cannot be seen
+-- from anywhere, so the build looks identical and costs less. It only helps
+-- where there is solid mass: on a castle of thin walls it finds almost
+-- nothing, which is why the aggressive pass exists alongside it.
+function hollowBuried(blocks)
+    local occ = {}
+    for _, b in ipairs(blocks) do
+        local c = b.cframe
+        occ[(math.floor(c[1] / 3) * 2048 + math.floor(c[2] / 3)) * 2048
+            + math.floor(c[3] / 3)] = true
+    end
+    local out = {}
+    for i, b in ipairs(blocks) do
+        local c = b.cframe
+        local x, y, z = math.floor(c[1] / 3), math.floor(c[2] / 3), math.floor(c[3] / 3)
+        local hidden =
+            occ[((x + 1) * 2048 + y) * 2048 + z] and occ[((x - 1) * 2048 + y) * 2048 + z]
+            and occ[(x * 2048 + y + 1) * 2048 + z] and occ[(x * 2048 + y - 1) * 2048 + z]
+            and occ[(x * 2048 + y) * 2048 + z + 1] and occ[(x * 2048 + y) * 2048 + z - 1]
+        if not hidden then out[#out + 1] = b end
+        if i % 40000 == 0 then task.wait() end
+    end
+    return out
+end
+
 -- ── blending ───────────────────────────────────────────────────────────────
 -- A converted build often reads as noise: Minecraft's stone, andesite,
 -- diorite, smooth stone and their polished cousins all map to different
@@ -12441,7 +12485,8 @@ end
 -- per file and per blend setting, so previewing twice does not re-read it.
 BuilderAPI.loadSchematicFile = function(name, data)
     CONVERT.cache = CONVERT.cache or {}
-    local key = name .. "@" .. tostring(CONVERT.simplify) .. "@" .. tostring(CONVERT.blend)
+    local key = name .. "@" .. tostring(CONVERT.simplify) .. "@"
+        .. tostring(CONVERT.blend) .. "@" .. tostring(CONVERT.hollow)
     if CONVERT.cache[key] then return { blocks = CONVERT.cache[key] } end
 
     notify("Schematic", "Reading " .. name .. "...", 5, "info")
@@ -12459,6 +12504,19 @@ BuilderAPI.loadSchematicFile = function(name, data)
         return nil
     end
 
+    local mode = CONVERT.hollow or "Off"
+    if mode ~= "Off" then
+        local before = #blocks
+        notify("Schematic", "Hollowing...", 4, "info")
+        if mode == "Outside Only" then
+            blocks = hollowExterior(blocks, true)
+        else
+            blocks = hollowBuried(blocks)
+        end
+        notify("Hollowed", before .. " -> " .. #blocks .. " blocks", 5, "info")
+    end
+
+    -- after hollowing, so the counts it ranks by are of blocks that survive
     if (CONVERT.simplify or 0) > 0 then
         notify("Schematic", "Blending colours...", 4, "info")
         blocks = BuilderAPI.blendBuild(blocks, CONVERT.simplify, CONVERT.blend)
