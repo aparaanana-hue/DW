@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 11:00"
+local IAB_BUILD = "Aug 14 13:10"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1828,24 +1828,49 @@ local function getCandidateFolders()
     return candidateFolders
 end
 
+-- A block's model is not stored under its own name directly. There are two
+-- layouts: blocks/<name>, which is the model, and Blocks/<name>/Root, where
+-- the name is a container and Root is the model inside it. Handing back the
+-- container is no use - it is not a part and not a model, so it cannot be
+-- positioned - and that is what made the preview fall back to plain coloured
+-- boxes for every block that lives in the second layout.
+local BLOCK_ALIASES = { dirt = "soil" }
+
+local function resolveBlockModel(name)
+    local want = BLOCK_ALIASES[name] or name
+
+    local lower = ReplicatedStorage:FindFirstChild("blocks")
+    local hit = lower and lower:FindFirstChild(want)
+    if hit then return hit end
+
+    local upper = ReplicatedStorage:FindFirstChild("Blocks")
+    local entry = upper and upper:FindFirstChild(want)
+    if entry then return entry:FindFirstChild("Root") or entry end
+
+    -- anything else that keeps blocks around, deep search as a last resort
+    for _, folder in ipairs(getCandidateFolders()) do
+        local found = folder:FindFirstChild(want)
+        if found then return found:FindFirstChild("Root") or found end
+    end
+    for _, folder in ipairs(getCandidateFolders()) do
+        local found = folder:FindFirstChild(want, true)
+        if found then return found end
+    end
+    return nil
+end
+
 local function getTemplate(blockType)
     if templateCache[blockType] ~= nil then
         return templateCache[blockType] or nil
     end
     local t = nil
-    pcall(function()
-        for _, folder in ipairs(getCandidateFolders()) do
-            local found = folder:FindFirstChild(blockType)
-            if found then t = found break end
-        end
-        if not t then
-            for _, folder in ipairs(getCandidateFolders()) do
-                local found = folder:FindFirstChild(blockType, true)
-                if found then t = found break end
-            end
-        end
-    end)
-    templateCache[blockType] = t or false
+    pcall(function() t = resolveBlockModel(blockType) end)
+    -- Only remember a miss once the game has actually loaded its blocks;
+    -- caching nil during the first seconds of a session would keep every block
+    -- grey for the rest of it.
+    if t or #getCandidateFolders() > 0 then
+        templateCache[blockType] = t or false
+    end
     return t
 end
 
@@ -14995,22 +15020,9 @@ end
 -- Clone the real model for a block type, stripped of anything a viewport
 -- cannot use. Cached, because cloning per block would be brutal.
 local templateCache = {}
--- Block names are not always what a build file calls them, and templates live
--- in two places: blocks/<name> and Blocks/<name>/Root. Try both.
-local BLOCK_ALIASES = { dirt = "soil" }
-
-local function findBlockTemplate(name)
-    local want = BLOCK_ALIASES[name] or name
-    local lower = ReplicatedStorage:FindFirstChild("blocks")
-    local hit = lower and lower:FindFirstChild(want)
-    if hit then return hit end
-    local upper = ReplicatedStorage:FindFirstChild("Blocks")
-    local entry = upper and upper:FindFirstChild(want)
-    if entry then
-        return entry:FindFirstChild("Root") or entry
-    end
-    return nil
-end
+-- One resolver for both, so the preview and the thumbnail can never disagree
+-- about where a block's model lives.
+local findBlockTemplate = resolveBlockModel
 
 BuilderAPI.findBlockTemplate = findBlockTemplate
 
