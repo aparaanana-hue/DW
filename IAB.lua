@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 15:05"
+local IAB_BUILD = "Aug 12 17:40"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -12318,16 +12318,25 @@ BuilderAPI.convertSchematic = function(name, data, onProgress)
                 local z = math.floor(rem / w)
                 local x = rem % w
                 local px, py, pz = x * 3, y * 3, z * 3
+                -- Islands records which half of a cell a slab is in by where
+                -- it sits, not by the flag: partToBlockEntry reads a block
+                -- back as upper when a half-height part is above the cell
+                -- centre. A slab written dead on the grid is in neither half
+                -- and the game seats it low, which is why roofs came out a
+                -- slab short with gaps along them.
+                local isSlab = target:lower():find("slab") ~= nil
+                local sy = py
+                if isSlab then sy = py + (upper and 0.75 or -0.75) end
                 blocks[#blocks + 1] = {
                     blockType = target, upperBlock = upper,
-                    cframe = { px, py, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
+                    cframe = { px, sy, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
                     parts = {},
                 }
                 kept[target] = (kept[target] or 0) + 1
                 if doubled then
                     blocks[#blocks + 1] = {
                         blockType = target, upperBlock = true,
-                        cframe = { px, py, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
+                        cframe = { px, py + 0.75, pz, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6] },
                         parts = {},
                     }
                 end
@@ -12352,6 +12361,8 @@ BuilderAPI.convertSchematic = function(name, data, onProgress)
         if b.cframe[2] < mny then mny = b.cframe[2] end
         if b.cframe[3] < mnz then mnz = b.cframe[3] end
     end
+    -- anchor on the grid, not on a seated slab, or every block shifts by 0.75
+    mny = math.floor(mny / 3 + 0.5) * 3
     for i, b in ipairs(blocks) do
         b.cframe[1] = b.cframe[1] - mnx
         b.cframe[2] = b.cframe[2] - mny
@@ -12415,6 +12426,16 @@ BuilderAPI.blendBuild = function(blocks, limit, dither, onProgress)
         counts[b.blockType] = (counts[b.blockType] or 0) + 1
     end
 
+    -- Shape matters as much as colour: swapping a slab for a full block or a
+    -- stair fills a gap that was meant to be there, and a roof stops being a
+    -- roof. Blocks only ever move onto another of the same shape.
+    local function shapeOf(name)
+        local low = name:lower()
+        if low:find("slab") then return "slab" end
+        if low:find("stair") then return "stair" end
+        return "full"
+    end
+
     local ranked = {}
     for name in pairs(counts) do
         if colours[name] then ranked[#ranked + 1] = name end
@@ -12422,15 +12443,36 @@ BuilderAPI.blendBuild = function(blocks, limit, dither, onProgress)
     table.sort(ranked, function(p, q) return counts[p] > counts[q] end)
     if limit <= 0 or limit >= #ranked then return blocks end
 
+    -- the budget is shared out by how common each shape is, so a build made
+    -- mostly of full blocks does not spend it all on its handful of stairs
+    local byShape, totals = {}, {}
+    for _, name in ipairs(ranked) do
+        local sh = shapeOf(name)
+        byShape[sh] = byShape[sh] or {}
+        table.insert(byShape[sh], name)
+        totals[sh] = (totals[sh] or 0) + counts[name]
+    end
+    local grand = 0
+    for _, n in pairs(totals) do grand = grand + n end
+
     local keep = {}
-    for i = 1, limit do keep[i] = ranked[i] end
+    local keepByShape = {}
+    for sh, names in pairs(byShape) do
+        local share = math.max(1, math.floor(limit * (totals[sh] / grand) + 0.5))
+        keepByShape[sh] = {}
+        for i = 1, math.min(share, #names) do
+            keepByShape[sh][#keepByShape[sh] + 1] = names[i]
+            keep[#keep + 1] = names[i]
+        end
+    end
 
     -- worked out once per block type, not once per block
     local swap = {}
     for _, name in ipairs(ranked) do
         local c = colours[name]
+        local pool = keepByShape[shapeOf(name)] or keep
         local best, bestD, second, secondD
-        for _, k in ipairs(keep) do
+        for _, k in ipairs(pool) do
             local e = colours[k]
             local dL, da, db = c.L - e.L, c.a - e.a, c.b - e.b
             local d = dL * dL + da * da + db * db

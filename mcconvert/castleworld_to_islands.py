@@ -11,7 +11,7 @@ import json, os, sys
 from collections import Counter
 
 import anvil
-from blockmap import BULK, DROP, islands_name, parse_state, resolve
+from blockmap import BULK, DROP, islands_name, parse_state, resolve, seat_slabs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGION = ("/Users/johnlawrencepena/Documents/Rice Hub /price-logger-bot/"
@@ -144,6 +144,9 @@ def main():
 
         name = f"Castle{n}" + ("Hollow" if hollow else "")
         out = os.path.join(ROOT, "builds", name + ".json")
+        # slabs record their half by position, not by the flag alone
+        seat_slabs(blocks)
+
         with open(out, "w") as fh:
             json.dump({"blocks": blocks}, fh, separators=(",", ":"))
         sx = max(b["cframe"][0] for b in blocks) // 3 + 1

@@ -21,7 +21,7 @@ import json, os, sys
 from collections import Counter
 
 import anvil
-from blockmap import DROP, NATURAL, base_of, parse_state, resolve_any
+from blockmap import DROP, NATURAL, base_of, parse_state, resolve_any, seat_slabs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -134,6 +134,9 @@ def main():
 
         os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
         out = os.path.join(ROOT, "builds", name + ".json")
+        # slabs record their half by position, not by the flag alone
+        seat_slabs(blocks)
+
         with open(out, "w") as fh:
             json.dump({"blocks": blocks}, fh, separators=(",", ":"))
         sx = max(b["cframe"][0] for b in blocks) // 3 + 1

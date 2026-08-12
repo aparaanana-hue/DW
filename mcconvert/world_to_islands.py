@@ -7,7 +7,7 @@ Y is kept relative to the build's base.
 import sys, os, json
 from collections import Counter
 import anvil as mcread
-from blockmap import BULK, DROP, islands_name, parse_state, resolve
+from blockmap import BULK, DROP, islands_name, parse_state, resolve, seat_slabs
 
 # Repo root, so the script works from anywhere.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +68,9 @@ def main():
 
     name = "IvyWoodManorHollow" if "--hollow" in sys.argv[1:] else "IvyWoodManor"
     out = os.path.join(ROOT, "builds", name + ".json")
+    # slabs record their half by position, not by the flag alone
+    seat_slabs(blocks)
+
     with open(out, "w") as f:
         json.dump({"blocks": blocks}, f, separators=(",", ":"))
 

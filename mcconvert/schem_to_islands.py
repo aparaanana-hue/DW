@@ -14,7 +14,7 @@ import gzip, io, json, os, sys
 from collections import Counter
 
 import nbtlib
-from blockmap import DROP, islands_name, parse_state, resolve
+from blockmap import DROP, islands_name, parse_state, resolve, seat_slabs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -157,6 +157,9 @@ def main():
 
     os.makedirs(os.path.join(ROOT, "builds"), exist_ok=True)
     out = os.path.join(ROOT, "builds", outname + ".json")
+    # slabs record their half by position, not by the flag alone
+    seat_slabs(blocks)
+
     with open(out, "w") as f:
         json.dump({"blocks": blocks}, f, separators=(",", ":"))
 
