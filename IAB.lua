@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 22:40"
+local IAB_BUILD = "Aug 14 09:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2188,26 +2188,60 @@ local function previewBuild(blocks)
         -- placed on its own, is the real slab with its real texture, in the
         -- right half, with nothing to swap and nothing to go wrong.
         if isSlab and previewRealModels and not previewMinimized then
+            -- Draw the real slab, whatever shape the template turns out to be.
+            --
+            -- A placed block keeps its two halves as separate MeshParts, so if
+            -- they are there, clone the one wanted. A template often is not
+            -- built that way - it may just be the slab mesh on its own - so
+            -- fall back to cloning the whole thing. Either way, measure what
+            -- came out: something half a cell tall gets moved into the right
+            -- half, something a full cell tall is already whole and stays put.
+            -- The grey box is only for when there is no template at all.
             local template = getTemplate(blockType)
             if template then
                 local top, bottom = slabHalves(template)
-                local want = upper and top or bottom
-                if want then
-                    local ok, half = pcall(function() return want:Clone() end)
-                    if ok and half then
-                        ghostifyClone(half, previewTransparency)
-                        -- the half may have been the hidden one in the
-                        -- template, in which case ghostify left it invisible
-                        half.Transparency = previewTransparency
-                        half.Name = blockType
-                        half.CFrame = cellCF
-                            + Vector3.new(0, upper and 0.75 or -0.75, 0)
-                        tagGhost(half, blockSrcKey(block), brushPreview)
-                        half.Parent = model
-                        rendered = true
-                        slabSwapped = slabSwapped + 1
-                        work = work + 4
+                local want = (upper and top or bottom) or template
+                local ok, piece = pcall(function() return want:Clone() end)
+                if ok and piece then
+                    ghostifyClone(piece, previewTransparency)
+                    -- it may have been the hidden half in the template, which
+                    -- ghostify leaves invisible
+                    if piece:IsA("BasePart") then
+                        piece.Transparency = previewTransparency
+                    else
+                        for _, d in ipairs(piece:GetDescendants()) do
+                            if d:IsA("BasePart") and d.Transparency >= 1 then
+                                d.Transparency = previewTransparency
+                            end
+                        end
                     end
+                    piece.Name = blockType
+
+                    local height = previewBlockSize
+                    pcall(function()
+                        if piece:IsA("BasePart") then
+                            height = piece.Size.Y
+                        else
+                            local _, size = piece:GetBoundingBox()
+                            height = size.Y
+                        end
+                    end)
+                    local dy = 0
+                    if height <= previewBlockSize * 0.75 then
+                        dy = upper and 0.75 or -0.75
+                    end
+                    local place = cellCF + Vector3.new(0, dy, 0)
+                    if piece:IsA("BasePart") then
+                        piece.CFrame = place
+                    else
+                        pcall(function() piece:PivotTo(place) end)
+                    end
+
+                    tagGhost(piece, blockSrcKey(block), brushPreview)
+                    piece.Parent = model
+                    rendered = true
+                    slabSwapped = slabSwapped + 1
+                    work = work + 4
                 end
             end
             if not rendered then slabFellBack = slabFellBack + 1 end
@@ -2303,6 +2337,11 @@ local function previewBuild(blocks)
             msg = ("%d slabs: %d real, %d stand-ins%s"):format(
                 total, slabSwapped, slabStandIn + slabFellBack,
                 slabFellBack > 0 and (" (" .. slabFellBack .. " had no halves)") or "")
+        end
+        if slabFellBack > 0 then
+            msg = msg .. ("\n%d slabs had no block to copy, so they are drawn"
+                .. " as plain colour. Build the block palette so the game has"
+                .. " one to copy from."):format(slabFellBack)
         end
         if clashes > 0 then
             msg = msg .. ("\n%d blocks share a cell with another - that is the"
