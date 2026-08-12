@@ -1117,11 +1117,11 @@ QUARTER_TURNS = [
 # Turn the whole build if Islands' stair model faces some other way than the
 # vanilla base: 1 adds 90 degrees, 2 adds 180, and so on.
 #
-# Each step of this turns the build a further quarter turn clockwise seen from
-# above, so 3 is one quarter turn to the left of the vanilla base. Islands'
-# stair models sit a quarter turn left of where vanilla's do; anything else put
-# converted stairs in the wall or backwards.
-FACING_OFFSET = 1
+# Each step turns the build a further quarter turn clockwise seen from above.
+# This has been wrong twice and corrected from what the builds actually look
+# like in game rather than from theory: 0 put stairs in the wall, 2 left them
+# a quarter turn out, 1 came out backwards. 3 is the one that reads right.
+FACING_OFFSET = 3
 
 _FACING_STEPS = {"east": 0, "south": 1, "west": 2, "north": 3}
 FACING_ROT = {

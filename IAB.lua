@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 12 10:30"
+local IAB_BUILD = "Aug 12 13:15"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -358,6 +358,10 @@ local includeSlabs = true
 MODEL = { grid = 96, cache = {}, lastName = nil, dither = true,
           ditherCache = {}, texSize = 256,
           ditherAmount = 0.45, ditherMin = 0.053, limit = 0 }
+
+-- Schematics, for the same reason: the Schematic section's controls write to
+-- this, and a restored config fires their callbacks early.
+CONVERT = { simplify = 0, blend = true, file = nil, cache = {} }
 
 brushPreview = false
 objStep = 3
@@ -725,9 +729,17 @@ function isModelFile(name)
     return name ~= nil and string.lower(name):sub(-4) == ".glb"
 end
 
+function isSchematicFile(name)
+    if not name then return false end
+    local low = string.lower(name)
+    return low:sub(-6) == ".schem" or low:sub(-10) == ".litematic"
+end
+
 function filePathFor(name)
     if isModelFile(name) then
         return MODEL_DIR .. "/" .. name
+    elseif isSchematicFile(name) then
+        return CONVERT_DIR .. "/" .. name
     end
     return "autoBuilder/" .. name
 end
@@ -1381,6 +1393,17 @@ local function loadSelectedBuild()
             return nil
         end
         return BuilderAPI.loadModelFile(selectedFile, text)
+    end
+
+    -- A schematic is not a build file yet either. Converting it here rather
+    -- than behind a Convert button means Preview Build just works on it, the
+    -- same way it does on a model.
+    if isSchematicFile(selectedFile) then
+        if not BuilderAPI.loadSchematicFile then
+            notify("Error", "Converter is still loading, try again", 4)
+            return nil
+        end
+        return BuilderAPI.loadSchematicFile(selectedFile, text)
     end
 
     local success, data = pcall(function()
@@ -3036,6 +3059,76 @@ auto:CreateRangeSlider({
 })
 
 
+-- ── Schematics ─────────────────────────────────────────────────────────────
+-- Sits with the other file pickers because that is what a schematic is here:
+-- another thing you can preview and build. Converting happens when you pick
+-- it, not behind a separate button, so Preview Build works straight away.
+auto:CreateSection("Schematic", { Collapsible = true, Column = "left", Order = 2 })
+
+-- declared before use: its own Refresh action reaches it
+schemDropdown = auto:CreateDropdown({
+    Name = "Select Schematic",
+    Actions = {
+        { Text = "Refresh", OnClick = function()
+            pcall(function() schemDropdown:Refresh(BuilderAPI.schematicFiles(), true) end)
+            notify("Schematics", "List refreshed", 2, "info")
+        end },
+        { Text = "Delete", OnClick = function()
+            if not CONVERT or not CONVERT.file then
+                notifyWarn("No Schematic", "Pick one first", 3)
+                return
+            end
+            local target = CONVERT.file
+            confirm("Delete Schematic", "Permanently delete '" .. target .. "'?",
+                "Delete", function()
+                    pcall(function()
+                        local path = filePathFor(target)
+                        if isfile(path) then delfile(path) end
+                    end)
+                    CONVERT.file = nil
+                    CONVERT.cache = {}
+                    pcall(function() schemDropdown:Refresh(BuilderAPI.schematicFiles(), true) end)
+                    notifyOK("Deleted", "'" .. target .. "' removed", 4)
+                end)
+        end },
+    },
+    Options = { "Press Refresh" },
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "ConvertFile",
+    Tooltip = "Put .schem and .litematic files in the converter folder inside autoBuilder. Picking one converts it, then Preview Build shows it.",
+    Callback = function(v)
+        local name = (typeof(v) == "table") and v[1] or v
+        if not isSchematicFile(name) or not CONVERT then return end
+        CONVERT.file = name
+        selectedFile = name
+        savedPreviewTransform = nil
+    end
+})
+
+auto:CreateSlider({
+    Name = "Blend to Colours", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
+    Suffix = "types", Flag = "ConvertSimplify",
+    Tooltip = "Minecraft's stone, andesite and diorite all arrive as different Islands blocks, so one wall turns into several greys and looks like scattered blocks. This keeps the most-used blocks and moves the rest onto the nearest one that looks the same. 0 leaves every block as it converted.",
+    Callback = function(v)
+        if not CONVERT then return end
+        CONVERT.simplify = v
+        CONVERT.cache = {}
+    end
+})
+
+auto:CreateToggle({
+    Name = "Smooth the Blend",
+    CurrentValue = true,
+    Flag = "ConvertBlend",
+    Tooltip = "When a colour sits between two of the blocks you kept, alternate between them so it reads as the shade in between instead of jumping to one.",
+    Callback = function(v)
+        if not CONVERT then return end
+        CONVERT.blend = v
+        CONVERT.cache = {}
+    end
+})
+
 -- ── Models ─────────────────────────────────────────────────────────────────
 -- Sits under Build because a .glb in autoBuilder is picked from the same file
 -- list as a build file; these are the settings for turning one into blocks.
@@ -4030,7 +4123,7 @@ saveTab:CreateDropdown({
     -- decided by the tools you already point at things with - the selection
     -- box and the brush - rather than by a separate splitting mode.
     Options = { "Whole Island", "Inside Selection Box", "Brush Selection",
-                "Model", "Image" },
+                "Model or Schematic", "Image" },
     CurrentOption = { "Whole Island" },
     MultipleOptions = false,
     Flag = "SaveTarget",
@@ -4057,7 +4150,7 @@ saveTab:CreateButton({
                     return
                 end
                 BuilderAPI.generateImage(saveFileName)
-            elseif saveTarget == "Model" then
+            elseif saveTarget == "Model or Schematic" then
                 -- a model is already a block list by the time it is previewed;
                 -- saving it just writes that out as an ordinary build file
                 if not MODEL or not MODEL.selected then
@@ -11878,10 +11971,10 @@ MC_DROP = {
     ["white_tulip"]=true, ["wildflowers"]=true, ["wither_rose"]=true,
 }
 MC_FACING = {
-    north = { 1, 0, 0, 0, 1, 0 },
-    east = { 0, 0, 1, 0, 1, 0 },
-    south = { -1, 0, 0, 0, 1, 0 },
-    west = { 0, 0, -1, 0, 1, 0 },
+    north = { -1, 0, 0, 0, 1, 0 },
+    east = { 0, 0, -1, 0, 1, 0 },
+    south = { 1, 0, 0, 0, 1, 0 },
+    west = { 0, 0, 1, 0, 1, 0 },
 }
 MC_AXIS = {
     y = { 1, 0, 0, 0, 1, 0 },
@@ -12157,6 +12250,21 @@ local function readLitematic(root)
 end
 
 -- ── the conversion ─────────────────────────────────────────────────────────
+BuilderAPI.schematicFiles = function()
+    local files = {}
+    if isfolder(CONVERT_DIR) then
+        for _, f in ipairs(listfiles(CONVERT_DIR)) do
+            local low = string.lower(f)
+            if low:sub(-6) == ".schem" or low:sub(-10) == ".litematic" then
+                table.insert(files, f:match("[^/\\]+$"))
+            end
+        end
+    end
+    table.sort(files)
+    if #files == 0 then files[1] = "Nothing in autoBuilder/converter" end
+    return files
+end
+
 BuilderAPI.convertSchematic = function(name, data, onProgress)
     local raw, err = gunzip(data)
     if not raw then return nil, err or "could not unpack the file" end
@@ -12236,6 +12344,135 @@ BuilderAPI.convertSchematic = function(name, data, onProgress)
     return blocks, nil, {
         size = { w, h, l }, kept = kept, unmapped = unmapped, dropped = dropped,
     }
+end
+
+-- ── blending ───────────────────────────────────────────────────────────────
+-- A converted build often reads as noise: Minecraft's stone, andesite,
+-- diorite, smooth stone and their polished cousins all map to different
+-- Islands blocks, so a wall that was one material over there arrives as five
+-- slightly different greys over here. Nothing is wrong with any single choice;
+-- together they look like blocks thrown at a wall.
+--
+-- This keeps the most-used blocks and moves the rest onto the nearest one that
+-- survived, judged by the colours measured in game. Two blocks that look the
+-- same become the same block, so surfaces read as surfaces. When two kept
+-- blocks sit either side of the colour being replaced, it alternates between
+-- them by position, which reads as the shade in between rather than a hard
+-- edge - the same trick the model converter uses.
+BuilderAPI.blendBuild = function(blocks, limit, dither, onProgress)
+    local colours = BuilderAPI.blockColours and BuilderAPI.blockColours()
+    if not colours then
+        notifyWarn("Blend", "Could not read block colours - left as it was", 5)
+        return blocks
+    end
+
+    local counts = {}
+    for _, b in ipairs(blocks) do
+        counts[b.blockType] = (counts[b.blockType] or 0) + 1
+    end
+
+    local ranked = {}
+    for name in pairs(counts) do
+        if colours[name] then ranked[#ranked + 1] = name end
+    end
+    table.sort(ranked, function(p, q) return counts[p] > counts[q] end)
+    if limit <= 0 or limit >= #ranked then return blocks end
+
+    local keep = {}
+    for i = 1, limit do keep[i] = ranked[i] end
+
+    -- worked out once per block type, not once per block
+    local swap = {}
+    for _, name in ipairs(ranked) do
+        local c = colours[name]
+        local best, bestD, second, secondD
+        for _, k in ipairs(keep) do
+            local e = colours[k]
+            local dL, da, db = c.L - e.L, c.a - e.a, c.b - e.b
+            local d = dL * dL + da * da + db * db
+            if not bestD or d < bestD then
+                second, secondD = best, bestD
+                best, bestD = k, d
+            elseif not secondD or d < secondD then
+                second, secondD = k, d
+            end
+        end
+        local t = 0
+        if second and dither then
+            local e1, e2 = colours[best], colours[second]
+            local vx, vy, vz = e2.L - e1.L, e2.a - e1.a, e2.b - e1.b
+            local dx, dy, dz = c.L - e1.L, c.a - e1.a, c.b - e1.b
+            local den = vx * vx + vy * vy + vz * vz
+            if den > 1e-12 then
+                t = math.clamp((dx * vx + dy * vy + dz * vz) / den, 0, 1)
+            end
+        end
+        swap[name] = { best, second, t }
+    end
+
+    local changed = 0
+    for i, b in ipairs(blocks) do
+        local rule = swap[b.blockType]
+        if rule and rule[1] ~= b.blockType then
+            local pick = rule[1]
+            if dither and rule[2] and rule[3] > 0 then
+                local c = b.cframe
+                local x = math.floor(c[1] / 3) % 4
+                local y = math.floor(c[2] / 3) % 4
+                local z = math.floor(c[3] / 3) % 4
+                if MODEL.bayer[z][y][x] < rule[3] then pick = rule[2] end
+            end
+            if pick ~= b.blockType then
+                b.blockType = pick
+                changed = changed + 1
+            end
+        end
+        if i % 40000 == 0 then
+            task.wait()
+            if onProgress then onProgress(i, #blocks) end
+        end
+    end
+
+    notify("Blended", changed .. " blocks moved onto " .. limit .. " colours", 5, "info")
+    return blocks
+end
+
+-- Called from loadSelectedBuild when the picked file is a schematic. Cached
+-- per file and per blend setting, so previewing twice does not re-read it.
+BuilderAPI.loadSchematicFile = function(name, data)
+    CONVERT.cache = CONVERT.cache or {}
+    local key = name .. "@" .. tostring(CONVERT.simplify) .. "@" .. tostring(CONVERT.blend)
+    if CONVERT.cache[key] then return { blocks = CONVERT.cache[key] } end
+
+    notify("Schematic", "Reading " .. name .. "...", 5, "info")
+    local lastMark = 0
+    local blocks, err, info = BuilderAPI.convertSchematic(name, data,
+        function(done, total)
+            local mark = math.floor(done / total * 4)
+            if mark > lastMark and mark < 4 then
+                lastMark = mark
+                notify("Schematic", (mark * 25) .. "% read", 2, "info")
+            end
+        end)
+    if not blocks then
+        notifyErr("Schematic", err or "Could not convert that file", 9)
+        return nil
+    end
+
+    if (CONVERT.simplify or 0) > 0 then
+        notify("Schematic", "Blending colours...", 4, "info")
+        blocks = BuilderAPI.blendBuild(blocks, CONVERT.simplify, CONVERT.blend)
+    end
+
+    CONVERT.cache[key] = blocks
+    local kinds = 0
+    for _ in pairs(info.kept) do kinds = kinds + 1 end
+    local un = 0
+    for _ in pairs(info.unmapped) do un = un + 1 end
+    notifyOK("Schematic", ("%d blocks, %dx%dx%d, %d block types%s")
+        :format(#blocks, info.size[1], info.size[2], info.size[3], kinds,
+                un > 0 and (", " .. un .. " kinds had no match") or ""), 9)
+    return { blocks = blocks }
 end
 
 end
@@ -15202,229 +15439,6 @@ brushPanel:AddButton({ Name = "Save Selected Blocks", Callback = function()
 
 end
 
-
--- ═══════════════════════════════════════════════════════════════════════════
--- CONVERT TAB — schematics into build files, without leaving the game
--- ═══════════════════════════════════════════════════════════════════════════
-do
-
-CONVERT = { simplify = 0, blend = true, file = nil }
-
-local function converterFiles()
-    local files = {}
-    if isfolder(CONVERT_DIR) then
-        for _, f in ipairs(listfiles(CONVERT_DIR)) do
-            local low = string.lower(f)
-            if low:sub(-6) == ".schem" or low:sub(-10) == ".litematic" then
-                table.insert(files, f:match("[^/\\]+$"))
-            end
-        end
-    end
-    table.sort(files)
-    if #files == 0 then files[1] = "Nothing in autoBuilder/converter" end
-    return files
-end
-
--- ── blending ───────────────────────────────────────────────────────────────
--- A converted build often reads as noise: Minecraft's stone, andesite,
--- diorite, smooth stone and their polished cousins all map to different
--- Islands blocks, so a wall that was one material over there arrives as five
--- slightly different greys over here. Nothing is wrong with any single choice;
--- together they look like blocks thrown at a wall.
---
--- This keeps the most-used blocks and moves the rest onto the nearest one that
--- survived, judged by the colours measured in game. Two blocks that look the
--- same become the same block, so surfaces read as surfaces. When two kept
--- blocks sit either side of the colour being replaced, it alternates between
--- them by position, which reads as the shade in between rather than a hard
--- edge - the same trick the model converter uses.
-BuilderAPI.blendBuild = function(blocks, limit, dither, onProgress)
-    local colours = BuilderAPI.blockColours()
-    if not colours then
-        notifyWarn("Blend", "Could not read block colours - left as it was", 5)
-        return blocks
-    end
-
-    local counts = {}
-    for _, b in ipairs(blocks) do
-        counts[b.blockType] = (counts[b.blockType] or 0) + 1
-    end
-
-    local ranked = {}
-    for name in pairs(counts) do
-        if colours[name] then ranked[#ranked + 1] = name end
-    end
-    table.sort(ranked, function(p, q) return counts[p] > counts[q] end)
-    if limit <= 0 or limit >= #ranked then return blocks end
-
-    local keep = {}
-    for i = 1, limit do keep[i] = ranked[i] end
-
-    -- work out, once per block type, which kept block it becomes
-    local swap = {}
-    for _, name in ipairs(ranked) do
-        local c = colours[name]
-        local best, bestD, second, secondD
-        for _, k in ipairs(keep) do
-            local e = colours[k]
-            local dL, da, db = c.L - e.L, c.a - e.a, c.b - e.b
-            local d = dL * dL + da * da + db * db
-            if not bestD or d < bestD then
-                second, secondD = best, bestD
-                best, bestD = k, d
-            elseif not secondD or d < secondD then
-                second, secondD = k, d
-            end
-        end
-        -- how far between the two nearest this colour sits, so the mix leans
-        -- the right way rather than being an even scatter
-        local t = 0
-        if second and dither then
-            local e1, e2 = colours[best], colours[second]
-            local vx, vy, vz = e2.L - e1.L, e2.a - e1.a, e2.b - e1.b
-            local dx, dy, dz = c.L - e1.L, c.a - e1.a, c.b - e1.b
-            local den = vx * vx + vy * vy + vz * vz
-            if den > 1e-12 then
-                t = math.clamp((dx * vx + dy * vy + dz * vz) / den, 0, 1)
-            end
-        end
-        swap[name] = { best, second, t }
-    end
-
-    local changed = 0
-    for i, b in ipairs(blocks) do
-        local rule = swap[b.blockType]
-        if rule and rule[1] ~= b.blockType then
-            local pick = rule[1]
-            if dither and rule[2] and rule[3] > 0 then
-                local c = b.cframe
-                local x = math.floor(c[1] / 3) % 4
-                local y = math.floor(c[2] / 3) % 4
-                local z = math.floor(c[3] / 3) % 4
-                if MODEL.bayer[z][y][x] < rule[3] then pick = rule[2] end
-            end
-            if pick ~= b.blockType then
-                b.blockType = pick
-                changed = changed + 1
-            end
-        end
-        if i % 40000 == 0 then
-            task.wait()
-            if onProgress then onProgress(i, #blocks) end
-        end
-    end
-
-    notify("Blended", changed .. " blocks moved onto " .. limit .. " colours", 5, "info")
-    return blocks
-end
-
--- ── UI ─────────────────────────────────────────────────────────────────────
-tabConvert:CreateSection("Minecraft Schematics", { Collapsible = true })
-
-tabConvert:CreateParagraph({
-    Title = "How",
-    Content = "Drop a .schem or .litematic into autoBuilder/converter, press"
-        .. " Refresh, pick it, then Convert. It becomes a build file you can"
-        .. " preview and build like any other.",
-})
-
-convertDropdown = tabConvert:CreateDropdown({
-    Name = "Schematic",
-    Actions = { { Text = "Refresh", OnClick = function()
-        pcall(function() convertDropdown:Refresh(converterFiles(), true) end)
-        notify("Converter", "List refreshed", 2, "info")
-    end } },
-    Options = converterFiles(),
-    CurrentOption = {},
-    MultipleOptions = false,
-    Flag = "ConvertFile",
-    Tooltip = "Schematics live in the converter folder inside autoBuilder.",
-    Callback = function(v)
-        local name = (typeof(v) == "table") and v[1] or v
-        if name and name ~= "Nothing in autoBuilder/converter" then
-            CONVERT.file = name
-        end
-    end
-})
-
-tabConvert:CreateSlider({
-    Name = "Blend to Colours", Range = { 0, 40 }, Increment = 1, CurrentValue = 0,
-    Suffix = "types", Flag = "ConvertSimplify",
-    Tooltip = "Minecraft's stone, andesite and diorite all arrive as different Islands blocks, so one wall turns into several greys and looks like scattered blocks. This keeps the most-used blocks and moves the rest onto the nearest one that looks the same. 0 leaves every block as it converted.",
-    Callback = function(v) CONVERT.simplify = v end
-})
-
-tabConvert:CreateToggle({
-    Name = "Smooth the Blend",
-    CurrentValue = true,
-    Flag = "ConvertBlend",
-    Tooltip = "When a colour sits between two of the blocks you kept, alternate between them so it reads as the shade in between instead of jumping to one. Off snaps every block to its single nearest match.",
-    Callback = function(v) CONVERT.blend = v end
-})
-
-tabConvert:CreateInput({
-    Name = "Save As",
-    PlaceholderText = "MyBuild",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(t) if t and t ~= "" then CONVERT.name = t end end
-})
-
-tabConvert:CreateButton({
-    Name = "Convert",
-    Tooltip = "Reads the schematic and writes it out as a build file.",
-    Callback = function()
-        task.spawn(function()
-            if not CONVERT.file then
-                notifyWarn("Converter", "Pick a schematic first", 4)
-                return
-            end
-            local path = CONVERT_DIR .. "/" .. CONVERT.file
-            if not isfile(path) then
-                notifyErr("Converter", "That file is gone - press Refresh", 5)
-                return
-            end
-
-            notify("Converter", "Reading " .. CONVERT.file .. "...", 5, "info")
-            local data = readfile(path)
-            local lastMark = 0
-            local blocks, err, info = BuilderAPI.convertSchematic(CONVERT.file, data,
-                function(done, total)
-                    local mark = math.floor(done / total * 4)
-                    if mark > lastMark and mark < 4 then
-                        lastMark = mark
-                        notify("Converter", (mark * 25) .. "% read", 2, "info")
-                    end
-                end)
-            if not blocks then
-                notifyErr("Converter", err or "Could not convert that file", 9)
-                return
-            end
-
-            if CONVERT.simplify > 0 then
-                notify("Converter", "Blending colours...", 4, "info")
-                blocks = BuilderAPI.blendBuild(blocks, CONVERT.simplify, CONVERT.blend)
-            end
-
-            local name = CONVERT.name
-            if not name or name == "" then
-                name = CONVERT.file:gsub("%.[Ss][Cc][Hh][Ee][Mm]$", "")
-                                   :gsub("%.[Ll][Ii][Tt][Ee][Mm][Aa][Tt][Ii][Cc]$", "")
-                                   :gsub("%s+", "")
-            end
-            finishSaveBlocks(blocks, name)
-
-            local kinds = 0
-            for _ in pairs(info.kept) do kinds = kinds + 1 end
-            local un = 0
-            for _ in pairs(info.unmapped) do un = un + 1 end
-            notifyOK("Converted", ("%d blocks, %dx%dx%d, %d block types%s")
-                :format(#blocks, info.size[1], info.size[2], info.size[3], kinds,
-                        un > 0 and (", " .. un .. " kinds had no match") or ""), 9)
-        end)
-    end
-})
-
-end
 
 -- ── On-screen status overlay ─────────────────────────────────────────────────
 -- Floating list in the corner so build state is visible with the panel closed.
