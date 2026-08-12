@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 11:30"
+local IAB_BUILD = "Aug 13 13:20"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1870,6 +1870,23 @@ local function isModelType(blockType)
     return result
 end
 
+-- Show one half of a slab block and hide the other. `alpha` lets the preview
+-- keep its ghost transparency on the half that stays visible.
+function showSlabHalf(inst, upper, alpha)
+    local top = inst:FindFirstChild("top")
+    local bottom = inst:FindFirstChild("bottom")
+    if not (top and bottom) then return false end
+    local shown = alpha or 0
+    if upper then
+        top.Transparency = shown
+        bottom.Transparency = 1
+    else
+        top.Transparency = 1
+        bottom.Transparency = shown
+    end
+    return true
+end
+
 local function ghostifyClone(inst, transparency)
     local function prep(d)
         if d:IsA("BasePart") then
@@ -2113,29 +2130,16 @@ local function previewBuild(blocks)
                     elseif clone:IsA("BasePart") then
                         clone.CFrame = targetCF
                     end
-                    -- A top slab sits flush with the top of its cell. Work the
-                    -- lift out from the model's own height instead of assuming
-                    -- a half cell: templates are not all built around their
-                    -- pivot the same way, and guessing left them poking into
-                    -- the cell above.
-                    if upper and isSlab then
-                        pcall(function()
-                            local topY
-                            if clone:IsA("Model") then
-                                local bcf, bsize = clone:GetBoundingBox()
-                                topY = bcf.Position.Y + bsize.Y / 2
-                            else
-                                topY = clone.Position.Y + clone.Size.Y / 2
-                            end
-                            local lift = (cellCF.Position.Y + previewBlockSize / 2) - topY
-                            if math.abs(lift) > 0.01 then
-                                if clone:IsA("Model") then
-                                    clone:PivotTo(clone:GetPivot() + Vector3.new(0, lift, 0))
-                                else
-                                    clone.CFrame = clone.CFrame + Vector3.new(0, lift, 0)
-                                end
-                            end
-                        end)
+                    -- A slab block is one 3x3x3 part holding both halves as
+                    -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
+                    -- half you see is whichever is not transparent. The
+                    -- template shows its bottom, so a clone is always a bottom
+                    -- slab however the block was flagged - which is why every
+                    -- previewed slab looked low. Swap the halves instead of
+                    -- moving the part: the geometry is already in the right
+                    -- place, it is just the wrong half showing.
+                    if isSlab and upper then
+                        pcall(function() showSlabHalf(clone, true, previewTransparency) end)
                     end
                     tagGhost(clone, blockSrcKey(block), brushPreview)
                     clone.Parent = model
@@ -14875,6 +14879,10 @@ local function render()
                     inst.CFrame = CFrame.new(x, y, z)
                 else
                     pcall(function() inst:PivotTo(CFrame.new(x, y, z)) end)
+                end
+                -- a cloned slab shows its bottom half whatever it was flagged
+                if b.upperBlock then
+                    pcall(function() showSlabHalf(inst, true) end)
                 end
             else
                 -- only when the game has no model for that id
