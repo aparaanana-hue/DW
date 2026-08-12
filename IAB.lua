@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 13 13:20"
+local IAB_BUILD = "Aug 13 15:00"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1870,6 +1870,28 @@ local function isModelType(blockType)
     return result
 end
 
+-- Which half of its cell a slab block is showing.
+--
+-- An Islands slab is a 3x3x3 part holding two MeshParts, 'bottom' at -0.75 and
+-- 'top' at +0.75, each 3x1.5x3. Both are always there; the one you see is the
+-- one that is not hidden. So the half cannot be read from the part's own size
+-- or position - both halves of a slab block sit at the same place, which is
+-- why two slabs in different halves used to save as identical data.
+function slabHalfOf(part)
+    local top = part:FindFirstChild("top")
+    local bottom = part:FindFirstChild("bottom")
+    if not (top and bottom) then return nil end
+    local function shown(d)
+        if not d:IsA("BasePart") then return false end
+        return d.Transparency < 0.5 and d.Size.Y > 0.01
+    end
+    local topOn, botOn = shown(top), shown(bottom)
+    if topOn and not botOn then return "top" end
+    if botOn and not topOn then return "bottom" end
+    if topOn and botOn then return "double" end
+    return nil
+end
+
 -- Show one half of a slab block and hide the other. `alpha` lets the preview
 -- keep its ghost transparency on the half that stays visible.
 function showSlabHalf(inst, upper, alpha)
@@ -3111,6 +3133,87 @@ schemDropdown = auto:CreateDropdown({
 })
 
 auto:CreateButton({
+    Name = "Test Slab Placement",
+    Tooltip = "Places two slabs in front of you - one asked for the bottom half, one for the top - then reads back which half each actually got. That is the one thing left to find out about slabs, and it takes a click.",
+    Callback = function()
+        task.spawn(function()
+            -- a slab from your inventory to test with
+            local slabName
+            for _, where in ipairs({ LocalPlayer:FindFirstChild("Backpack"), LocalPlayer.Character }) do
+                if where then
+                    for _, item in ipairs(where:GetChildren()) do
+                        if item:IsA("Tool") and string.lower(item.Name):find("slab") then
+                            slabName = item.Name
+                            break
+                        end
+                    end
+                end
+                if slabName then break end
+            end
+            if not slabName then
+                notifyWarn("Slab Test", "Put any slab in your inventory first", 6)
+                return
+            end
+
+            local _, _, hrp = getCharacterParts()
+            if not hrp then return end
+            updateGridPhase(true)
+
+            -- two empty cells in front of you, three studs apart
+            local base = hrp.Position + hrp.CFrame.LookVector * 9
+            local a = snapGridVec(Vector3.new(base.X, hrp.Position.Y, base.Z))
+            local b = a + Vector3.new(6, 0, 0)
+
+            notify("Slab Test", "Placing two " .. slabName .. "...", 5, "info")
+            placeRawBlock(slabName, CFrame.new(a), false)
+            task.wait(0.4)
+            placeRawBlock(slabName, CFrame.new(b), true)
+            task.wait(1.2)
+
+            local folder = getBlocksFolder()
+            if not folder then
+                notifyWarn("Slab Test", "Lost the island somehow", 4)
+                return
+            end
+            local function halfAt(pos)
+                local best, bestD
+                for _, part in ipairs(folder:GetChildren()) do
+                    if part:IsA("BasePart") and string.lower(part.Name):find("slab") then
+                        local d = (part.Position - pos).Magnitude
+                        if d < 3 and (not bestD or d < bestD) then best, bestD = part, d end
+                    end
+                end
+                if not best then return "nothing placed" end
+                return slabHalfOf(best) or "could not tell"
+            end
+
+            local askedBottom = halfAt(a)
+            local askedTop = halfAt(b)
+            local verdict
+            if askedTop == "top" and askedBottom == "bottom" then
+                verdict = "upperBlock WORKS - converted slabs should be correct"
+            elseif askedTop == "bottom" then
+                verdict = "upperBlock IS IGNORED - the server always makes a bottom slab"
+            else
+                verdict = "inconclusive"
+            end
+
+            local text = table.concat({
+                "=== SLAB PLACEMENT TEST ===",
+                "block: " .. slabName,
+                "asked for bottom -> got " .. tostring(askedBottom),
+                "asked for top    -> got " .. tostring(askedTop),
+                verdict,
+                "===========================",
+            }, "\n")
+            warn(text)
+            pcall(function() setclipboard(text) end)
+            notifyOK("Slab Test", verdict, 12)
+        end)
+    end
+})
+
+auto:CreateButton({
     Name = "Inspect Slabs",
     Tooltip = "Place one slab in the bottom half and one in the top half near you, then press this. It reports how the game itself stores them, which is what decides how a converted slab has to be written.",
     Callback = function()
@@ -3731,28 +3834,6 @@ function blockUnderCursor()
             return hit.Instance, hit.Normal
         end
     end
-    return nil
-end
-
--- Which half of its cell a slab block is showing.
---
--- An Islands slab is a 3x3x3 part holding two MeshParts, 'bottom' at -0.75 and
--- 'top' at +0.75, each 3x1.5x3. Both are always there; the one you see is the
--- one that is not hidden. So the half cannot be read from the part's own size
--- or position - both halves of a slab block sit at the same place, which is
--- why two slabs in different halves used to save as identical data.
-local function slabHalfOf(part)
-    local top = part:FindFirstChild("top")
-    local bottom = part:FindFirstChild("bottom")
-    if not (top and bottom) then return nil end
-    local function shown(d)
-        if not d:IsA("BasePart") then return false end
-        return d.Transparency < 0.5 and d.Size.Y > 0.01
-    end
-    local topOn, botOn = shown(top), shown(bottom)
-    if topOn and not botOn then return "top" end
-    if botOn and not topOn then return "bottom" end
-    if topOn and botOn then return "double" end
     return nil
 end
 
