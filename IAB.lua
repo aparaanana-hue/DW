@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 18:15"
+local IAB_BUILD = "Aug 14 19:40"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1673,9 +1673,15 @@ local function clearPreview()
     end
     handleConns = {}
     handleStartPivot = nil
-    local existing = Workspace:FindFirstChild(previewFolderName)
-    if existing then
-        existing:Destroy()
+    -- Every one of them, not just the first. previewBuild yields while it
+    -- draws, so starting a preview while one is still going leaves the old
+    -- model in the world, and FindFirstChild only ever removed one of them.
+    -- The leftovers are what shows through the new preview, flickering,
+    -- getting worse with every preview until you rejoin.
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child.Name == previewFolderName then
+            pcall(function() child:Destroy() end)
+        end
     end
     previewModel = nil
     previewTransform = nil
@@ -2066,8 +2072,15 @@ local function getBuildBounds(blocks)
     return minV, maxV, (minV + maxV) / 2
 end
 
+-- Bumped whenever a preview starts. A render that yields and then finds the
+-- number has moved on knows another preview has begun and stops, rather than
+-- carrying on filling a model that is no longer the current one.
+previewGeneration = 0
+
 local function previewBuild(blocks)
     clearPreview()
+    previewGeneration = previewGeneration + 1
+    local myGeneration = previewGeneration
     isPreviewing = true
     lastPreviewBlocks = blocks
     updateGridPhase()
@@ -2138,7 +2151,8 @@ local function previewBuild(blocks)
     previewGridOrigin = rootPos
 
     task.spawn(function()
-        while previewModel == model and model.Parent do
+        while previewModel == model and model.Parent
+            and previewGeneration == myGeneration do
             if previewPulse then
                 local a = (math.sin(tick() * 1.6) + 1) / 2
                 local tr = 0.35 + a * 0.4
@@ -2237,7 +2251,7 @@ local function previewBuild(blocks)
     local taken = {}
 
     for i, block in ipairs(renderList) do
-        if not isPreviewing then
+        if not isPreviewing or previewGeneration ~= myGeneration then
             break
         end
 
