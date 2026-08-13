@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 16:30"
+local IAB_BUILD = "Aug 14 18:15"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -2210,6 +2210,32 @@ local function previewBuild(blocks)
         notify("Minimized Preview", #renderList .. " of " .. #blocks .. " parts drawn", 4)
     end
 
+    -- A cell holding both slab halves - a double slab - used to draw two
+    -- full-size block clones on top of each other, which is two sets of faces
+    -- in one place and reads as a flickering mess. Find those cells first so
+    -- they can be drawn as two half-height pieces that do not overlap.
+    local bothHalves = {}
+    do
+        local seen = {}
+        for _, b in ipairs(renderList) do
+            local t = effectiveType(tostring(b.blockType))
+            if t:find("[Ss]lab") then
+                local c = b.cframe
+                local key = (math.floor(c[1] / 3 + 0.5) * 4096
+                    + math.floor(c[2] / 3 + 0.5)) * 4096 + math.floor(c[3] / 3 + 0.5)
+                local half = b.upperBlock == true and "t" or "b"
+                if seen[key] and seen[key] ~= half then
+                    bothHalves[key] = true
+                else
+                    seen[key] = half
+                end
+            end
+        end
+    end
+
+    -- and never put two ghosts in the same slot, whatever else happens
+    local taken = {}
+
     for i, block in ipairs(renderList) do
         if not isPreviewing then
             break
@@ -2235,84 +2261,103 @@ local function previewBuild(blocks)
         end
         local rendered = false
 
-        if previewRealModels and not previewMinimized and isModelType(blockType) then
-            local clone = cloneBlockModel(blockType, targetCF)
-            do
-                if clone then
-                    ghostifyClone(clone, previewTransparency)
-                    clone.Name = blockType
-                    -- A slab block is one 3x3x3 part holding both halves as
-                    -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
-                    -- half you see is whichever is not transparent. The
-                    -- template shows its bottom, so a clone is always a bottom
-                    -- slab however the block was flagged - which is why every
-                    -- previewed slab looked low. Swap the halves instead of
-                    -- moving the part: the geometry is already in the right
-                    -- place, it is just the wrong half showing.
-                    local slabOk = true
-                    if isSlab then
-                        local ok2, res = pcall(function()
-                            return showSlabHalf(clone, upper, previewTransparency)
-                        end)
-                        slabOk = ok2 and res == true
-                        if slabOk then
-                            slabSwapped = slabSwapped + 1
-                        else
-                            slabFellBack = slabFellBack + 1
+        local skip = false
+        local cellKey
+        do
+            local c = cellCF.Position
+            cellKey = (math.floor(c.X / 3 + 0.5) * 4096
+                + math.floor(c.Y / 3 + 0.5)) * 4096 + math.floor(c.Z / 3 + 0.5)
+            local slot = cellKey * 4 + (isSlab and (upper and 1 or 2) or 0)
+            -- something already occupies this slot; a second one would only
+            -- fight it, so it is dropped rather than drawn on top
+            if taken[slot] then skip = true else taken[slot] = true end
+        end
+
+        -- a cell with both halves gets two half-height pieces rather than two
+        -- whole blocks sitting inside each other
+        local forceStandIn = isSlab and bothHalves[cellKey]
+
+        if not skip then
+            if not forceStandIn and previewRealModels and not previewMinimized
+                and isModelType(blockType) then
+                local clone = cloneBlockModel(blockType, targetCF)
+                do
+                    if clone then
+                        ghostifyClone(clone, previewTransparency)
+                        clone.Name = blockType
+                        -- A slab block is one 3x3x3 part holding both halves as
+                        -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
+                        -- half you see is whichever is not transparent. The
+                        -- template shows its bottom, so a clone is always a bottom
+                        -- slab however the block was flagged - which is why every
+                        -- previewed slab looked low. Swap the halves instead of
+                        -- moving the part: the geometry is already in the right
+                        -- place, it is just the wrong half showing.
+                        local slabOk = true
+                        if isSlab then
+                            local ok2, res = pcall(function()
+                                return showSlabHalf(clone, upper, previewTransparency)
+                            end)
+                            slabOk = ok2 and res == true
+                            if slabOk then
+                                slabSwapped = slabSwapped + 1
+                            else
+                                slabFellBack = slabFellBack + 1
+                            end
                         end
-                    end
-                    if not slabOk then
-                        -- the template is not shaped like a placed block, so
-                        -- it cannot show one half; the stand-in below can
-                        pcall(function() clone:Destroy() end)
-                    else
-                        tagGhost(clone, blockSrcKey(block), brushPreview)
-                        clone.Parent = model
-                        rendered = true
-                        work = work + 8
+                        if not slabOk then
+                            -- the template is not shaped like a placed block, so
+                            -- it cannot show one half; the stand-in below can
+                            pcall(function() clone:Destroy() end)
+                        else
+                            tagGhost(clone, blockSrcKey(block), brushPreview)
+                            clone.Parent = model
+                            rendered = true
+                            work = work + 8
+                        end
                     end
                 end
             end
-        end
 
-        if not rendered then
-            local part = Instance.new("Part")
-            part.Name = blockType
-            part.Anchored = true
-            part.CanCollide = false
-            part.CanQuery = false
-            part.CanTouch = false
-            part.CastShadow = false
-            part.Material = Enum.Material.SmoothPlastic
-            part.Transparency = previewTransparency
-            -- A slab fills half its cell, so the stand-in is drawn half height
-            -- and seated in the half it belongs to. Everything else, stairs
-            -- included, fills the whole cell and is left alone: a full-height
-            -- cube nudged up or down only ends up inside its neighbour.
-            -- A hair under a full cell. A stand-in that exactly matches the
-            -- block it sits over shares its surfaces, and two coplanar faces
-            -- flicker as the camera moves - which is the grey block that
-            -- appears to fight with the real one. Shrinking it by a fiftieth
-            -- of a stud is invisible at this scale and stops that outright.
-            local SHRINK = 0.02
-            if isSlab then
-                slabStandIn = slabStandIn + 1
-                local dy = (upper and 1 or -1) * (previewBlockSize / 4)
-                part.Size = Vector3.new(previewBlockSize - SHRINK,
-                                        previewBlockSize / 2 - SHRINK,
-                                        previewBlockSize - SHRINK)
-                part.CFrame = cellCF + Vector3.new(0, dy, 0)
-            else
-                part.Size = Vector3.new(previewBlockSize - SHRINK,
-                                        previewBlockSize - SHRINK,
-                                        previewBlockSize - SHRINK)
-                part.CFrame = cellCF
+            if not rendered then
+                local part = Instance.new("Part")
+                part.Name = blockType
+                part.Anchored = true
+                part.CanCollide = false
+                part.CanQuery = false
+                part.CanTouch = false
+                part.CastShadow = false
+                part.Material = Enum.Material.SmoothPlastic
+                part.Transparency = previewTransparency
+                -- A slab fills half its cell, so the stand-in is drawn half height
+                -- and seated in the half it belongs to. Everything else, stairs
+                -- included, fills the whole cell and is left alone: a full-height
+                -- cube nudged up or down only ends up inside its neighbour.
+                -- A hair under a full cell. A stand-in that exactly matches the
+                -- block it sits over shares its surfaces, and two coplanar faces
+                -- flicker as the camera moves - which is the grey block that
+                -- appears to fight with the real one. Shrinking it by a fiftieth
+                -- of a stud is invisible at this scale and stops that outright.
+                local SHRINK = 0.02
+                if isSlab then
+                    slabStandIn = slabStandIn + 1
+                    local dy = (upper and 1 or -1) * (previewBlockSize / 4)
+                    part.Size = Vector3.new(previewBlockSize - SHRINK,
+                                            previewBlockSize / 2 - SHRINK,
+                                            previewBlockSize - SHRINK)
+                    part.CFrame = cellCF + Vector3.new(0, dy, 0)
+                else
+                    part.Size = Vector3.new(previewBlockSize - SHRINK,
+                                            previewBlockSize - SHRINK,
+                                            previewBlockSize - SHRINK)
+                    part.CFrame = cellCF
+                end
+                part.Color = measuredColour(blockType) or colorForBlockType(blockType)
+                part:SetAttribute("GhostPreview", true)
+                tagGhost(part, blockSrcKey(block), brushPreview)
+                part.Parent = model
+                work = work + 1
             end
-            part.Color = measuredColour(blockType) or colorForBlockType(blockType)
-            part:SetAttribute("GhostPreview", true)
-            tagGhost(part, blockSrcKey(block), brushPreview)
-            part.Parent = model
-            work = work + 1
         end
 
         do
