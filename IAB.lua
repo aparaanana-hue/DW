@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 15:00"
+local IAB_BUILD = "Aug 14 16:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1849,6 +1849,74 @@ local function getTemplate(blockType)
     return t
 end
 
+-- The colour the game measures for a block. colorForBlockType is a hash of the
+-- name - it tells blocks apart and has nothing to do with what they look like,
+-- which is why a stand-in reads as a grey box. Falls back to that hash when
+-- the colour index has not been built yet.
+measuredCache = nil
+function measuredColour(blockType)
+    if measuredCache == nil then
+        local ok, res = pcall(function()
+            return BuilderAPI.blockColours and BuilderAPI.blockColours()
+        end)
+        measuredCache = (ok and res) or false
+    end
+    if not measuredCache then return nil end
+    local e = measuredCache[blockType]
+    return e and e.col or nil
+end
+
+-- Clone a block's real model, ready to place, or nil if that cannot be done.
+--
+-- Two things went wrong here before. Block models are stored two ways -
+-- blocks/<name>, which is the model, and Blocks/<name>/Root, where <name> is
+-- only a container - and handing back the container gives the renderer
+-- something it cannot position, so the block came out as a plain coloured box.
+-- Then fixing that hid blocks instead, because a clone that could not be
+-- positioned was still counted as drawn.
+--
+-- So this checks its work: it returns a clone only when there is something
+-- visible in it and it has actually been moved to where it belongs. Anything
+-- else returns nil and the caller draws a stand-in, which is plain but is
+-- never invisible and never in the wrong place.
+function cloneBlockModel(blockType, cf)
+    local template = getTemplate(blockType)
+    if not template then return nil end
+
+    local src = template
+    if not (template:IsA("BasePart") or template:IsA("Model")) then
+        src = template:FindFirstChild("Root")
+            or template:FindFirstChildWhichIsA("Model")
+            or template:FindFirstChildWhichIsA("BasePart")
+        if not src then return nil end
+    end
+
+    local ok, clone = pcall(function() return src:Clone() end)
+    if not ok or not clone then return nil end
+
+    local visible = clone:IsA("BasePart")
+    if not visible then
+        visible = clone:FindFirstChildWhichIsA("BasePart", true) ~= nil
+    end
+    if not visible then
+        pcall(function() clone:Destroy() end)
+        return nil
+    end
+
+    local placed = false
+    if clone:IsA("BasePart") then
+        clone.CFrame = cf
+        placed = true
+    else
+        placed = pcall(function() clone:PivotTo(cf) end)
+    end
+    if not placed then
+        pcall(function() clone:Destroy() end)
+        return nil
+    end
+    return clone
+end
+
 local function isModelType(blockType)
     if modelTypeCache[blockType] ~= nil then
         return modelTypeCache[blockType]
@@ -2168,19 +2236,11 @@ local function previewBuild(blocks)
         local rendered = false
 
         if previewRealModels and not previewMinimized and isModelType(blockType) then
-            local template = getTemplate(blockType)
-            if template then
-                local ok, clone = pcall(function()
-                    return template:Clone()
-                end)
-                if ok and clone then
+            local clone = cloneBlockModel(blockType, targetCF)
+            do
+                if clone then
                     ghostifyClone(clone, previewTransparency)
                     clone.Name = blockType
-                    if clone:IsA("Model") then
-                        pcall(function() clone:PivotTo(targetCF) end)
-                    elseif clone:IsA("BasePart") then
-                        clone.CFrame = targetCF
-                    end
                     -- A slab block is one 3x3x3 part holding both halves as
                     -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
                     -- half you see is whichever is not transparent. The
@@ -2248,7 +2308,7 @@ local function previewBuild(blocks)
                                         previewBlockSize - SHRINK)
                 part.CFrame = cellCF
             end
-            part.Color = colorForBlockType(blockType)
+            part.Color = measuredColour(blockType) or colorForBlockType(blockType)
             part:SetAttribute("GhostPreview", true)
             tagGhost(part, blockSrcKey(block), brushPreview)
             part.Parent = model
