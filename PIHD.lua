@@ -5,6 +5,11 @@ local Duvome = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"
         .. "?t=" .. tostring(os.time())))()
 
+-- Bumped on every push. If the About panel and the load notification do not
+-- show the newest one, the script came from a cache rather than from GitHub -
+-- which looks exactly like a fix that did not work.
+local PIHD_BUILD = "Aug 15 10:20"
+
 local TAB_ICONS = {
 	Home                 = "house",
 	["Vendings Manager"] = "shopping-cart",
@@ -778,7 +783,7 @@ local HomeTab = Window:MakeTab({Name = "Home", Icon = TAB_ICONS.Home, Columns = 
 L, R = HomeTab:AddLeft(), HomeTab:AddRight()
 
 UI.about = L:AddSection({Name = "About"})
-UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVersion: 2.0 (Duvome native)\nLast Updated: January 29, 2026\n\nJoin Discord for updates & support:\ndiscord.gg/NuUzrrNaJz")
+UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVersion: 2.0 (Duvome native)\nBuild: " .. PIHD_BUILD .. "\n\nJoin Discord for updates & support:\ndiscord.gg/NuUzrrNaJz")
 
 UI.homeScanner = L:AddSection({Name = "Scanner & Stats"})
 
@@ -2925,7 +2930,11 @@ local function BuildPriceTool()
  local markupPct        = 0
 
  local function applyPriceMap(priceMap)
-  if not priceMap or countKeys(priceMap) == 0 then notify("Error", "No prices to apply", 3) return end
+  if not priceMap or countKeys(priceMap) == 0 then
+   notify("Error", "No prices to apply - the sources you picked gave nothing."
+    .. " Check the Price Sources list and the price link.", 6)
+   return
+  end
   if not checkNetwork() then notify("Error", "Network not ready", 3) return end
   local vendings = findAllVendings()
   if #vendings == 0 then notify("Error", "No vendings found", 3) return end
@@ -5160,6 +5169,14 @@ pcall(function()
 end)
 
 pcall(function() Duvome:SetWatchVisible(true) end)
+pcall(function() Duvome:AddWatch("Build", function() return PIHD_BUILD end) end)
+pcall(function()
+	Duvome:MakeNotification({
+		Name = "Priz's Islands Hub",
+		Content = "Build " .. PIHD_BUILD,
+		Time = 6,
+	})
+end)
 
 pcall(function() Duvome:Init() end)
 
