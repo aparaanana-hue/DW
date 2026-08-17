@@ -2533,7 +2533,10 @@ BuildSniper(UI.vmSnipe)
 local function BuildPriceTool()
 
  local WEBHOOK_URL   = "https://discord.com/api/webhooks/1522807260022181979/ZZmrwJjBwBq8pI5LofvO5_Ey13TRucxnvE4xxAaX_RezWtjtadhdEWamWSluPtRxF4qp"
- local PRICES_URL    = "https://pastebin.com/raw/KrqauyVU"
+ -- The average price list. This pointed at the key paste, so every fetch
+ -- came back with a licence key, parsed to nothing, and Apply reported no
+ -- prices - the two links had been crossed.
+ local PRICES_URL    = "https://pastebin.com/raw/LQVhtvEe"
  local SHOP_FOLDER   = "PrizPriceTool_Shops"
  local AVERAGE_LABEL = "Average Price (Pastebin)"
 
@@ -2858,12 +2861,29 @@ local function BuildPriceTool()
  end
 
  local function fetchAveragePrices()
-  local ok, result = pcall(function() return httpRequest({Url=PRICES_URL, Method="GET"}) end)
-  if not ok or not result or result.StatusCode ~= 200 then
-   notify("Error", "Failed to fetch average prices", 3)
+  if not httpRequest then
+   notify("Error", "Your executor has no HTTP request function", 4)
    return nil
   end
-  return parsePriceText(result.Body)
+  local ok, result = pcall(function()
+   return httpRequest({Url = PRICES_URL, url = PRICES_URL, Method = "GET", method = "GET"})
+  end)
+  -- executors disagree about the casing of these, and reading only one spelling
+  -- turns a perfectly good response into "failed to fetch"
+  local code = type(result) == "table"
+   and (result.StatusCode or result.status_code or result.Status or result.status)
+   or nil
+  local body = type(result) == "table" and (result.Body or result.body) or nil
+  if not ok or not body or (code and code ~= 200) then
+   notify("Error", "Failed to fetch average prices (" .. tostring(code or "no reply") .. ")", 4)
+   return nil
+  end
+  local map = parsePriceText(body)
+  if not map or next(map) == nil then
+   notify("Error", "The price list came back empty - check the link", 5)
+   return nil
+  end
+  return map
  end
 
  local function resolveSourceMap(label)
