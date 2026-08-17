@@ -5541,10 +5541,18 @@ local function MakeKeyUI(cfg, onSuccess)
 			local trimmed = (k):match("^%s*(.-)%s*$")
 			if trimmed:sub(1,4) == "http" or GrabFromSite then
 				pcall(function()
-					local raw = game:HttpGet(trimmed)
+					local raw = tostring(game:HttpGet(trimmed))
+					-- A dead paste answers with an HTML page, not an error, so
+					-- without this every line of markup becomes a key and the
+					-- real one never matches.
+					if raw:find("<!DOCTYPE", 1, true) or raw:find("<html", 1, true) then
+						return
+					end
 					for line in raw:gmatch("[^\r\n]+") do
 						local t2 = line:match("^%s*(.-)%s*$")
-						if t2 ~= "" then valid[#valid+1] = t2 end
+						if t2 ~= "" and not t2:find("[<>]") and #t2 <= 128 then
+							valid[#valid+1] = t2
+						end
 					end
 				end)
 			else

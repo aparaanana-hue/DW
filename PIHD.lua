@@ -5145,16 +5145,30 @@ pcall(function() Duvome:Init() end)
 
 end
 
-local KEY_URL = "https://pastebin.com/raw/4exUbvmt"
+local KEY_URL = "https://pastebin.com/raw/KrqauyVU"
 local validKeys = {}
 pcall(function()
-	local raw = game:HttpGet(KEY_URL)
-	for line in tostring(raw):gmatch("[^\r\n]+") do
-		local key = line:gsub("^%s+", ""):gsub("%s+$", "")
-		if key ~= "" then table.insert(validKeys, key) end
+	local raw = tostring(game:HttpGet(KEY_URL))
+	-- A deleted or private paste answers with an HTML error page rather than
+	-- an error, and every line of that markup was being added as a key. The
+	-- list then looked full, so the fallback never ran, and no real key could
+	-- match anything in it - which is exactly what a dead key link looks like
+	-- from the outside.
+	if raw:find("<!DOCTYPE", 1, true) or raw:find("<html", 1, true) then
+		return
+	end
+	for line in raw:gmatch("[^\r\n]+") do
+		local key = line:match("^%s*(.-)%s*$")
+		-- a key is one word; anything with markup in it is not one
+		if key ~= "" and not key:find("[<>]") and #key <= 128 then
+			table.insert(validKeys, key)
+		end
 	end
 end)
-if #validKeys == 0 then validKeys = {"FreeIslandsKeyForNow"} end
+if #validKeys == 0 then
+	warn("[Priz Hub] Could not read the key list from " .. KEY_URL)
+	validKeys = { "FreeIslandsKeyForNow" }
+end
 
 Duvome.MakeKeyUI({
 	Title    = "Priz Hub",
