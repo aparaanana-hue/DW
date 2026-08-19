@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 15 14:20"
+local PIHD_BUILD = "Aug 19 12:00"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -38,11 +38,11 @@ local Window = Duvome:MakeWindow({
 	AutoLoadConfig = false,
 	ConfigFolder   = "PrizIslandsHub",
 	Theme          = "Default",
-	-- Frosted glass needs both halves: the panels are translucent, and the
-	-- world behind them is blurred so what shows through reads as depth rather
-	-- than as clutter behind the text.
-	Blur           = true,
-	BlurSize       = 18,
+	-- No blur. Roblox's BlurEffect works on the camera, so it frosts the whole
+	-- screen rather than what is behind the window - which makes the game look
+	-- like the hub, not the hub look like glass. The panels carry the effect on
+	-- their own.
+	Blur           = false,
 })
 
 pcall(function() Duvome:SetGlass(0.38) end)

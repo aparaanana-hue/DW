@@ -1715,7 +1715,10 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				if title then
 					title.ClipsDescendants = true
 					if open then
-						TweenService:Create(title, tw, {Size = UDim2.new(1, -36, 1, 0), TextTransparency = 0.4}):Play()
+						-- -48, not -36: the sidebar has a 1px divider down its right
+						-- edge, and a title sized to -36 ends flush against it, so the
+						-- text reads as sitting on the line. This leaves a clear gap.
+						TweenService:Create(title, tw, {Size = UDim2.new(1, -48, 1, 0), TextTransparency = 0.4}):Play()
 					else
 						TweenService:Create(title, tw, {Size = UDim2.new(0, 0, 1, 0), TextTransparency = 0.4}):Play()
 					end
@@ -1818,9 +1821,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	end
 
 	
+	-- A slow band of light travelling across the window, the way a highlight
+	-- crosses a sheet of glass when it turns. It replaces a field of forty
+	-- twinkling stars: those drew the eye away from whatever you were reading,
+	-- and at this transparency there is already plenty happening behind the
+	-- panel. One moving highlight is enough to say the surface is glass.
 	do
-		local StarCanvas = Create("Frame", {
-			Name                   = "StarCanvas",
+		local SheenCanvas = Create("Frame", {
+			Name                   = "SheenCanvas",
 			BackgroundTransparency = 1,
 			Size                   = UDim2.new(1, 0, 1, 0),
 			Position               = UDim2.new(0, 0, 0, 0),
@@ -1829,109 +1837,35 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			Parent                 = MainWindow
 		})
 
-		local MAX_STARS = 40
-		-- Three sizes so the field has depth rather than one uniform sparkle.
-		local TIERS = { 12, 20, 30 }
-
-		-- A star is drawn, not typed: Roblox fonts have no star glyph, which is
-		-- why a text character rendered as a box. Two tapered bars crossed over
-		-- a soft round glow reads as a four-point sparkle at any size.
-		local function makeStar(size)
-			local holder = Create("Frame", {
-				BackgroundTransparency = 1,
-				Size                   = UDim2.new(0, size, 0, size),
-				Position               = UDim2.new(math.random(), 0, math.random(), 0),
-				ZIndex                 = 0,
-				Parent                 = StarCanvas
-			})
-
-			local glow = Create("Frame", {
-				BackgroundColor3       = Color3.fromRGB(200, 170, 255),
-				BackgroundTransparency = 1,
-				BorderSizePixel        = 0,
-				AnchorPoint            = Vector2.new(0.5, 0.5),
-				Position               = UDim2.new(0.5, 0, 0.5, 0),
-				Size                   = UDim2.new(0.45, 0, 0.45, 0),
-				ZIndex                 = 0,
-				Parent                 = holder
-			})
-			Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = glow})
-
-			-- One tapered spike, rotated four ways, gives an eight-point
-			-- sparkle. Long axis runs vertically; the gradient fades both tips
-			-- to nothing so it reads as a point rather than a bar.
-			local function spike(rotation, lengthScale, widthScale)
-				local f = Create("Frame", {
-					BackgroundColor3       = Color3.fromRGB(255, 250, 255),
-					BackgroundTransparency = 1,
-					BorderSizePixel        = 0,
-					AnchorPoint            = Vector2.new(0.5, 0.5),
-					Position               = UDim2.new(0.5, 0, 0.5, 0),
-					Size                   = UDim2.new(widthScale, 0, lengthScale, 0),
-					Rotation               = rotation,
-					ZIndex                 = 0,
-					Parent                 = holder
-				})
-				Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = f})
-				Create("UIGradient", {
-					Rotation = 90,
-					Transparency = NumberSequence.new({
-						NumberSequenceKeypoint.new(0, 1),
-						NumberSequenceKeypoint.new(0.5, 0),
-						NumberSequenceKeypoint.new(1, 1),
-					}),
-					Parent = f
-				})
-				return f
-			end
-
-			local parts = {
-				spike(0,   1.00, 0.13),   -- long vertical
-				spike(90,  1.00, 0.13),   -- long horizontal
-				spike(45,  0.62, 0.09),   -- short diagonals
-				spike(135, 0.62, 0.09),
-			}
-			return holder, { glow = glow, parts = parts }
-		end
-
-		local function fade(st, targetBar, targetGlow, time, style, dir)
-			local info = TweenInfo.new(time, style, dir)
-			for _, f in ipairs(st.parts) do
-				TweenService:Create(f, info, {BackgroundTransparency = targetBar}):Play()
-			end
-			TweenService:Create(st.glow, info, {BackgroundTransparency = targetGlow}):Play()
-		end
-
-		-- Fade up, hold, fade out, reappear elsewhere at a new size.
-		local function twinkle(holder, st)
-			local size  = TIERS[math.random(1, #TIERS)]
-			local peak  = 0.05 + math.random() * 0.25     -- bright enough to read through the glass
-			local up    = 0.6 + math.random() * 0.9
-			local hold  = 0.25 + math.random() * 1.1
-			local down  = 0.7 + math.random() * 1.0
-
-			holder.Position = UDim2.new(math.random(), 0, math.random(), 0)
-			holder.Size     = UDim2.new(0, size, 0, size)
-			for _, f in ipairs(st.parts) do f.BackgroundTransparency = 1 end
-			st.glow.BackgroundTransparency = 1
-
-			fade(st, peak, math.min(peak + 0.15, 1), up, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-
-			task.delay(up + hold, function()
-				if not (holder and holder.Parent) then return end
-				fade(st, 1, 1, down, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
-				task.delay(down + math.random() * 1.6, function()
-					if holder and holder.Parent then twinkle(holder, st) end
-				end)
-			end)
-		end
+		local band = Create("Frame", {
+			BackgroundColor3       = Color3.fromRGB(255, 255, 255),
+			BackgroundTransparency = 1,
+			BorderSizePixel        = 0,
+			AnchorPoint            = Vector2.new(0.5, 0.5),
+			Rotation               = 18,
+			Size                   = UDim2.new(0.42, 0, 2, 0),
+			Position               = UDim2.new(-0.4, 0, 0.5, 0),
+			ZIndex                 = 0,
+			Parent                 = SheenCanvas
+		})
+		-- soft on both edges, so it is a gleam rather than a bar sliding past
+		Create("UIGradient", {
+			Rotation     = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0.00, 1.00),
+				NumberSequenceKeypoint.new(0.50, 0.92),
+				NumberSequenceKeypoint.new(1.00, 1.00),
+			}),
+			Parent = band,
+		})
 
 		task.spawn(function()
-			for _ = 1, MAX_STARS do
-				local holder, st = makeStar(TIERS[math.random(1, #TIERS)])
-				twinkle(holder, st)
-				-- stagger so they never pulse in unison
-				task.wait(0.06 + math.random() * 0.14)
+			while band and band.Parent do
+				band.Position = UDim2.new(-0.4, 0, 0.5, 0)
+				TweenService:Create(band,
+					TweenInfo.new(4.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+					{ Position = UDim2.new(1.4, 0, 0.5, 0) }):Play()
+				task.wait(4.5 + 6 + math.random() * 4)
 			end
 		end)
 	end
@@ -3889,8 +3823,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				local _soleKeyB = SoleKeybind(ButtonConfig.Options)
 				if _soleKeyB then
 					MakeKeybindBox(ButtonFrame, _soleKeyB,
-						UDim2.new(0, 58, 0, 24), UDim2.new(1, -70, 0.5, -12), 5)
-					ButtonFrame:FindFirstChild("Content").Size = UDim2.new(1, -80, 1, 0)
+						UDim2.new(0, 58, 0, 24), UDim2.new(1, -74, 0.5, -12), 5)
+					ButtonFrame:FindFirstChild("Content").Size = UDim2.new(1, -86, 1, 0)
 				elseif ButtonConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
@@ -4037,10 +3971,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				local _soleKey = SoleKeybind(ToggleConfig.Options)
 				if _soleKey then
 					-- its only setting is the key, so show the key
+					-- Sits clear of whatever is to its right - the switch, and the
+					-- gear icon when there is one - with room to spare rather
+					-- than tucked against it.
 					MakeKeybindBox(ToggleFrame, _soleKey,
 						UDim2.new(0, 58, 0, 24),
-						UDim2.new(1, ToggleConfig.GearAction and -140 or -112, 0.5, -12), 5)
-					ToggleFrame:FindFirstChild("Content").Size = UDim2.new(1, -150, 1, 0)
+						UDim2.new(1, ToggleConfig.GearAction and -172 or -134, 0.5, -12), 5)
+					ToggleFrame:FindFirstChild("Content").Size =
+						UDim2.new(1, ToggleConfig.GearAction and -184 or -146, 1, 0)
 				elseif ToggleConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
