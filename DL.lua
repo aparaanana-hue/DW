@@ -127,7 +127,10 @@ local DuvomeLibrary = {
 		},
 	},
 	SelectedTheme = "Default",
-	Glass = 0.16,
+	-- How much of the game shows through a panel. Glass only reads as glass when
+	-- you can actually see through it, so this sits well above a token tint; the
+	-- blur behind the window is what keeps text legible at this level.
+	Glass = 0.38,
 	Folder = nil,
 	SaveCfg = false
 }
@@ -474,7 +477,10 @@ CreateElement("Corner", function(Scale, Offset)
 end)
 
 CreateElement("Stroke", function(Color, Thickness)
-	return Create("UIStroke", {Color = Color or Color3.fromRGB(255, 255, 255), Thickness = Thickness or 1})
+	-- A touch thicker than a hairline. Panels are translucent now, so the edge
+	-- is what separates one from the game behind it; at one pixel it dissolves
+	-- into whatever happens to be back there.
+	return Create("UIStroke", {Color = Color or Color3.fromRGB(255, 255, 255), Thickness = Thickness or 1.4})
 end)
 
 CreateElement("List", function(Scale, Offset)
@@ -3444,6 +3450,102 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			end
 
 			
+			-- The keybind control, on its own so it can sit inside a popover or
+			-- directly on a row. A control whose only setting is a keybind does
+			-- not need a gear hiding it - the binding box is small enough to
+			-- live on the row itself, and that is one less click for the thing
+			-- people actually came for.
+			local function MakeKeybindBox(parent, item, size, pos, zIndex)
+				local z = zIndex or 6
+				local kbBox = Create("TextButton", {
+					Text = item.Default and (item.Default.Name or tostring(item.Default)) or "None",
+					Font = Enum.Font.GothamBold, TextSize = 12,
+					TextColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text,
+					BackgroundColor3 = Color3.fromRGB(30,10,55),
+					BorderSizePixel = 0, Size = size, Position = pos,
+					ZIndex = z, Parent = parent,
+				})
+				AddThemeObject(kbBox, "Second")
+				Create("UICorner", {CornerRadius = UDim.new(0,4), Parent = kbBox})
+				AddThemeObject(Create("UIStroke", {Color=Color3.fromRGB(80,30,130), Thickness=1, Parent=kbBox}), "Stroke")
+
+				DuvomeLibrary._boundKeys = DuvomeLibrary._boundKeys or {}
+				local boundKey = item.Default
+				local listening = false
+				local _blockUntil = 0
+				local function keyNameOf(k) return k and (k.Name or tostring(k)) or nil end
+
+				if boundKey then
+					local n = keyNameOf(boundKey)
+					DuvomeLibrary._boundKeys[n] = (DuvomeLibrary._boundKeys[n] or 0) + 1
+				end
+
+				AddConnection(UserInputService.InputBegan, function(inp, gpe)
+					if gpe then return end
+					if listening then return end
+					if os.clock() < _blockUntil then return end
+					if UserInputService:GetFocusedTextBox() then return end
+					if not boundKey then return end
+					if inp.KeyCode == boundKey or inp.UserInputType == boundKey then
+						if item.OnPress then item.OnPress()
+						elseif item.Callback then item.Callback(boundKey) end
+					end
+				end)
+
+				kbBox.MouseButton1Click:Connect(function()
+					listening = true
+					kbBox.Text = "..."
+					local conn
+					conn = UserInputService.InputBegan:Connect(function(inp)
+						if not listening then return end
+						if inp.KeyCode == Enum.KeyCode.Backspace then
+							listening = false
+							conn:Disconnect()
+							if boundKey then
+								local n = keyNameOf(boundKey)
+								DuvomeLibrary._boundKeys[n] = math.max(0,(DuvomeLibrary._boundKeys[n] or 1)-1)
+							end
+							kbBox.Text = "None"
+							boundKey = nil
+							if item.OnBind then item.OnBind(nil) end
+							return
+						end
+						if inp.KeyCode ~= Enum.KeyCode.Unknown or inp.UserInputType == Enum.UserInputType.MouseButton1 then
+							local key = inp.KeyCode ~= Enum.KeyCode.Unknown and inp.KeyCode or inp.UserInputType
+							local kn = keyNameOf(key)
+							if kn ~= keyNameOf(boundKey) and (DuvomeLibrary._boundKeys[kn] or 0) > 0 then
+								DuvomeLibrary:MakeNotification({Name="Key In Use", Content=kn.." is already bound to something else.", Type="warning", Time=3})
+								listening = false
+								conn:Disconnect()
+								kbBox.Text = boundKey and keyNameOf(boundKey) or "None"
+								return
+							end
+							listening = false
+							conn:Disconnect()
+							if boundKey then
+								local on = keyNameOf(boundKey)
+								DuvomeLibrary._boundKeys[on] = math.max(0,(DuvomeLibrary._boundKeys[on] or 1)-1)
+							end
+							boundKey = key
+							DuvomeLibrary._boundKeys[kn] = (DuvomeLibrary._boundKeys[kn] or 0) + 1
+							kbBox.Text = kn
+							_blockUntil = os.clock() + 0.25
+							if item.OnBind then item.OnBind(key) end
+						end
+					end)
+				end)
+				return kbBox
+			end
+
+			-- The single setting behind a gear, when that setting is a keybind.
+			local function SoleKeybind(list)
+				if type(list) ~= "table" then return nil end
+				if #list ~= 1 then return nil end
+				local only = list[1]
+				if type(only) == "table" and only.Type == "keybind" then return only end
+				return nil
+			end
+
 			local function MakePopover(anchorFrame, items)
 				local pop = Create("Frame", {
 					BackgroundColor3       = Color3.fromRGB(18, 6, 36),
@@ -3529,80 +3631,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						AddThemeObject(Create("TextLabel", {Text="Keybind", Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.5,0,1,0), ZIndex=62, Parent=row}), "Text")
-						local kbBox = Create("TextButton", {
-							Text = item.Default and (item.Default.Name or tostring(item.Default)) or "None",
-							Font=Enum.Font.GothamBold, TextSize=12,
-							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundColor3=Color3.fromRGB(30,10,55),
-							BorderSizePixel=0, Size=UDim2.new(0.45,0,0,24), Position=UDim2.new(0.55,0,0.5,-12),
-							ZIndex=62, Parent=row,
-						})
-						AddThemeObject(kbBox, "Second")
-						Create("UICorner", {CornerRadius=UDim.new(0,4), Parent=kbBox})
-						local _kbStroke = Create("UIStroke", {Color=Color3.fromRGB(80,30,130), Thickness=1, Parent=kbBox})
-						AddThemeObject(_kbStroke, "Stroke")
-
-						
-						DuvomeLibrary._boundKeys = DuvomeLibrary._boundKeys or {}
-						local boundKey = item.Default
-						local listening = false          
-						local _blockUntil = 0            
-						local function keyNameOf(k) return k and (k.Name or tostring(k)) or nil end
-
-						
-						if boundKey then local n=keyNameOf(boundKey) DuvomeLibrary._boundKeys[n] = (DuvomeLibrary._boundKeys[n] or 0) + 1 end
-
-						
-						AddConnection(UserInputService.InputBegan, function(inp, gpe)
-							if gpe then return end
-							if listening then return end                       
-							if os.clock() < _blockUntil then return end        
-							if UserInputService:GetFocusedTextBox() then return end
-							if not boundKey then return end
-							if inp.KeyCode == boundKey or inp.UserInputType == boundKey then
-								if item.OnPress then item.OnPress()
-								elseif item.Callback then item.Callback(boundKey) end
-							end
-						end)
-
-						kbBox.MouseButton1Click:Connect(function()
-							listening = true
-							kbBox.Text = "..."
-							local conn
-							conn = UserInputService.InputBegan:Connect(function(inp)
-								if not listening then return end
-								
-								if inp.KeyCode == Enum.KeyCode.Backspace then
-									listening = false
-									conn:Disconnect()
-									if boundKey then local n=keyNameOf(boundKey) DuvomeLibrary._boundKeys[n] = math.max(0,(DuvomeLibrary._boundKeys[n] or 1)-1) end
-									kbBox.Text = "None"
-									boundKey = nil
-									if item.OnBind then item.OnBind(nil) end
-									return
-								end
-								if inp.KeyCode ~= Enum.KeyCode.Unknown or inp.UserInputType == Enum.UserInputType.MouseButton1 then
-									local key = inp.KeyCode ~= Enum.KeyCode.Unknown and inp.KeyCode or inp.UserInputType
-									local kn = keyNameOf(key)
-									
-									if kn ~= keyNameOf(boundKey) and (DuvomeLibrary._boundKeys[kn] or 0) > 0 then
-										DuvomeLibrary:MakeNotification({Name="Key In Use", Content=kn.." is already bound to something else.", Type="warning", Time=3})
-										listening = false
-										conn:Disconnect()
-										kbBox.Text = boundKey and keyNameOf(boundKey) or "None"
-										return
-									end
-									listening = false
-									conn:Disconnect()
-									
-									if boundKey then local on=keyNameOf(boundKey) DuvomeLibrary._boundKeys[on] = math.max(0,(DuvomeLibrary._boundKeys[on] or 1)-1) end
-									boundKey = key
-									DuvomeLibrary._boundKeys[kn] = (DuvomeLibrary._boundKeys[kn] or 0) + 1
-									kbBox.Text = kn
-									_blockUntil = os.clock() + 0.25   
-									if item.OnBind then item.OnBind(key) end
-								end
-							end)
-						end)
+						MakeKeybindBox(row, item, UDim2.new(0.45,0,0,24), UDim2.new(0.55,0,0.5,-12), 62)
 					elseif item.Type == "toggle" then
 						local state = item.Default == true
 						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,34), ZIndex=62, Parent=popContent})
@@ -3857,7 +3886,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				
-				if ButtonConfig.Options then
+				local _soleKeyB = SoleKeybind(ButtonConfig.Options)
+				if _soleKeyB then
+					MakeKeybindBox(ButtonFrame, _soleKeyB,
+						UDim2.new(0, 58, 0, 24), UDim2.new(1, -70, 0.5, -12), 5)
+					ButtonFrame:FindFirstChild("Content").Size = UDim2.new(1, -80, 1, 0)
+				elseif ButtonConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
 						BackgroundColor3 = Color3.fromRGB(30, 10, 55),
@@ -4000,7 +4034,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					end)
 				end
 
-				if ToggleConfig.Options then
+				local _soleKey = SoleKeybind(ToggleConfig.Options)
+				if _soleKey then
+					-- its only setting is the key, so show the key
+					MakeKeybindBox(ToggleFrame, _soleKey,
+						UDim2.new(0, 58, 0, 24),
+						UDim2.new(1, ToggleConfig.GearAction and -140 or -112, 0.5, -12), 5)
+					ToggleFrame:FindFirstChild("Content").Size = UDim2.new(1, -150, 1, 0)
+				elseif ToggleConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
 						BackgroundColor3 = Color3.fromRGB(30, 10, 55),

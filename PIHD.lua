@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 15 10:20"
+local PIHD_BUILD = "Aug 15 14:20"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -38,8 +38,14 @@ local Window = Duvome:MakeWindow({
 	AutoLoadConfig = false,
 	ConfigFolder   = "PrizIslandsHub",
 	Theme          = "Default",
-	Blur           = false,
+	-- Frosted glass needs both halves: the panels are translucent, and the
+	-- world behind them is blurred so what shows through reads as depth rather
+	-- than as clutter behind the text.
+	Blur           = true,
+	BlurSize       = 18,
 })
+
+pcall(function() Duvome:SetGlass(0.38) end)
 
 local UI = {}
 local S = {}
@@ -1216,7 +1222,6 @@ UI.openables:AddToggle({Name = "Auto Walk to Openable", Default = false, Tooltip
 end)})
 
 UI.chest = R:AddSection({Name = "Chest Manager"})
-UI.chest:AddParagraph("How to Use", "Pick items (or Select All) then use Auto-Deposit, or just hold an item. Auto-Withdraw pulls everything from chests.\n\nSelect specific chests with ALT+Click or the drag-select below - selected chests override the radius.")
 
 UI.chest:AddDropdown({Name = "Chest Type", Options = {"All", "Expanded Diamond Chest", "Diamond Chest", "Industrial Large Chest", "Industrial Large Chest (IO)", "Large Chest", "Industrial Medium Chest", "Industrial Medium Chest (IO)", "Medium Chest", "Timed Industrial Chest", "Small Chest"}, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only act on these chest types. ALT+Click or drag-selected chests always override this.", Flag = autoFlag("home"), Callback = function(chosen)
  if not chosen or #chosen == 0 then S.chestTypeSet = nil return end
@@ -1937,7 +1942,20 @@ local function emptyVending(vending)
  end)
 end
 
-UI.vmSel = L:AddSection({Name = "Vending Tools", Collapsible = true})
+-- Vending Tools lives in a panel rather than a section on the tab: it is a set
+-- of modes you switch on and then leave alone, so it does not need to sit in
+-- the column taking up room the whole time.
+local vendPanel = Duvome:MakeSidePanel({ Name = "Vending Tools", Width = 240, Height = 300, Side = "right" })
+UI.vmSel = vendPanel
+
+L:AddToggle({
+ Name = "Vending Tools",
+ Default = false,
+ Tooltip = "Opens the vending tools: selection mode, drag-select and clearing selections.",
+ Callback = function(value)
+  pcall(function() if value then vendPanel:Show() else vendPanel:Hide() end end)
+ end,
+})
 
 local useSelectedOnly = false
 
@@ -5168,7 +5186,8 @@ pcall(function()
  Duvome:AddWatch("Selected", function() local n = #selectedFavorites return n > 0 and (n .. " vendings") or false end)
 end)
 
-pcall(function() Duvome:SetWatchVisible(true) end)
+-- off by default; it is opt-in from the menu rather than always on screen
+pcall(function() Duvome:SetWatchVisible(false) end)
 pcall(function() Duvome:AddWatch("Build", function() return PIHD_BUILD end) end)
 pcall(function()
 	Duvome:MakeNotification({
