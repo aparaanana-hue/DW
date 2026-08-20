@@ -131,7 +131,10 @@ local DuvomeLibrary = {
 	-- you can actually see through it, so this sits well above a token tint; the
 	-- blur behind the window is what keeps text legible at this level.
 	Glass = 0.38,
-	-- Gated so only the window shell is made of glass - see AddThemeObject.
+	-- Everything inside the window is glass at this fraction of the value
+	-- above - see AddThemeObject for why it is not the full amount.
+	GlassInner = 0.5,
+	-- Flipped once the window shell exists, to tell shell from content.
 	_glassAllowed = true,
 	Folder = nil,
 	SaveCfg = false
@@ -308,15 +311,18 @@ local function AddThemeObject(Object, Type)
 	end
 	table.insert(DuvomeLibrary.ThemeObjects[Type], Object)
 	Object[ReturnProperty(Object)] = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme][Type]
-	-- Glass goes on the window shell and nothing else. Letting every Main or
-	-- Second surface turn transparent stacked panel on panel on section, and
-	-- the whole interface read as fog rather than as a window over the game.
-	-- MakeWindow closes this gate once the shell exists.
-	if DuvomeLibrary._glassAllowed and (Type == "Main" or Type == "Second")
-		and Object:IsA("GuiObject") then
+	-- Every surface is glass. Inner ones get a fraction of the window's value,
+	-- because transparency multiplies: a panel inside a section inside the
+	-- window is three layers deep, and at the full amount those stack into fog
+	-- instead of glass. Only fully opaque objects are touched, so anything
+	-- deliberately semi-transparent keeps its own value.
+	if (Type == "Main" or Type == "Second") and Object:IsA("GuiObject") then
 		if Object.BackgroundTransparency == 0 then
-			Object:SetAttribute("DuvomeGlass", true)
-			Object.BackgroundTransparency = DuvomeLibrary.Glass
+			local inner = not DuvomeLibrary._glassAllowed
+			Object:SetAttribute("DuvomeGlass", inner and "inner" or true)
+			Object.BackgroundTransparency =
+				inner and DuvomeLibrary.Glass * DuvomeLibrary.GlassInner
+				or DuvomeLibrary.Glass
 		end
 	end
 	return Object
@@ -1171,18 +1177,15 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	-- The shell is built; everything from here on is content, and content is
 	-- solid. Clear the glass off anything inside that picked it up on the way
 	-- through, then put it back on just the window and the sidebar.
+	-- The shell exists; everything created from here on is content, and gets
+	-- the lighter inner value. The sidebar counts as content for this - it sits
+	-- on top of the window, so at the full amount the two would compound and
+	-- make that strip the foggiest part of the interface.
 	do
-		for _, d in ipairs(MainWindow:GetDescendants()) do
-			if d:GetAttribute("DuvomeGlass") then
-				d:SetAttribute("DuvomeGlass", nil)
-				d.BackgroundTransparency = 0
-			end
-		end
-		-- Only the window itself. The sidebar sits on top of it, so glassing
-		-- both would compound the two and make that strip the foggiest part
-		-- of the interface.
 		MainWindow:SetAttribute("DuvomeGlass", true)
 		MainWindow.BackgroundTransparency = DuvomeLibrary.Glass
+		WindowStuff:SetAttribute("DuvomeGlass", "inner")
+		WindowStuff.BackgroundTransparency = DuvomeLibrary.Glass * DuvomeLibrary.GlassInner
 		DuvomeLibrary._glassAllowed = false
 	end
 
@@ -1860,6 +1863,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			ClipsDescendants       = true,
 			Parent                 = MainWindow
 		})
+		-- rectangular clipping would let the band show past the rounded corners
+		Create("UICorner", { CornerRadius = UDim.new(0, 10), Parent = SheenCanvas })
 
 		local band = Create("Frame", {
 			BackgroundColor3       = Color3.fromRGB(255, 255, 255),
@@ -1879,18 +1884,23 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		local sheenGrad = Create("UIGradient", {
 			Rotation = 0,
 			Color    = ColorSequence.new({
-				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(150, 110, 235)),
-				ColorSequenceKeypoint.new(0.28, Color3.fromRGB(120, 210, 245)),
-				ColorSequenceKeypoint.new(0.52, Color3.fromRGB(240, 235, 210)),
-				ColorSequenceKeypoint.new(0.74, Color3.fromRGB(245, 170, 215)),
-				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(150, 110, 235)),
+				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(110,  80, 210)),
+				ColorSequenceKeypoint.new(0.16, Color3.fromRGB( 90, 200, 245)),
+				ColorSequenceKeypoint.new(0.32, Color3.fromRGB(190, 255, 235)),
+				ColorSequenceKeypoint.new(0.46, Color3.fromRGB(255, 250, 225)),
+				ColorSequenceKeypoint.new(0.60, Color3.fromRGB(255, 205, 150)),
+				ColorSequenceKeypoint.new(0.76, Color3.fromRGB(250, 150, 210)),
+				ColorSequenceKeypoint.new(0.90, Color3.fromRGB(160, 110, 240)),
+				ColorSequenceKeypoint.new(1.00, Color3.fromRGB( 90, 200, 245)),
 			}),
 			-- soft on both edges, so it is a gleam rather than a bar
 			Transparency = NumberSequence.new({
 				NumberSequenceKeypoint.new(0.00, 1.00),
-				NumberSequenceKeypoint.new(0.22, 0.94),
-				NumberSequenceKeypoint.new(0.50, 0.86),
-				NumberSequenceKeypoint.new(0.78, 0.94),
+				NumberSequenceKeypoint.new(0.18, 0.95),
+				NumberSequenceKeypoint.new(0.42, 0.90),
+				NumberSequenceKeypoint.new(0.50, 0.72),
+				NumberSequenceKeypoint.new(0.58, 0.90),
+				NumberSequenceKeypoint.new(0.82, 0.95),
 				NumberSequenceKeypoint.new(1.00, 1.00),
 			}),
 			Parent = band,
@@ -1910,7 +1920,9 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			Active                 = false,
 			Parent                 = MainWindow
 		})
-		Create("UICorner", { CornerRadius = UDim.new(0, 10), Parent = EdgeFrame })
+		-- 8, not 10: the frame is inset 2px, so matching the window's radius
+		-- would swing the line wide of the corner and outside the window
+		Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = EdgeFrame })
 		local EdgeStroke = Create("UIStroke", {
 			Color       = Color3.fromRGB(255, 255, 255),
 			Thickness   = 1.6,
@@ -1930,36 +1942,64 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 		-- One loop drives both, so the blink lands with the sweep instead of
 		-- drifting in and out of step with it.
+		--
+		-- Four beats: across to the right, a quarter turn clockwise, back to
+		-- the left, a quarter turn back. The turn is what sells it as metal -
+		-- a highlight that only ever slides one way reads as a bar on a track,
+		-- while one that pivots reads as light catching a surface that moved.
 		task.spawn(function()
-			while band and band.Parent do
-				local sweep = 4.5
-				band.Position   = UDim2.new(-0.4, 0, 0.5, 0)
-				sheenGrad.Offset = Vector2.new(-0.5, 0)
+			local SWEEP, TURN = 1.8, 0.45
+			local BASE = 18
 
+			-- The travel range has to clear the window at either angle. Turned
+			-- 90 degrees the band lies almost flat and covers twice the width,
+			-- so it needs to start and finish much further out.
+			local function sweepTo(x, secs)
 				TweenService:Create(band,
-					TweenInfo.new(sweep, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-					{ Position = UDim2.new(1.4, 0, 0.5, 0) }):Play()
-				-- colours slide the other way inside the band: the shift of hue
-				-- with angle is the whole effect
+					TweenInfo.new(secs, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+					{ Position = UDim2.new(x, 0, 0.5, 0) }):Play()
 				TweenService:Create(sheenGrad,
-					TweenInfo.new(sweep, Enum.EasingStyle.Linear),
-					{ Offset = Vector2.new(0.5, 0) }):Play()
+					TweenInfo.new(secs, Enum.EasingStyle.Linear),
+					{ Offset = Vector2.new(sheenGrad.Offset.X > 0 and -0.5 or 0.5, 0) }):Play()
+				task.wait(secs)
+			end
 
-				-- edge: hue travels round the border for the length of the
-				-- sweep, brightening in the middle of it and fading back
+			local function turn(to)
+				TweenService:Create(band,
+					TweenInfo.new(TURN, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+					{ Rotation = to }):Play()
+				task.wait(TURN)
+			end
+
+			local function blink(secs)
+				TweenService:Create(EdgeStroke,
+					TweenInfo.new(secs * 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+					{ Transparency = 0.28 }):Play()
 				TweenService:Create(edgeGrad,
-					TweenInfo.new(sweep, Enum.EasingStyle.Linear),
-					{ Rotation = 360 }):Play()
-				TweenService:Create(EdgeStroke,
-					TweenInfo.new(sweep / 2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-					{ Transparency = 0.32 }):Play()
-				task.wait(sweep / 2)
-				TweenService:Create(EdgeStroke,
-					TweenInfo.new(sweep / 2, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-					{ Transparency = 0.85 }):Play()
+					TweenInfo.new(secs, Enum.EasingStyle.Linear),
+					{ Rotation = edgeGrad.Rotation + 180 }):Play()
+				task.delay(secs * 0.4, function()
+					if not EdgeStroke.Parent then return end
+					TweenService:Create(EdgeStroke,
+						TweenInfo.new(secs * 0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+						{ Transparency = 0.85 }):Play()
+				end)
+			end
 
-				task.wait(sweep / 2 + 6 + math.random() * 4)
+			while band and band.Parent do
+				band.Rotation    = BASE
+				band.Position    = UDim2.new(-1.2, 0, 0.5, 0)
+				sheenGrad.Offset = Vector2.new(-0.5, 0)
 				edgeGrad.Rotation = 0
+
+				blink(SWEEP)
+				sweepTo(2.2, SWEEP)          -- left to right
+				turn(BASE + 90)              -- quarter turn clockwise
+				blink(SWEEP)
+				sweepTo(-1.2, SWEEP)         -- right to left
+				turn(BASE)                   -- quarter turn back
+
+				task.wait(3 + math.random() * 3)
 			end
 		end)
 	end
@@ -6166,8 +6206,11 @@ function DuvomeLibrary:SetGlass(amount)
 	for _, Type in pairs({ "Main", "Second" }) do
 		for _, Object in pairs(DuvomeLibrary.ThemeObjects[Type] or {}) do
 			pcall(function()
-				if Object:GetAttribute("DuvomeGlass") then
-					Object.BackgroundTransparency = DuvomeLibrary.Glass
+				local g = Object:GetAttribute("DuvomeGlass")
+				if g then
+					Object.BackgroundTransparency = (g == "inner")
+						and DuvomeLibrary.Glass * DuvomeLibrary.GlassInner
+						or DuvomeLibrary.Glass
 				end
 			end)
 		end
