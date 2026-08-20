@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 20 12:20"
+local PIHD_BUILD = "Aug 20 15:05"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -392,8 +392,13 @@ local function confirm(title, content, onYes, yesText)
  })
 end
 
+local outAppend, outText = false, ""
 local function setOutput(title, content)
- if UI.output then pcall(function() UI.output:Set("[ " .. tostring(title) .. " ]\n\n" .. tostring(content)) end) end
+ local block = "[ " .. tostring(title) .. " ]\n\n" .. tostring(content)
+ if UI.output then pcall(function()
+  UI.output:Set(outAppend and (outText .. "\n\n" .. block) or block)
+ end) end
+ outText = outAppend and (outText .. "\n\n" .. block) or block
  -- The panel is where results appear now, so writing one opens it. Producing
  -- output into a panel the user cannot see would look like nothing happened.
  if UI.outputPanel then pcall(function() UI.outputPanel:Show() end) end
@@ -798,11 +803,32 @@ UI.homeScanner = L:AddSection({Name = "Scanner & Stats"})
 
 -- Scanner output lives in a side panel rather than a paragraph on the tab.
 -- Results run to a dozen lines, and inline they pushed every control below
--- them off the screen; in a panel they scroll on their own. Same width as the
--- avatar panel so the two look like one family, and shorter, because this is
--- text rather than a full-body render.
-local outPanel = Duvome:MakeSidePanel({ Name = "Scanner Output", Width = 175, Height = 240, Side = "right" })
-UI.output = outPanel:AddParagraph("Result", "Run a scan to see it here.")
+-- them off the screen; in a panel they scroll on their own.
+--
+-- The text is a bare label parented into the panel, not a paragraph element:
+-- a paragraph brings its own framed card, and a card inside a panel is a box
+-- inside a box saying the same thing twice.
+local outPanel = Duvome:MakeSidePanel({ Name = "Scanner Output", Width = 158, Height = 300, Side = "right" })
+local outLabel = Instance.new("TextLabel")
+outLabel.BackgroundTransparency = 1
+outLabel.Font                   = Enum.Font.Gotham
+outLabel.TextSize               = 12
+outLabel.TextColor3             = Color3.fromRGB(225, 220, 235)
+outLabel.TextXAlignment         = Enum.TextXAlignment.Left
+outLabel.TextYAlignment         = Enum.TextYAlignment.Top
+outLabel.TextWrapped            = true
+outLabel.RichText               = false
+outLabel.Text                   = "Run a scan to see it here."
+outLabel.Size                   = UDim2.new(1, 0, 0, 40)
+outLabel.Parent                 = outPanel:Container()
+-- the panel scrolls off its list layout, which sizes from each child, so the
+-- label has to grow to whatever it is holding
+outLabel:GetPropertyChangedSignal("Text"):Connect(function()
+ task.defer(function()
+  outLabel.Size = UDim2.new(1, 0, 0, math.max(40, outLabel.TextBounds.Y + 4))
+ end)
+end)
+UI.output = { Set = function(_, txt) outLabel.Text = txt end }
 
 UI.outputPanel = outPanel
 
@@ -816,6 +842,7 @@ UI.homeScanner:AddToggle({
 })
 
 local selectedMode = "Coin Scanner"
+local selectedModes = {"Coin Scanner"}
 local playerList = {}
 
 local function refreshPlayersForScanner()
@@ -834,9 +861,13 @@ playerList = refreshPlayersForScanner()
 -- Player info and island code moved to the player-action list, which already
 -- has a target-player dropdown; keeping a second one here just to feed this
 -- mode meant two places to pick a player.
-UI.homeScanner:AddDropdown({Name = "Mode", Options = {"Coin Scanner", "Items Scanner", "Vending Mode Scanner", "Blocks Scanner", "Show Statistics", "Show Transaction History"}, Default = "Coin Scanner", Flag = autoFlag("home"), Callback = function(value) selectedMode = value end})
+UI.homeScanner:AddDropdown({Name = "Mode", Options = {"Coin Scanner", "Items Scanner", "Vending Mode Scanner", "Blocks Scanner", "Show Statistics", "Show Transaction History"}, Default = {"Coin Scanner"}, MultiSelect = true, SelectAll = true, Flag = autoFlag("home"), Callback = function(chosen)
+ selectedModes = chosen or {}
+end})
 
-UI.homeScanner:AddButton({Name = "Apply", Tooltip = "Runs the selected scanner and prints the result above.", Callback = function()
+-- One scan. Apply runs it once per selected mode, appending as it goes, so
+-- picking three modes gives one report rather than three that overwrite it.
+local function runScan()
  if selectedMode == "Coin Scanner" then
   local vendings = findVendings()
   local totalCoins, vendingCount = 0, 0
@@ -931,6 +962,18 @@ UI.homeScanner:AddButton({Name = "Apply", Tooltip = "Runs the selected scanner a
   setOutput("Transaction History (Last 10)", displayText)
   updateNotification("History", "Displayed!", 2)
  end
+end
+
+UI.homeScanner:AddButton({Name = "Apply", Tooltip = "Runs every selected scanner and writes the results to the output panel.", Callback = function()
+ local modes = selectedModes
+ if #modes == 0 then modes = {"Coin Scanner"} end
+ outAppend = false
+ for _, m in ipairs(modes) do
+  selectedMode = m
+  runScan()
+  outAppend = true
+ end
+ outAppend = false
 end})
 
 UI.openables = R:AddSection({Name = "Openables Opener"})
@@ -2140,13 +2183,13 @@ local function refreshItems()
 end
 refreshItems()
 
-UI.itemDropdown = UI.vmItem:AddDropdown({Name = "Select Item", Options = itemOptions, Default = itemOptions[1], Search = true, Flag = autoFlag("vend"), Callback = initGuard(function(value)
+UI.itemDropdown = UI.vmItem:AddDropdown({Name = "Item", Options = itemOptions, OnRefresh = refreshItems, Default = itemOptions[1], Search = true, Flag = autoFlag("vend"), Callback = initGuard(function(value)
  selectedItemName = value
 end)})
 
 local itemAmount = 1
 
-UI.vmItem:AddTextbox({Name = "Item Amount", Default = "", TextDisappear = false, Callback = function(text)
+UI.vmItem:AddTextbox({Name = "Amount", Default = "", TextDisappear = false, Callback = function(text)
  local num = parseAmount(text)
  if num then
   itemAmount = num
@@ -2242,10 +2285,10 @@ local function doRestockVending()
  end)
 end
 
-UI.vmItem:AddButton({Name = "Deposit Item", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doDepositItem}}, Callback = doDepositItem})
+UI.vmItem:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doDepositItem}}, Callback = doDepositItem})
 UI.vmItem:AddButton({Name = "Restock", Tooltip = "Acts by vending mode: BUY vendings get topped up to 1000 with what you have in your inventory. SELL vendings get their stock pulled out, leaving exactly 1 behind (987 becomes 1). Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
 
-UI.vmItem:AddButton({Name = "Empty Vendings", Tooltip = "Withdraws ALL items from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Empty Key", OnBind = function(k) hotkeys.emptyAll = k end}}, Callback = function()
+UI.vmItem:AddButton({Name = "Empty", Tooltip = "Withdraws ALL items from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Empty Key", OnBind = function(k) hotkeys.emptyAll = k end}}, Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = itemTargets(vendings)
@@ -2278,7 +2321,7 @@ UI.vmCfg:AddTextbox({Name = "Price", Default = "", TextDisappear = false, Callba
  end
 end})
 
-UI.vmCfg:AddDropdown({Name = "Apply", Options = {"Mode + Price", "Mode Only", "Price Only"}, Default = "Mode + Price", Flag = autoFlag("vend"), Callback = function(value)
+UI.vmCfg:AddDropdown({Name = "Apply To", Options = {"Mode + Price", "Mode Only", "Price Only"}, Default = "Mode + Price", Flag = autoFlag("vend"), Callback = function(value)
  applyTarget = value
 end})
 
@@ -2430,19 +2473,12 @@ local function BuildSniper(sec)
   return opts
  end
 
- UI.sniperDrop = sec:AddDropdown({Name = "Item", Options = (function() local t = {"Buy Any Item"} for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end return t end)(), Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Pick items to snipe, or pick 'Buy Any Item' to buy anything under your max price.", Flag = autoFlag("vend"), Callback = function(chosen)
+ UI.sniperDrop = sec:AddDropdown({Name = "Item", Options = (function() local t = {"Buy Any Item"} for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end return t end)(), OnRefresh = function() local t = {"Buy Any Item"} for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end return t end, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Pick items to snipe, or pick 'Buy Any Item' to buy anything under your max price.", Flag = autoFlag("vend"), Callback = function(chosen)
   table.clear(sniperItems)
   buyAny = false
   for _, d in ipairs(chosen or {}) do
    if d == "Buy Any Item" then buyAny = true else table.insert(sniperItems, sniperMap[d] or d) end
   end
- end})
-
- sec:AddButton({Name = "Refresh", Callback = function()
-  local t = {"Buy Any Item"}
-  for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end
-  pcall(function() UI.sniperDrop:Refresh(t, true) end)
-  updateNotification("Sniper", "Item list refreshed", 2)
  end})
 
  sec:AddTextbox({Name = "Maximum Price", Default = "", TextDisappear = false, Callback = function(text)
@@ -2461,7 +2497,7 @@ local function BuildSniper(sec)
   end
  end})
 
- sec:AddToggle({Name = "Enabled", Default = false, Tooltip = "Scans sell vendings cheapest-first and buys the items you picked. Speed and bypasses are in the gear.", Flag = autoFlag("vend"), Options = {
+ sec:AddToggle({Name = "Snipe", Default = false, Tooltip = "Scans sell vendings cheapest-first and buys the items you picked. Speed and bypasses are in the gear.", Flag = autoFlag("vend"), Options = {
   {Type = "slider", Name = "Sniper Speed", Min = 0.01, Max = 5, Default = 0.1, Callback = function(v) sniperSpeed = v end},
   {Type = "toggle", Name = "Bypass Maintenance", Default = false, Callback = function(v) Bypass.setMaintenance(v) end},
   {Type = "toggle", Name = "Bypass In-Use", Default = false, Callback = function(v) Bypass.setInUse(v) end},
@@ -3042,16 +3078,11 @@ local function BuildPriceTool()
 
  pickDropdown = SrcSec:AddDropdown({
   Name = "Sources", Options = sourceLabels, Default = {},
+  OnRefresh = function() sourceLabels = getSourceLabels() selectedSources = {} return sourceLabels end,
   MultiSelect = true, Search = true, SelectAll = true, Flag = "PricerSources",
   Callback = function(chosen) selectedSources = chosen or {} if refreshGuideItemDropdown then refreshGuideItemDropdown() end end,
  })
 
- SrcSec:AddButton({Name = "Refresh", Callback = function()
-  sourceLabels = getSourceLabels()
-  selectedSources = {}
-  pcall(function() pickDropdown:Refresh(sourceLabels, true) end)
-  notify("Refreshed", "Source list updated", 2)
- end})
  SrcSec:AddButton({Name = "Save Prices", Callback = function()
   local saved = saveShopFromCurrent()
   if saved then
@@ -3310,7 +3341,7 @@ end)})
 
 UI.autoStock = L:AddSection({Name = "Vending Auto Stocker"})
 local stockerEnabled, stockerAmount, stockerTimer, stockerMode = false, 5, 15, "Deposit All"
-UI.autoStock:AddTextbox({Name = "Item Amount", Default = "", TextDisappear = false, Callback = function(text) local num = tonumber(text) if num then stockerAmount = num end end})
+UI.autoStock:AddTextbox({Name = "Amount", Default = "", TextDisappear = false, Callback = function(text) local num = tonumber(text) if num then stockerAmount = num end end})
 UI.autoStock:AddSlider({Name = "Cycle Timer (s)", Min = 1, Max = 120, Increment = 1, Default = 15, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) stockerTimer = value end})
 UI.autoStock:AddDropdown({Name = "Deposit Mode", Options = {"Deposit All", "Split"}, Default = "Deposit All", Flag = autoFlag("auto"), Callback = function(value) stockerMode = value end})
 UI.autoStock:AddToggle({Name = "Enabled", Default = false, Tooltip = "Picks a random item from your backpack and deposits it to vendings each cycle. Choose Deposit All or Split mode.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
@@ -3908,15 +3939,14 @@ UI.setPerf:AddDropdown({Name = "Action Type", Options = {"Invite", "Join", "Perm
  playerActionMode = value
 end})
 
-UI.playerDrop = UI.setPerf:AddDropdown({Name = "Target Player", Options = (function() local t = {} for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP then table.insert(t, pl.Name) end end if #t == 0 then table.insert(t, "(no other players)") end return t end)(), Default = "", Search = true, Flag = autoFlag("set"), Callback = function(value)
- if value and value ~= "(no other players)" then playerActionUsername = value end
-end})
-UI.setPerf:AddButton({Name = "Refresh", Callback = function()
+local function otherPlayerNames()
  local t = {}
  for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP then table.insert(t, pl.Name) end end
  if #t == 0 then table.insert(t, "(no other players)") end
- pcall(function() UI.playerDrop:Refresh(t, true) end)
- updateNotification("Players", #t .. " player(s)", 2)
+ return t
+end
+UI.playerDrop = UI.setPerf:AddDropdown({Name = "Target Player", Options = otherPlayerNames(), OnRefresh = otherPlayerNames, Default = "", Search = true, Flag = autoFlag("set"), Callback = function(value)
+ if value and value ~= "(no other players)" then playerActionUsername = value end
 end})
 
 UI.setPerf:AddButton({Name = "Apply", Callback = function()
@@ -5005,12 +5035,8 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
     if n % 20 == 0 then task.wait() end
    end
   end
-  UI.flowerDrop = fl:AddDropdown({Name = "Flowers", Options = flowerNames(), Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only these flower types get watered.", Flag = autoFlag("farm"), Callback = function(chosen)
+  UI.flowerDrop = fl:AddDropdown({Name = "Flowers", Options = flowerNames(), OnRefresh = flowerNames, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only these flower types get watered.", Flag = autoFlag("farm"), Callback = function(chosen)
    selectedFlowers = chosen or {}
-  end})
-  fl:AddButton({Name = "Refresh", Callback = function()
-   pcall(function() UI.flowerDrop:Refresh(flowerNames(), true) end)
-   updateNotification("Flowers", "Flower list refreshed", 2)
   end})
   fl:AddToggle({Name = "Auto Water", Default = false, Tooltip = "Waters every selected flower type on a timer. Set the delay in the gear.", Flag = autoFlag("farm"), Options = {{Type = "slider", Name = "Delay (s)", Min = 1, Max = 600, Default = 1, Callback = function(v) waterDelay = v end}}, Callback = function(value)
    autoWaterOn = value
@@ -5123,7 +5149,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    table.sort(names)
    return names
   end
-  UI.nukeDrop = nk:AddDropdown({Name = "Select Blocks", Options = islandBlockNames(), Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("set"), Callback = function(v)
+  UI.nukeDrop = nk:AddDropdown({Name = "Blocks", Options = islandBlockNames(), OnRefresh = islandBlockNames, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("set"), Callback = function(v)
    nukeAll = false
    nukeSet = {}
    if not v or #v == 0 then nukeAll = true return end
@@ -5131,10 +5157,6 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
     if b == "All" then nukeAll = true nukeSet = {} break end
     nukeSet[b] = true
    end
-  end})
-  nk:AddButton({Name = "Refresh", Callback = function()
-   pcall(function() UI.nukeDrop:Refresh(islandBlockNames(), true) end)
-   updateNotification("Demolish Blocks", "Block list refreshed", 2)
   end})
   local function blocknuke()
    if not nukeOn then return end

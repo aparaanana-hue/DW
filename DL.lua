@@ -1190,9 +1190,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	end
 
 	local MainStroke = Instance.new("UIStroke")
-	MainStroke.Color     = Color3.fromRGB(0, 0, 0)
-	MainStroke.Thickness = 5
-	MainStroke.Parent    = MainWindow
+	MainStroke.Parent = MainWindow  -- colour, weight and transparency set below
 
 	AddDraggingFunctionality(DragPoint, MainWindow)
 
@@ -1846,54 +1844,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	end
 
 	
-	-- Holographic metal, on the border itself. The travelling band this
-	-- replaces was the wrong idea twice over: a rotated frame cannot be
-	-- clipped to a rounded window without showing its corners somewhere, and
-	-- a highlight crossing the middle sits on top of whatever you are reading.
-	-- The edge has neither problem - it is already the window's outline, so it
-	-- cannot escape it, and nothing is behind it.
-	--
-	-- This IS MainStroke rather than a frame inside the window: an inset ring
-	-- eats content width, and the black outline it replaces was only there to
-	-- keep the window legible against a bright sky, which a bright iridescent
-	-- ring does better.
-	do
-		MainStroke.Color     = Color3.fromRGB(255, 255, 255)
-		MainStroke.Thickness = 2.5
-
-		local edgeGrad = Create("UIGradient", {
-			Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(110,  80, 210)),
-				ColorSequenceKeypoint.new(0.16, Color3.fromRGB( 90, 200, 245)),
-				ColorSequenceKeypoint.new(0.32, Color3.fromRGB(190, 255, 235)),
-				ColorSequenceKeypoint.new(0.48, Color3.fromRGB(255, 250, 225)),
-				ColorSequenceKeypoint.new(0.62, Color3.fromRGB(255, 205, 150)),
-				ColorSequenceKeypoint.new(0.78, Color3.fromRGB(250, 150, 210)),
-				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(110,  80, 210)),
-			}),
-			Parent = MainStroke
-		})
-
-		-- Slow. The hue takes twenty seconds to travel once round the window
-		-- and the brightness breathes over eight, both far below the speed at
-		-- which movement in the corner of your eye starts to demand attention.
-		task.spawn(function()
-			while MainStroke and MainStroke.Parent do
-				TweenService:Create(edgeGrad,
-					TweenInfo.new(10, Enum.EasingStyle.Linear),
-					{ Rotation = edgeGrad.Rotation + 180 }):Play()
-				TweenService:Create(MainStroke,
-					TweenInfo.new(4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-					{ Transparency = 0.5 }):Play()
-				task.wait(4)
-				TweenService:Create(MainStroke,
-					TweenInfo.new(4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-					{ Transparency = 0.05 }):Play()
-				task.wait(6)
-				if edgeGrad.Rotation >= 360 then edgeGrad.Rotation = edgeGrad.Rotation - 360 end
-			end
-		end)
-	end
+	-- The window's edge is part of the glass, not a light show on top of it:
+	-- theme colour, thin, and semi-transparent so it reads as the lit rim of a
+	-- pane rather than as a border drawn round one. It replaces first a black
+	-- outline and then an animated iridescent one - both of which announced
+	-- themselves louder than anything inside the window did.
+	MainStroke.Thickness    = 1.5
+	MainStroke.Transparency = 0.35
+	AddThemeObject(MainStroke, "Stroke")
 
 	
 	local ViewportOpen = false
@@ -3524,28 +3482,30 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Parent = pop
 				})
 				Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = pop})
-				local _popStroke = Create("UIStroke", {Color = Color3.fromRGB(90, 30, 140), Thickness = 1, Parent = pop})
+				local _popStroke = Create("UIStroke", {Color = Color3.fromRGB(90, 30, 140), Thickness = 1, Transparency = 0.35, Parent = pop})
 				AddThemeObject(_popStroke, "Stroke")
 				local popContent = Create("Frame", {
 					BackgroundTransparency = 1, BorderSizePixel = 0,
 					Size = UDim2.new(1, 0, 1, 0), ZIndex = 61, Parent = pop
 				})
-				local popList = Create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = popContent})
-				Create("UIPadding", {PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8), Parent=popContent})
+				local popList = Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = popContent})
+				-- 12 across and 10 down. At 10/8 a slider knob, which overhangs its
+				-- track by 3px each side, ended up sitting on the popover's stroke.
+				Create("UIPadding", {PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10), Parent=popContent})
 
 				for _, item in ipairs(items) do
 					if item.Type == "slider" then
 						local val = item.Default or item.Min
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,42), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
-							Size=UDim2.new(1,-32,0,14), ZIndex=62, Parent=row}), "Text")
+							Size=UDim2.new(1,-42,0,14), ZIndex=62, Parent=row}), "Text")
 						local valLbl = AddThemeObject(Create("TextLabel", {Text=tostring(val), Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].TextDark, BackgroundTransparency=1,
-							Size=UDim2.new(0,30,0,14), Position=UDim2.new(1,-30,0,0),
+							Size=UDim2.new(0,38,0,14), Position=UDim2.new(1,-38,0,0),
 							TextXAlignment=Enum.TextXAlignment.Right, ZIndex=62, Parent=row}), "TextDark")
 						local track = AddThemeObject(Create("Frame", {BackgroundColor3=Color3.fromRGB(35,12,60),
-							BorderSizePixel=0, Size=UDim2.new(1,0,0,6), Position=UDim2.new(0,0,0,24), ZIndex=62, Parent=row}), "Main")
+							BorderSizePixel=0, Size=UDim2.new(1,-6,0,6), Position=UDim2.new(0,3,0,28), ZIndex=62, Parent=row}), "Main")
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=track})
 						local pct = (val-item.Min)/math.max(1,item.Max-item.Min)
 						local fill = AddThemeObject(Create("Frame", {BackgroundColor3=Color3.fromRGB(130,55,210),
@@ -3569,7 +3529,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							end
 						end)
 					elseif item.Type == "input" then
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,34), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.45,0,1,0), ZIndex=62, Parent=row}), "Text")
@@ -3586,14 +3546,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						AddThemeObject(_inStroke, "Stroke")
 						box.FocusLost:Connect(function() item.Callback(box.Text) end)
 					elseif item.Type == "keybind" then
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,34), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text="Keybind", Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.5,0,1,0), ZIndex=62, Parent=row}), "Text")
 						MakeKeybindBox(row, item, UDim2.new(0.45,0,0,24), UDim2.new(0.55,0,0.5,-12), 62)
 					elseif item.Type == "toggle" then
 						local state = item.Default == true
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,34), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.7,0,1,0), ZIndex=62, Parent=row}), "Text")
@@ -3704,7 +3664,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					elseif item.Type == "button" then
 						-- Action row: lets a gear hold things like Refresh or Delete
 						-- instead of them each needing their own control in the panel.
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,20), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,26), ZIndex=62, Parent=popContent})
 						-- Styled like the other popover rows: plain label weight, no
 						-- filled background, so it does not shout next to them.
 						local btn = Create("TextButton", {
@@ -3740,15 +3700,15 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					task.defer(function()
 						local ap = anchorFrame.AbsolutePosition
 						local as = anchorFrame.AbsoluteSize
-						local h  = math.max(popList.AbsoluteContentSize.Y + 20, 60)
-						local w  = math.max(as.X, 160)
+						local h  = math.max(popList.AbsoluteContentSize.Y + 24, 60)
+						local w  = math.max(as.X, 210)
 						popW, popH = w, h
 						pop.Size                   = UDim2.new(0, w, 0, 0)
 						pop.Position               = UDim2.new(0, ap.X, 0, ap.Y + as.Y + 4)
 						pop.BackgroundTransparency = 1
 						pop.Visible                = true
 						TweenService:Create(pop, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-							{Size = UDim2.new(0, w, 0, h), BackgroundTransparency = 0}):Play()
+							{Size = UDim2.new(0, w, 0, h), BackgroundTransparency = DuvomeLibrary.Glass}):Play()
 						if followConn then followConn:Disconnect() end
 						followConn = RunService.RenderStepped:Connect(updatePos)
 					end)
@@ -4313,6 +4273,25 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				
+				-- A refresh belongs to the list it refreshes, not to a button
+				-- sitting under it in the column. OnRefresh returns the new
+				-- options and this feeds them straight to Dropdown:Refresh, so
+				-- callers do not have to hold on to the dropdown handle.
+				if DropdownConfig.OnRefresh then
+					local acts = {}
+					table.insert(acts, {
+						Text = "Refresh",
+						OnClick = function()
+							local ok, list = pcall(DropdownConfig.OnRefresh)
+							if ok and type(list) == "table" then
+								pcall(function() Dropdown:Refresh(list, true) end)
+							end
+						end,
+					})
+					for _, a in ipairs(DropdownConfig.Actions or {}) do table.insert(acts, a) end
+					DropdownConfig.Actions = acts
+				end
+
 				-- Custom actions live in the list itself rather than behind a gear.
 				if DropdownConfig.Actions then
 					local actRow = Create("Frame", {BackgroundTransparency = 1,
@@ -4704,7 +4683,10 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Size               = UDim2.new(1, 0, 1, 0),
 					BackgroundTransparency = 1,
 					TextColor3         = Color3.fromRGB(255, 255, 255),
-					PlaceholderColor3  = Color3.fromRGB(210, 210, 210),
+					-- Grey, well below the white of typed text. At 210 the hint
+					-- and real input were the same weight, so an empty field
+					-- looked like a filled one.
+					PlaceholderColor3  = Color3.fromRGB(120, 118, 132),
 					PlaceholderText    = "Input",
 					Font               = Enum.Font.GothamSemibold,
 					TextXAlignment     = Enum.TextXAlignment.Center,
@@ -4780,7 +4762,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					local w = measureAndSize(TextboxActual.Text)
 					TweenService:Create(TextContainer,TweenInfo.new(0.45,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{Size=UDim2.new(0,w,0,24)}):Play()
 				end)
-				AddConnection(TextboxActual.FocusLost, function() TextboxConfig.Callback(TextboxActual.Text) if TextboxConfig.TextDisappear then TextboxActual.Text="" end end)
+				-- The hint is guidance for a field you have not started on. Once
+				-- the cursor is in it, it is in the way.
+				AddConnection(TextboxActual.Focused, function() TextboxActual.PlaceholderText = "" end)
+				AddConnection(TextboxActual.FocusLost, function()
+					TextboxActual.PlaceholderText = "Input"
+					TextboxConfig.Callback(TextboxActual.Text)
+					if TextboxConfig.TextDisappear then TextboxActual.Text="" end
+				end)
 				_resizing = true
 				TextboxActual.Text = TextboxConfig.Default
 				local measureText = TextboxConfig.Default ~= "" and TextboxConfig.Default or "Input"
@@ -5613,6 +5602,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	local PStroke = Instance.new("UIStroke",Panel)
 	PStroke.Color = Color3.fromRGB(100,35,170)
 	PStroke.Thickness = 1.5
+	PStroke.Transparency = 0.35   -- matches MainStroke on the window
 
 	
 
@@ -5735,9 +5725,12 @@ local function MakeKeyUI(cfg, onSuccess)
 	local IBG = Instance.new("Frame",Panel)
 	IBG.Size = UDim2.new(0,240,0,40); IBG.Position = UDim2.new(0,18,0,92)
 	IBG.BackgroundColor3 = Color3.fromRGB(16,5,32); IBG.BorderSizePixel = 0; IBG.ZIndex = 101
+	-- same glass as an inner surface in the main window, so the key screen and
+	-- the hub it leads to look like one piece of software
+	IBG.BackgroundTransparency = DuvomeLibrary.Glass * DuvomeLibrary.GlassInner
 	Instance.new("UICorner",IBG).CornerRadius = UDim.new(0,8)
 	local IS = Instance.new("UIStroke",IBG)
-	IS.Color = Color3.fromRGB(60,20,105); IS.Thickness = 1
+	IS.Color = Color3.fromRGB(60,20,105); IS.Thickness = 1; IS.Transparency = 0.35
 	IBG.ClipsDescendants = true
 
 	
