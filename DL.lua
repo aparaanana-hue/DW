@@ -1476,7 +1476,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		CfgPanel.Visible = true
 		TweenService:Create(CfgPanel,
 			TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-			{Position = UDim2.new(0, landX, 0, centY), BackgroundTransparency = 0.05}
+			{Position = UDim2.new(0, landX, 0, centY), BackgroundTransparency = DuvomeLibrary.Glass}
 		):Play()
 	end
 
@@ -1846,160 +1846,51 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	end
 
 	
-	-- Holographic metal: a band of light crossing the window the way a
-	-- highlight crosses a brushed, oil-slick surface when it turns, plus a
-	-- blink that runs round the edge. The colours slide *within* the band as
-	-- it travels, which is what separates thin-film iridescence from a plain
-	-- white gleam - a solid highlight just looks like a bar sliding past.
-	-- It replaces a field of forty twinkling stars: those drew the eye away
-	-- from whatever you were reading.
+	-- Holographic metal, on the border itself. The travelling band this
+	-- replaces was the wrong idea twice over: a rotated frame cannot be
+	-- clipped to a rounded window without showing its corners somewhere, and
+	-- a highlight crossing the middle sits on top of whatever you are reading.
+	-- The edge has neither problem - it is already the window's outline, so it
+	-- cannot escape it, and nothing is behind it.
+	--
+	-- This IS MainStroke rather than a frame inside the window: an inset ring
+	-- eats content width, and the black outline it replaces was only there to
+	-- keep the window legible against a bright sky, which a bright iridescent
+	-- ring does better.
 	do
-		local SheenCanvas = Create("Frame", {
-			Name                   = "SheenCanvas",
-			BackgroundTransparency = 1,
-			Size                   = UDim2.new(1, 0, 1, 0),
-			Position               = UDim2.new(0, 0, 0, 0),
-			ZIndex                 = 0,
-			ClipsDescendants       = true,
-			Parent                 = MainWindow
-		})
-		-- rectangular clipping would let the band show past the rounded corners
-		Create("UICorner", { CornerRadius = UDim.new(0, 10), Parent = SheenCanvas })
+		MainStroke.Color     = Color3.fromRGB(255, 255, 255)
+		MainStroke.Thickness = 2.5
 
-		local band = Create("Frame", {
-			BackgroundColor3       = Color3.fromRGB(255, 255, 255),
-			BackgroundTransparency = 0,
-			BorderSizePixel        = 0,
-			AnchorPoint            = Vector2.new(0.5, 0.5),
-			Rotation               = 18,
-			Size                   = UDim2.new(0.55, 0, 2, 0),
-			Position               = UDim2.new(-0.4, 0, 0.5, 0),
-			ZIndex                 = 0,
-			Parent                 = SheenCanvas
-		})
-
-		-- Across the band: violet, cyan, gold, rose. Kept desaturated, because
-		-- at full saturation this stops reading as metal and starts reading as
-		-- a rainbow.
-		local sheenGrad = Create("UIGradient", {
-			Rotation = 0,
-			Color    = ColorSequence.new({
+		local edgeGrad = Create("UIGradient", {
+			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(110,  80, 210)),
 				ColorSequenceKeypoint.new(0.16, Color3.fromRGB( 90, 200, 245)),
 				ColorSequenceKeypoint.new(0.32, Color3.fromRGB(190, 255, 235)),
-				ColorSequenceKeypoint.new(0.46, Color3.fromRGB(255, 250, 225)),
-				ColorSequenceKeypoint.new(0.60, Color3.fromRGB(255, 205, 150)),
-				ColorSequenceKeypoint.new(0.76, Color3.fromRGB(250, 150, 210)),
-				ColorSequenceKeypoint.new(0.90, Color3.fromRGB(160, 110, 240)),
-				ColorSequenceKeypoint.new(1.00, Color3.fromRGB( 90, 200, 245)),
+				ColorSequenceKeypoint.new(0.48, Color3.fromRGB(255, 250, 225)),
+				ColorSequenceKeypoint.new(0.62, Color3.fromRGB(255, 205, 150)),
+				ColorSequenceKeypoint.new(0.78, Color3.fromRGB(250, 150, 210)),
+				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(110,  80, 210)),
 			}),
-			-- soft on both edges, so it is a gleam rather than a bar
-			Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0.00, 1.00),
-				NumberSequenceKeypoint.new(0.18, 0.95),
-				NumberSequenceKeypoint.new(0.42, 0.90),
-				NumberSequenceKeypoint.new(0.50, 0.72),
-				NumberSequenceKeypoint.new(0.58, 0.90),
-				NumberSequenceKeypoint.new(0.82, 0.95),
-				NumberSequenceKeypoint.new(1.00, 1.00),
-			}),
-			Parent = band,
+			Parent = MainStroke
 		})
 
-		-- The edge blink. A separate frame rather than MainStroke itself:
-		-- MainStroke is the black outline that keeps the window legible against
-		-- a bright sky, and a gradient over black stays black.
-		local EdgeFrame = Create("Frame", {
-			Name                   = "EdgeBlink",
-			BackgroundTransparency = 1,
-			-- inset by a pixel: MainWindow clips its descendants, and a border
-			-- stroke draws outward, so a flush frame would have its glow cut off
-			Size                   = UDim2.new(1, -4, 1, -4),
-			Position               = UDim2.new(0, 2, 0, 2),
-			ZIndex                 = 10,
-			Active                 = false,
-			Parent                 = MainWindow
-		})
-		-- 8, not 10: the frame is inset 2px, so matching the window's radius
-		-- would swing the line wide of the corner and outside the window
-		Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = EdgeFrame })
-		local EdgeStroke = Create("UIStroke", {
-			Color       = Color3.fromRGB(255, 255, 255),
-			Thickness   = 1.6,
-			Transparency = 0.85,
-			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-			Parent      = EdgeFrame
-		})
-		local edgeGrad = Create("UIGradient", {
-			Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(120, 210, 245)),
-				ColorSequenceKeypoint.new(0.35, Color3.fromRGB(150, 110, 235)),
-				ColorSequenceKeypoint.new(0.70, Color3.fromRGB(245, 170, 215)),
-				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(120, 210, 245)),
-			}),
-			Parent = EdgeStroke
-		})
-
-		-- One loop drives both, so the blink lands with the sweep instead of
-		-- drifting in and out of step with it.
-		--
-		-- Four beats: across to the right, a quarter turn clockwise, back to
-		-- the left, a quarter turn back. The turn is what sells it as metal -
-		-- a highlight that only ever slides one way reads as a bar on a track,
-		-- while one that pivots reads as light catching a surface that moved.
+		-- Slow. The hue takes twenty seconds to travel once round the window
+		-- and the brightness breathes over eight, both far below the speed at
+		-- which movement in the corner of your eye starts to demand attention.
 		task.spawn(function()
-			local SWEEP, TURN = 1.8, 0.45
-			local BASE = 18
-
-			-- The travel range has to clear the window at either angle. Turned
-			-- 90 degrees the band lies almost flat and covers twice the width,
-			-- so it needs to start and finish much further out.
-			local function sweepTo(x, secs)
-				TweenService:Create(band,
-					TweenInfo.new(secs, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-					{ Position = UDim2.new(x, 0, 0.5, 0) }):Play()
-				TweenService:Create(sheenGrad,
-					TweenInfo.new(secs, Enum.EasingStyle.Linear),
-					{ Offset = Vector2.new(sheenGrad.Offset.X > 0 and -0.5 or 0.5, 0) }):Play()
-				task.wait(secs)
-			end
-
-			local function turn(to)
-				TweenService:Create(band,
-					TweenInfo.new(TURN, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-					{ Rotation = to }):Play()
-				task.wait(TURN)
-			end
-
-			local function blink(secs)
-				TweenService:Create(EdgeStroke,
-					TweenInfo.new(secs * 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-					{ Transparency = 0.28 }):Play()
+			while MainStroke and MainStroke.Parent do
 				TweenService:Create(edgeGrad,
-					TweenInfo.new(secs, Enum.EasingStyle.Linear),
+					TweenInfo.new(10, Enum.EasingStyle.Linear),
 					{ Rotation = edgeGrad.Rotation + 180 }):Play()
-				task.delay(secs * 0.4, function()
-					if not EdgeStroke.Parent then return end
-					TweenService:Create(EdgeStroke,
-						TweenInfo.new(secs * 0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-						{ Transparency = 0.85 }):Play()
-				end)
-			end
-
-			while band and band.Parent do
-				band.Rotation    = BASE
-				band.Position    = UDim2.new(-1.2, 0, 0.5, 0)
-				sheenGrad.Offset = Vector2.new(-0.5, 0)
-				edgeGrad.Rotation = 0
-
-				blink(SWEEP)
-				sweepTo(2.2, SWEEP)          -- left to right
-				turn(BASE + 90)              -- quarter turn clockwise
-				blink(SWEEP)
-				sweepTo(-1.2, SWEEP)         -- right to left
-				turn(BASE)                   -- quarter turn back
-
-				task.wait(3 + math.random() * 3)
+				TweenService:Create(MainStroke,
+					TweenInfo.new(4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+					{ Transparency = 0.5 }):Play()
+				task.wait(4)
+				TweenService:Create(MainStroke,
+					TweenInfo.new(4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+					{ Transparency = 0.05 }):Play()
+				task.wait(6)
+				if edgeGrad.Rotation >= 360 then edgeGrad.Rotation = edgeGrad.Rotation - 360 end
 			end
 		end)
 	end
@@ -2213,7 +2104,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		VPScale.Scale = 1
 		TweenService:Create(ViewportFrame,
 			TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-			{Position = UDim2.new(0, landX, 0, centY), BackgroundTransparency = 0.05}
+			{Position = UDim2.new(0, landX, 0, centY), BackgroundTransparency = DuvomeLibrary.Glass}
 		):Play()
 	end
 
@@ -3956,9 +3847,11 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				
 				local _soleKeyB = SoleKeybind(ButtonConfig.Options)
 				if _soleKeyB then
+					-- 8px clear of the row icon, whose left edge is at -30. At
+					-- -74 the 58-wide box ran to -16 and sat under the icon.
 					MakeKeybindBox(ButtonFrame, _soleKeyB,
-						UDim2.new(0, 58, 0, 24), UDim2.new(1, -74, 0.5, -12), 5)
-					ButtonFrame:FindFirstChild("Content").Size = UDim2.new(1, -86, 1, 0)
+						UDim2.new(0, 58, 0, 24), UDim2.new(1, -96, 0.5, -12), 5)
+					ButtonFrame:FindFirstChild("Content").Size = UDim2.new(1, -108, 1, 0)
 				elseif ButtonConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
@@ -4105,14 +3998,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				local _soleKey = SoleKeybind(ToggleConfig.Options)
 				if _soleKey then
 					-- its only setting is the key, so show the key
-					-- Sits clear of whatever is to its right - the switch, and the
-					-- gear icon when there is one - with room to spare rather
-					-- than tucked against it.
+					-- Sits 8px clear of whatever is to its right: the switch,
+					-- whose left edge is at -50, or the gear icon at -78 when
+					-- there is one. The box is 58 wide, so -116 and -144.
 					MakeKeybindBox(ToggleFrame, _soleKey,
 						UDim2.new(0, 58, 0, 24),
-						UDim2.new(1, ToggleConfig.GearAction and -172 or -134, 0.5, -12), 5)
+						UDim2.new(1, ToggleConfig.GearAction and -144 or -116, 0.5, -12), 5)
 					ToggleFrame:FindFirstChild("Content").Size =
-						UDim2.new(1, ToggleConfig.GearAction and -184 or -146, 1, 0)
+						UDim2.new(1, ToggleConfig.GearAction and -156 or -128, 1, 0)
 				elseif ToggleConfig.Options then
 					local dotBtn = Create("TextButton", {
 						Text             = "",
@@ -5316,7 +5209,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Panel.Visible = true
 					TweenService:Create(Panel,
 						TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-						{BackgroundTransparency = 0, Position = UDim2.new(0, landX, 0, centreY())}
+						{BackgroundTransparency = DuvomeLibrary.Glass, Position = UDim2.new(0, landX, 0, centreY())}
 					):Play()
 				end
 				-- Raw content frame, for callers that need to parent something the
@@ -5710,7 +5603,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	Panel.Size = UDim2.new(0,PW,0,PH)
 	Panel.AnchorPoint = Vector2.new(0.5,0.5)
 	Panel.BackgroundColor3 = Color3.fromRGB(8,3,18)
-	Panel.BackgroundTransparency = 0.35
+	Panel.BackgroundTransparency = DuvomeLibrary.Glass
 	Panel.BorderSizePixel = 0
 	Panel.ZIndex = 100
 	Panel.Position = UDim2.new(0.5,0,0.5,0)
@@ -5734,7 +5627,7 @@ local function MakeKeyUI(cfg, onSuccess)
 		TS2:Create(Dim, TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
 			{BackgroundTransparency = 0.45}):Play()
 		TS2:Create(Panel, TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-			{Position = UDim2.new(0.5, 0, 0.5, 0), BackgroundTransparency = 0.35}):Play()
+			{Position = UDim2.new(0.5, 0, 0.5, 0), BackgroundTransparency = DuvomeLibrary.Glass}):Play()
 	end)
 
 	

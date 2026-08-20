@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 20 10:40"
+local PIHD_BUILD = "Aug 20 12:20"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -394,6 +394,9 @@ end
 
 local function setOutput(title, content)
  if UI.output then pcall(function() UI.output:Set("[ " .. tostring(title) .. " ]\n\n" .. tostring(content)) end) end
+ -- The panel is where results appear now, so writing one opens it. Producing
+ -- output into a panel the user cannot see would look like nothing happened.
+ if UI.outputPanel then pcall(function() UI.outputPanel:Show() end) end
 end
 
 local function checkNetwork() if not networkReady then updateNotification("Error", "Network not initialized!", 5) return false end return true end
@@ -793,11 +796,27 @@ UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVers
 
 UI.homeScanner = L:AddSection({Name = "Scanner & Stats"})
 
-UI.output = UI.homeScanner:AddParagraph("Scanner Output", "Select an action below...")
+-- Scanner output lives in a side panel rather than a paragraph on the tab.
+-- Results run to a dozen lines, and inline they pushed every control below
+-- them off the screen; in a panel they scroll on their own. Same width as the
+-- avatar panel so the two look like one family, and shorter, because this is
+-- text rather than a full-body render.
+local outPanel = Duvome:MakeSidePanel({ Name = "Scanner Output", Width = 175, Height = 240, Side = "right" })
+UI.output = outPanel:AddParagraph("Result", "Run a scan to see it here.")
 
-local selectedMode = "Player Info & Island Code"
+UI.outputPanel = outPanel
+
+UI.homeScanner:AddToggle({
+ Name = "Output Panel",
+ Default = false,
+ Tooltip = "Opens the panel that scan results are written to.",
+ Callback = function(value)
+  pcall(function() if value then outPanel:Show() else outPanel:Hide() end end)
+ end,
+})
+
+local selectedMode = "Coin Scanner"
 local playerList = {}
-local selectedPlayerForInfo = nil
 
 local function refreshPlayersForScanner()
  playerList = {}
@@ -812,11 +831,10 @@ end
 
 playerList = refreshPlayersForScanner()
 
-UI.homeScanner:AddDropdown({Name = "Select Player (for Player Info)", Options = playerList, Default = playerList[1], Search = true, Flag = autoFlag("home"), Callback = function(value)
- selectedPlayerForInfo = Players:FindFirstChild(value)
-end})
-
-UI.homeScanner:AddDropdown({Name = "Select Mode", Options = {"Player Info & Island Code", "Coin Scanner", "Items Scanner", "Vending Mode Scanner", "Blocks Scanner", "Show Statistics", "Show Transaction History"}, Default = "Player Info & Island Code", Flag = autoFlag("home"), Callback = function(value) selectedMode = value end})
+-- Player info and island code moved to the player-action list, which already
+-- has a target-player dropdown; keeping a second one here just to feed this
+-- mode meant two places to pick a player.
+UI.homeScanner:AddDropdown({Name = "Mode", Options = {"Coin Scanner", "Items Scanner", "Vending Mode Scanner", "Blocks Scanner", "Show Statistics", "Show Transaction History"}, Default = "Coin Scanner", Flag = autoFlag("home"), Callback = function(value) selectedMode = value end})
 
 UI.homeScanner:AddButton({Name = "Apply", Tooltip = "Runs the selected scanner and prints the result above.", Callback = function()
  if selectedMode == "Coin Scanner" then
@@ -912,30 +930,6 @@ UI.homeScanner:AddButton({Name = "Apply", Tooltip = "Runs the selected scanner a
   else for i = 1, displayCount do local t = S.transactionHistory[i] displayText = displayText .. t.time .. " | " .. t.details if i < displayCount then displayText = displayText .. "\n" end end end
   setOutput("Transaction History (Last 10)", displayText)
   updateNotification("History", "Displayed!", 2)
- elseif selectedMode == "Player Info & Island Code" then
-  if not selectedPlayerForInfo then
-   updateNotification("Select a Player First", "", 2)
-   return
-  end
-  local info = {
-   Username = selectedPlayerForInfo.Name,
-   DisplayName = selectedPlayerForInfo.DisplayName,
-   UserId = selectedPlayerForInfo.UserId,
-   AccountAge = selectedPlayerForInfo.AccountAge .. " days",
-   Team = selectedPlayerForInfo.Team and selectedPlayerForInfo.Team.Name or "None"
-  }
-  local code = "Not found"
-  pcall(function()
-   if selectedPlayerForInfo:FindFirstChild("JoinCode") then
-    code = selectedPlayerForInfo.JoinCode.Value
-   end
-  end)
-  local infoText = string.format(
-   "Username: %s\nDisplay: %s\nUser ID: %s\nAge: %s\nTeam: %s\n\nIsland Code: %s",
-   info.Username, info.DisplayName, info.UserId, info.AccountAge, info.Team, code
-  )
-  setOutput(info.DisplayName, infoText)
-  updateNotification("Loaded Player Info", "", 2)
  end
 end})
 
@@ -1005,7 +999,7 @@ local function findCauldrons()
 end
 
 S.lastDelayWarn = 0
-UI.openables:AddSlider({Name = "Delay Between Opens (seconds)", Min = 0.01, Max = 1, Increment = 0.01, Default = 0.1, ValueName = "s", Flag = autoFlag("home"), Callback = function(value)
+UI.openables:AddSlider({Name = "Open Delay (s)", Min = 0.01, Max = 1, Increment = 0.01, Default = 0.1, ValueName = "s", Flag = autoFlag("home"), Callback = function(value)
  S.cauldronLoopSpeed = value
  S.cauldronOpenDelay = value
  if value <= 0.03 and (tick() - S.lastDelayWarn) > 1.5 then
@@ -1068,7 +1062,7 @@ UI.openables:AddToggle({Name = "Enable Opener", Default = false, Tooltip = "Open
 end)})
 
 S.collectCauldronItems = false
-UI.openables:AddToggle({Name = "Collect Openable Items", Default = false, Tooltip = "Fires cauldron prompts within 15 studs to collect drops.", Flag = autoFlag("home"), Callback = initGuard(function(value)
+UI.openables:AddToggle({Name = "Collect Items", Default = false, Tooltip = "Fires cauldron prompts within 15 studs to collect drops.", Flag = autoFlag("home"), Callback = initGuard(function(value)
  S.collectCauldronItems = value
  if value then
   task.spawn(function()
@@ -1113,7 +1107,7 @@ UI.openables:AddToggle({Name = "Collect Openable Items", Default = false, Toolti
  end
 end)})
 
-UI.openables:AddToggle({Name = "Auto Walk to Openable", Default = false, Tooltip = "Walks to the nearest openable, opens it, and withdraws.", Flag = autoFlag("home"), Callback = initGuard(function(value)
+UI.openables:AddToggle({Name = "Auto Walk", Default = false, Tooltip = "Walks to the nearest openable, opens it, and withdraws.", Flag = autoFlag("home"), Callback = initGuard(function(value)
  S.autoWalkToCauldron = value
  if value then
   updateNotification("Enabled Auto Walk", "", 2)
@@ -1234,14 +1228,14 @@ UI.chest:AddDropdown({Name = "Chest Type", Options = {"All", "Expanded Diamond C
  if all or next(set) == nil then S.chestTypeSet = nil else S.chestTypeSet = set end
 end})
 
-UI.chestRadiusToggle = UI.chest:AddToggle({Name = "Use Radius Limit", Default = false, Tooltip = "Only act on chests within the distance set in the gear.", Flag = autoFlag("home"), Options = {
- {Type = "slider", Name = "Radius Distance", Min = 2, Max = 500, Default = 100, Callback = function(v) chestRadius = v end},
+UI.chestRadiusToggle = UI.chest:AddToggle({Name = "Radius Limit", Default = false, Tooltip = "Only act on chests within the distance set in the gear.", Flag = autoFlag("home"), Options = {
+ {Type = "slider", Name = "Distance", Min = 2, Max = 500, Default = 100, Callback = function(v) chestRadius = v end},
 }, Callback = function(value)
  chestRadiusLimit = value
  updateNotification("Chest Radius", value and ("Enabled - " .. chestRadius .. " studs") or "Disabled", 2)
 end})
 
-UI.chest:AddToggle({Name = "Drag-Select Chests", Default = false, Tooltip = "ON = hold Left-Click and drag a box over chests to select them. ALT+Click a chest for single. Selected chests override the radius.", Flag = autoFlag("home"), Callback = function(value)
+UI.chest:AddToggle({Name = "Drag-Select", Default = false, Tooltip = "ON = hold Left-Click and drag a box over chests to select them. ALT+Click a chest for single. Selected chests override the radius.", Flag = autoFlag("home"), Callback = function(value)
  if value then
   PFX.setDragMode("chest")
   updateNotification("Chest Drag", "Left-click + drag a box over chests", 3)
@@ -1250,7 +1244,7 @@ UI.chest:AddToggle({Name = "Drag-Select Chests", Default = false, Tooltip = "ON 
   updateNotification("Chest Drag", "Disabled", 2)
  end
 end})
-UI.chest:AddButton({Name = "Clear Chest Selection", Callback = function()
+UI.chest:AddButton({Name = "Clear Selection", Callback = function()
  PFX.clearChests()
  updateNotification("Chests", "Selection cleared", 2)
 end})
@@ -1489,7 +1483,7 @@ refreshChestItems()
 
 refreshChestItems()
 
-UI.chestDropdown = UI.chest:AddDropdown({Name = "Select Item to Deposit", Options = S.chestItemsList, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("home"), Callback = function(chosen)
+UI.chestDropdown = UI.chest:AddDropdown({Name = "Item", Options = S.chestItemsList, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("home"), Callback = function(chosen)
  S.selectedChestItems = chosen or {}
  S.selectedChestItem = S.selectedChestItems[1]
 end})
@@ -1499,7 +1493,7 @@ if not S.selectedChestItem and #S.chestItemsList > 0 and S.chestItemsList[1] ~= 
 end
 
 S.autoWithdrawChests = false
-UI.chest:AddToggle({Name = "Auto-Withdraw from Chests", Default = false, Tooltip = "Withdraws all items from chests every 3 seconds.", Flag = autoFlag("home"), Callback = initGuard(function(value)
+UI.chest:AddToggle({Name = "Auto-Withdraw", Default = false, Tooltip = "Withdraws all items from chests every 3 seconds.", Flag = autoFlag("home"), Callback = initGuard(function(value)
  if value and S.autoWithdrawChests then
   updateNotification("Error", "Already running!", 2)
   return
@@ -1520,7 +1514,7 @@ UI.chest:AddToggle({Name = "Auto-Withdraw from Chests", Default = false, Tooltip
  end
 end)})
 
-UI.chest:AddToggle({Name = "Auto-Deposit to Chests", Default = false, Tooltip = "Deposits your selected items (or the held item if none selected) into nearby chests continuously.", Flag = autoFlag("home"), Callback = initGuard(function(value)
+UI.chest:AddToggle({Name = "Auto-Deposit", Default = false, Tooltip = "Deposits your selected items (or the held item if none selected) into nearby chests continuously.", Flag = autoFlag("home"), Callback = initGuard(function(value)
  S.autoDepositChests = value
  if value then
   updateNotification("Auto Deposit", "Hold items to auto-deposit!", 3)
@@ -1568,7 +1562,7 @@ UI.chest:AddToggle({Name = "Auto-Deposit to Chests", Default = false, Tooltip = 
  end
 end)})
 
-UI.homeActions = L:AddSection({Name = "Favorites & Groups Actions"})
+UI.homeActions = L:AddSection({Name = "Favorites & Groups"})
 
 S.favGroupMode = "Save as Favorites"
 
@@ -1579,8 +1573,8 @@ S.savedGroupsList = {"None"}
 for groupName, _ in pairs(S.vendingGroups) do if groupName ~= "Default" then table.insert(S.savedGroupsList, groupName) end end
 S.selectedGroupName = "None"
 
-UI.homeActions:AddTextbox({Name = "Group Name (for Save/Load/Delete)", Default = "", TextDisappear = false, Callback = function(text) S.groupNameInput = text end})
-UI.homeActions:AddDropdown({Name = "Select Saved Group", Options = S.savedGroupsList, Default = "None", Search = true, Flag = autoFlag("home"), Callback = function(value) S.selectedGroupName = value end})
+UI.homeActions:AddTextbox({Name = "Group Name", Default = "", TextDisappear = false, Callback = function(text) S.groupNameInput = text end})
+UI.homeActions:AddDropdown({Name = "Saved Group", Options = S.savedGroupsList, Default = "None", Search = true, Flag = autoFlag("home"), Callback = function(value) S.selectedGroupName = value end})
 
 S.groupESPObjects = {}
 local function removeGroupESP() for _, espData in ipairs(S.groupESPObjects) do if espData.highlight then pcall(function() espData.highlight:Destroy() end) end if espData.billboard then pcall(function() espData.billboard:Destroy() end) end end S.groupESPObjects = {} end
@@ -1968,7 +1962,7 @@ UI.vmSel:AddToggle({Name = "Use Selected Only", Default = false, Tooltip = "ON =
  end
 end)})
 
-UI.vmSel:AddToggle({Name = "Drag-Select Vendings", Default = false, Tooltip = "Hold Left-Click and drag a box over vendings to select them all at once. ALT+Click still works any time for single select/deselect - no need to enable anything for that.", Flag = autoFlag("vend"), Callback = function(value)
+UI.vmSel:AddToggle({Name = "Drag-Select", Default = false, Tooltip = "Hold Left-Click and drag a box over vendings to select them all at once. ALT+Click still works any time for single select/deselect - no need to enable anything for that.", Flag = autoFlag("vend"), Callback = function(value)
  if value then
   PFX.setDragMode("vending")
   updateNotification("Drag Select", "Left-click + drag a box over vendings", 3)
@@ -1995,7 +1989,7 @@ local function getTargetVendings()
  end
 end
 
-UI.vmSel:AddButton({Name = "Clear All Selections", Tooltip = "Removes every current ALT+Click selection.", Callback = function()
+UI.vmSel:AddButton({Name = "Clear All", Tooltip = "Removes every current ALT+Click selection.", Callback = function()
  if #selectedFavorites == 0 then updateNotification("Selection", "Nothing selected", 2) return end
  confirm("Clear Selections", "Clear all " .. #selectedFavorites .. " selected vending(s)?", function()
   for _, vending in ipairs(selectedFavorites) do
@@ -2036,8 +2030,8 @@ local function doBankWithdraw()
  end)
 end
 
-UI.vmBank:AddButton({Name = "Deposit to Bank", Tooltip = "Set a gear key to fire this without clicking.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankDeposit}}, Callback = doBankDeposit})
-UI.vmBank:AddButton({Name = "Withdraw from Bank", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankWithdraw}}, Callback = doBankWithdraw})
+UI.vmBank:AddButton({Name = "Deposit", Tooltip = "Set a gear key to fire this without clicking.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankDeposit}}, Callback = doBankDeposit})
+UI.vmBank:AddButton({Name = "Withdraw", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankWithdraw}}, Callback = doBankWithdraw})
 
 local STOCK_TARGET = 1000
 
@@ -2100,7 +2094,7 @@ local function coinTargets(vendings)
  return list
 end
 
-UI.vmCoin:AddButton({Name = "Deposit Coins", Options = {{Type = "keybind", Name = "Deposit Key", OnBind = function(k) hotkeys.depositAll = k end}}, Callback = function()
+UI.vmCoin:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Deposit Key", OnBind = function(k) hotkeys.depositAll = k end}}, Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = coinTargets(vendings)
@@ -2113,7 +2107,7 @@ UI.vmCoin:AddButton({Name = "Deposit Coins", Options = {{Type = "keybind", Name 
  updateNotification("Success", "Deposited " .. formatNumber(coinAmount) .. " to " .. #list .. " " .. target .. " vendings", 3)
 end})
 
-UI.vmCoin:AddButton({Name = "Withdraw Coins", Tooltip = "Withdraws the Coin Amount from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Withdraw Key", OnBind = function(k) hotkeys.withdrawAll = k end}}, Callback = function()
+UI.vmCoin:AddButton({Name = "Withdraw", Tooltip = "Withdraws the Coin Amount from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Withdraw Key", OnBind = function(k) hotkeys.withdrawAll = k end}}, Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = coinTargets(vendings)
@@ -2249,7 +2243,7 @@ local function doRestockVending()
 end
 
 UI.vmItem:AddButton({Name = "Deposit Item", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doDepositItem}}, Callback = doDepositItem})
-UI.vmItem:AddButton({Name = "Restock Vending", Tooltip = "Acts by vending mode: BUY vendings get topped up to 1000 with what you have in your inventory. SELL vendings get their stock pulled out, leaving exactly 1 behind (987 becomes 1). Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
+UI.vmItem:AddButton({Name = "Restock", Tooltip = "Acts by vending mode: BUY vendings get topped up to 1000 with what you have in your inventory. SELL vendings get their stock pulled out, leaving exactly 1 behind (987 becomes 1). Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
 
 UI.vmItem:AddButton({Name = "Empty Vendings", Tooltip = "Withdraws ALL items from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Empty Key", OnBind = function(k) hotkeys.emptyAll = k end}}, Callback = function()
  local vendings = getTargetVendings()
@@ -2276,7 +2270,7 @@ UI.vmCfg:AddDropdown({Name = "Vending Mode", Options = {"Buy", "Sell", "Offline"
  vendingMode = value
 end})
 
-UI.vmCfg:AddTextbox({Name = "Transaction Price", Default = "", TextDisappear = false, Callback = function(text)
+UI.vmCfg:AddTextbox({Name = "Price", Default = "", TextDisappear = false, Callback = function(text)
  local num = parseAmount(text)
  if num then
   vendingPrice = num
@@ -2288,7 +2282,7 @@ UI.vmCfg:AddDropdown({Name = "Apply", Options = {"Mode + Price", "Mode Only", "P
  applyTarget = value
 end})
 
-UI.vmCfg:AddButton({Name = "Apply Configuration", Callback = function()
+UI.vmCfg:AddButton({Name = "Apply", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local modeNum = vendingMode == "Buy" and 1 or (vendingMode == "Sell" and 0 or 2)
@@ -2436,7 +2430,7 @@ local function BuildSniper(sec)
   return opts
  end
 
- UI.sniperDrop = sec:AddDropdown({Name = "Select Item to Buy", Options = (function() local t = {"Buy Any Item"} for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end return t end)(), Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Pick items to snipe, or pick 'Buy Any Item' to buy anything under your max price.", Flag = autoFlag("vend"), Callback = function(chosen)
+ UI.sniperDrop = sec:AddDropdown({Name = "Item", Options = (function() local t = {"Buy Any Item"} for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end return t end)(), Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Pick items to snipe, or pick 'Buy Any Item' to buy anything under your max price.", Flag = autoFlag("vend"), Callback = function(chosen)
   table.clear(sniperItems)
   buyAny = false
   for _, d in ipairs(chosen or {}) do
@@ -2444,7 +2438,7 @@ local function BuildSniper(sec)
   end
  end})
 
- sec:AddButton({Name = "Refresh Sniper Items", Callback = function()
+ sec:AddButton({Name = "Refresh", Callback = function()
   local t = {"Buy Any Item"}
   for _, v in ipairs(scanSniperItems()) do table.insert(t, v) end
   pcall(function() UI.sniperDrop:Refresh(t, true) end)
@@ -2459,7 +2453,7 @@ local function BuildSniper(sec)
   end
  end})
 
- sec:AddTextbox({Name = "Max Buy Quantity", Default = "", TextDisappear = false, Callback = function(text)
+ sec:AddTextbox({Name = "Max Quantity", Default = "", TextDisappear = false, Callback = function(text)
   local num = parseAmount(text)
   if num then
    buyAmount = num
@@ -2467,7 +2461,7 @@ local function BuildSniper(sec)
   end
  end})
 
- sec:AddToggle({Name = "Enable Vending Sniper", Default = false, Tooltip = "Scans sell vendings cheapest-first and buys the items you picked. Speed and bypasses are in the gear.", Flag = autoFlag("vend"), Options = {
+ sec:AddToggle({Name = "Enabled", Default = false, Tooltip = "Scans sell vendings cheapest-first and buys the items you picked. Speed and bypasses are in the gear.", Flag = autoFlag("vend"), Options = {
   {Type = "slider", Name = "Sniper Speed", Min = 0.01, Max = 5, Default = 0.1, Callback = function(v) sniperSpeed = v end},
   {Type = "toggle", Name = "Bypass Maintenance", Default = false, Callback = function(v) Bypass.setMaintenance(v) end},
   {Type = "toggle", Name = "Bypass In-Use", Default = false, Callback = function(v) Bypass.setInUse(v) end},
@@ -3041,7 +3035,7 @@ local function BuildPriceTool()
  local PR = PriceTab:AddRight()
  local guideItemDropdown, guideResult, refreshGuideItemDropdown
 
- local SrcSec = PL:AddSection({Name = "Price Sources (multi-select)"})
+ local SrcSec = PL:AddSection({Name = "Sources"})
  local sourceLabels = getSourceLabels()
  local pickDropdown
  local deletePick = AVERAGE_LABEL
@@ -3052,13 +3046,13 @@ local function BuildPriceTool()
   Callback = function(chosen) selectedSources = chosen or {} if refreshGuideItemDropdown then refreshGuideItemDropdown() end end,
  })
 
- SrcSec:AddButton({Name = "Refresh Source List", Callback = function()
+ SrcSec:AddButton({Name = "Refresh", Callback = function()
   sourceLabels = getSourceLabels()
   selectedSources = {}
   pcall(function() pickDropdown:Refresh(sourceLabels, true) end)
   notify("Refreshed", "Source list updated", 2)
  end})
- SrcSec:AddButton({Name = "Save Current Shop's Prices", Callback = function()
+ SrcSec:AddButton({Name = "Save Prices", Callback = function()
   local saved = saveShopFromCurrent()
   if saved then
    sourceLabels = getSourceLabels()
@@ -3066,11 +3060,11 @@ local function BuildPriceTool()
   end
  end})
 
- local DelSec = PL:AddSection({Name = "Delete a Saved Shop"})
+ local DelSec = PL:AddSection({Name = "Delete Shop"})
  local deleteDropdown
- deleteDropdown = DelSec:AddDropdown({Name = "Pick Shop to Delete", Options = sourceLabels, Default = sourceLabels[1],
+ deleteDropdown = DelSec:AddDropdown({Name = "Shop", Options = sourceLabels, Default = sourceLabels[1],
   Search = true, Flag = "DeletePick", Callback = function(v) deletePick = v end})
- DelSec:AddButton({Name = "Delete Picked Shop", Callback = function()
+ DelSec:AddButton({Name = "Delete", Callback = function()
   if deletePick == AVERAGE_LABEL then notify("Error", "Can't delete the Average source", 3) return end
   local f = sourceLabelToFile[deletePick]
   if not f then notify("Error", "Could not resolve file", 3) return end
@@ -3087,7 +3081,7 @@ local function BuildPriceTool()
  ApplySec:AddParagraph("Direct Apply", "Merges all selected sources (averaged). Items not present are untouched.")
  ApplySec:AddDropdown({Name = "Pricing Mode", Options = {"All","Sell Only","Buy Only"}, Default = "All", Flag = "PricerMode",
   Callback = function(v) pricerMode = v notify("Pricing Mode", v, 2) end})
- ApplySec:AddButton({Name = "Apply Selected Sources", Callback = function()
+ ApplySec:AddButton({Name = "Apply Selected", Callback = function()
   local labels = selectedSources
   if #labels == 0 then labels = { AVERAGE_LABEL } end
   notify("Applying", "Merging " .. #labels .. " source(s)...", 2)
@@ -3099,7 +3093,7 @@ local function BuildPriceTool()
 
  local MarkSec = PR:AddSection({Name = "Markup Pricer"})
  MarkSec:AddParagraph("Markup Pricer", "Base = YOUR current shop price. newPrice = base x (1 + markup%).")
- MarkSec:AddDropdown({Name = "Base Price (from your shop)", Options = {"Sell Price","Buy Price"}, Default = "Sell Price", Flag = "MarkupBase",
+ MarkSec:AddDropdown({Name = "Base Price", Options = {"Sell Price","Buy Price"}, Default = "Sell Price", Flag = "MarkupBase",
   Callback = function(v) markupBaseField = (v == "Buy Price") and "buy" or "sell" end})
  MarkSec:AddTextbox({Name = "Markup %", Default = "0", TextDisappear = false, Flag = "MarkupPct",
   Callback = function(v) local n = tonumber(v) if n then markupPct = n end end})
@@ -3110,7 +3104,7 @@ local function BuildPriceTool()
    else markupTargetMode = 2 end
   end})
  markupTargetMode = 1
- MarkSec:AddButton({Name = "Apply With Markup", Callback = function()
+ MarkSec:AddButton({Name = "Apply Markup", Callback = function()
   notify("Markup", "Applying " .. markupPct .. "% ...", 2)
   task.spawn(applyMarkup)
  end})
@@ -3122,7 +3116,7 @@ local function BuildPriceTool()
 
  local GLookSec = PR:AddSection({Name = "Price Guide Lookup"})
  GLookSec:AddParagraph("Lookup", "Uses your 'Price Sources' selection on the left. Pick sources there, then search an item below.")
- GLookSec:AddButton({Name = "Refresh From Price Sources", Callback = function()
+ GLookSec:AddButton({Name = "Refresh Prices", Callback = function()
   if refreshGuideItemDropdown then refreshGuideItemDropdown() end
   notify("Lookup", "Refreshed from " .. #selectedSources .. " source(s)", 2)
  end})
@@ -3164,21 +3158,21 @@ BuildPriceTool()
 local AutomationTab = Window:MakeTab({Name = "Automation", Icon = TAB_ICONS.Automation, Columns = true})
 L, R = AutomationTab:AddLeft(), AutomationTab:AddRight()
 
-UI.autoRestock = L:AddSection({Name = "Auto-Restock Vendings"})
+UI.autoRestock = L:AddSection({Name = "Auto-Restock"})
 
 local autoRestockEnabled = false
 local restockItem = "grassBlock"
 local restockAmount = 100
 local restockInterval = 30
 
-UI.autoRestock:AddTextbox({Name = "Item to Restock", Default = "", TextDisappear = false, Callback = function(text)
+UI.autoRestock:AddTextbox({Name = "Item", Default = "", TextDisappear = false, Callback = function(text)
  if text and text ~= "" then
   restockItem = text
   updateNotification("Auto-Restock", "Item: " .. text, 2)
  end
 end})
 
-UI.autoRestock:AddTextbox({Name = "Restock Amount", Default = "", TextDisappear = false, Callback = function(text)
+UI.autoRestock:AddTextbox({Name = "Amount", Default = "", TextDisappear = false, Callback = function(text)
  local num = parseAmount(text) or tonumber(text)
  if num then
   restockAmount = num
@@ -3186,11 +3180,11 @@ UI.autoRestock:AddTextbox({Name = "Restock Amount", Default = "", TextDisappear 
  end
 end})
 
-UI.autoRestock:AddSlider({Name = "Restock Interval (seconds)", Min = 10, Max = 300, Increment = 10, Default = 30, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value)
+UI.autoRestock:AddSlider({Name = "Interval (s)", Min = 10, Max = 300, Increment = 10, Default = 30, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value)
  restockInterval = value
 end})
 
-UI.autoRestock:AddToggle({Name = "Enable Auto-Restock", Default = false, Tooltip = "Automatically restocks the chosen item into target vendings every interval.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
+UI.autoRestock:AddToggle({Name = "Enabled", Default = false, Tooltip = "Automatically restocks the chosen item into target vendings every interval.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
  autoRestockEnabled = value
  if value then
   updateNotification("Auto-Restock", "Enabled! Interval: " .. restockInterval .. "s", 3)
@@ -3238,10 +3232,10 @@ UI.autoRestock:AddToggle({Name = "Enable Auto-Restock", Default = false, Tooltip
  end
 end)})
 
-UI.autoBank = R:AddSection({Name = "Bank to Vendings Automation"})
+UI.autoBank = R:AddSection({Name = "Bank to Vendings"})
 local bankAutoEnabled, bankAutoAmount, bankAutoTimer = false, 1500000000, 10
-UI.autoBank:AddSlider({Name = "Cycle Timer (seconds)", Min = 1, Max = 60, Increment = 1, Default = 10, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) bankAutoTimer = value end})
-UI.bankToggle = UI.autoBank:AddToggle({Name = "Enable Bank Auto-Deposit", Default = false, Tooltip = "Withdraws 1.5B from your bank each cycle and distributes it across vendings toward the 5B cap. Auto-stops when the bank runs out of money.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
+UI.autoBank:AddSlider({Name = "Cycle Timer (s)", Min = 1, Max = 60, Increment = 1, Default = 10, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) bankAutoTimer = value end})
+UI.bankToggle = UI.autoBank:AddToggle({Name = "Enabled", Default = false, Tooltip = "Withdraws 1.5B from your bank each cycle and distributes it across vendings toward the 5B cap. Auto-stops when the bank runs out of money.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
  if value and bankAutoEnabled then
   updateNotification("Error", "Already running!", 2)
   return
@@ -3317,9 +3311,9 @@ end)})
 UI.autoStock = L:AddSection({Name = "Vending Auto Stocker"})
 local stockerEnabled, stockerAmount, stockerTimer, stockerMode = false, 5, 15, "Deposit All"
 UI.autoStock:AddTextbox({Name = "Item Amount", Default = "", TextDisappear = false, Callback = function(text) local num = tonumber(text) if num then stockerAmount = num end end})
-UI.autoStock:AddSlider({Name = "Cycle Timer (seconds)", Min = 1, Max = 120, Increment = 1, Default = 15, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) stockerTimer = value end})
+UI.autoStock:AddSlider({Name = "Cycle Timer (s)", Min = 1, Max = 120, Increment = 1, Default = 15, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) stockerTimer = value end})
 UI.autoStock:AddDropdown({Name = "Deposit Mode", Options = {"Deposit All", "Split"}, Default = "Deposit All", Flag = autoFlag("auto"), Callback = function(value) stockerMode = value end})
-UI.autoStock:AddToggle({Name = "Enable Auto Stocker", Default = false, Tooltip = "Picks a random item from your backpack and deposits it to vendings each cycle. Choose Deposit All or Split mode.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
+UI.autoStock:AddToggle({Name = "Enabled", Default = false, Tooltip = "Picks a random item from your backpack and deposits it to vendings each cycle. Choose Deposit All or Split mode.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
  stockerEnabled = value
  if value then
   updateNotification("Auto Stocker", "Enabled! Cycle: " .. stockerTimer .. "s", 3)
@@ -3528,7 +3522,7 @@ pcall(function()
     table.sort(FoodItemsDisplay)
 end)
 
-UI.farmEat:AddDropdown({Name = "Foods to Auto Eat", Options = FoodItemsDisplay, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("farm"), Callback = function(chosen)
+UI.farmEat:AddDropdown({Name = "Foods", Options = FoodItemsDisplay, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("farm"), Callback = function(chosen)
     selectedFoods = {}
     for _, dn in ipairs(chosen or {}) do
         local tn = FoodItemsToolNames[dn]
@@ -3910,14 +3904,14 @@ end
 local playerActionUsername = ""
 local playerActionMode = "Invite"
 
-UI.setPerf:AddDropdown({Name = "Action Type", Options = {"Invite", "Join", "Perm Giver", "View Inventory"}, Default = "Invite", Flag = autoFlag("set"), Callback = function(value)
+UI.setPerf:AddDropdown({Name = "Action Type", Options = {"Invite", "Join", "Perm Giver", "View Inventory", "Player Info", "Island Code"}, Default = "Invite", Flag = autoFlag("set"), Callback = function(value)
  playerActionMode = value
 end})
 
 UI.playerDrop = UI.setPerf:AddDropdown({Name = "Target Player", Options = (function() local t = {} for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP then table.insert(t, pl.Name) end end if #t == 0 then table.insert(t, "(no other players)") end return t end)(), Default = "", Search = true, Flag = autoFlag("set"), Callback = function(value)
  if value and value ~= "(no other players)" then playerActionUsername = value end
 end})
-UI.setPerf:AddButton({Name = "Refresh Player List", Callback = function()
+UI.setPerf:AddButton({Name = "Refresh", Callback = function()
  local t = {}
  for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP then table.insert(t, pl.Name) end end
  if #t == 0 then table.insert(t, "(no other players)") end
@@ -3925,9 +3919,37 @@ UI.setPerf:AddButton({Name = "Refresh Player List", Callback = function()
  updateNotification("Players", #t .. " player(s)", 2)
 end})
 
-UI.setPerf:AddButton({Name = "Apply Action", Callback = function()
+UI.setPerf:AddButton({Name = "Apply", Callback = function()
  if playerActionMode == "View Inventory" then
   openInventory(playerActionUsername)
+  return
+ end
+ if playerActionMode == "Player Info" or playerActionMode == "Island Code" then
+  local target = Players:FindFirstChild(playerActionUsername)
+  if not target then
+   for _, pl in ipairs(Players:GetPlayers()) do
+    if pl.Name:lower() == playerActionUsername:lower() then target = pl break end
+   end
+  end
+  if not target then
+   updateNotification("Error", "Pick a player in this server first", 3)
+   return
+  end
+  local code = "Not found"
+  pcall(function()
+   if target:FindFirstChild("JoinCode") then code = target.JoinCode.Value end
+  end)
+  if playerActionMode == "Island Code" then
+   setOutput(target.DisplayName, "Island Code: " .. code)
+   updateNotification("Island Code", code, 3)
+  else
+   setOutput(target.DisplayName, string.format(
+    "Username: %s\nDisplay: %s\nUser ID: %s\nAge: %s\nTeam: %s\n\nIsland Code: %s",
+    target.Name, target.DisplayName, target.UserId,
+    target.AccountAge .. " days",
+    target.Team and target.Team.Name or "None", code))
+   updateNotification("Player Info", target.Name, 2)
+  end
   return
  end
  if playerActionUsername == "" then
@@ -4018,9 +4040,9 @@ UI.setPerf:AddButton({Name = "Apply Action", Callback = function()
  end
 end})
 
-UI.vmSel:AddToggle({Name = "Process All Actions Simultaneously", Default = true, Tooltip = "Fire actions on all vendings at once instead of sequentially.", Flag = autoFlag("set"), Callback = initGuard(function(value) allAtOnceMode = value userSettings.processMode = value end)})
+UI.vmSel:AddToggle({Name = "Run Simultaneously", Default = true, Tooltip = "Fire actions on all vendings at once instead of sequentially.", Flag = autoFlag("set"), Callback = initGuard(function(value) allAtOnceMode = value userSettings.processMode = value end)})
 
-UI.radiusToggle = UI.vmSel:AddToggle({Name = "Use Radius Limit", Default = false, Tooltip = "Only affect vendings/openables within the radius ring. Shape, highlight and distance are in the gear.", Flag = autoFlag("set"), Options = {
+UI.radiusToggle = UI.vmSel:AddToggle({Name = "Radius Limit", Default = false, Tooltip = "Only affect vendings/openables within the radius ring. Shape, highlight and distance are in the gear.", Flag = autoFlag("set"), Options = {
   {Type = "toggle", Name = "Shape: Circle", Default = true, Callback = function(v)
    radiusShape = v and "Circle" or "Square"
    if useRadiusLimit then createRadiusRing() end
@@ -4029,11 +4051,11 @@ UI.radiusToggle = UI.vmSel:AddToggle({Name = "Use Radius Limit", Default = false
    radiusShape = v and "Square" or "Circle"
    if useRadiusLimit then createRadiusRing() end
   end},
-  {Type = "toggle", Name = "Highlight In-Radius Vendings", Default = false, Callback = function(v)
+  {Type = "toggle", Name = "Highlight In-Radius", Default = false, Callback = function(v)
    PFX.radiusHighlightOn = v
    if v then PFX.startRadiusHL() else PFX.stopRadiusHL() end
   end},
-  {Type = "slider", Name = "Radius Distance", Min = 2, Max = 100, Default = 100, Callback = function(value)
+  {Type = "slider", Name = "Distance", Min = 2, Max = 100, Default = 100, Callback = function(value)
    vendingRadius = value
    userSettings.radius = value
    if useRadiusLimit then
@@ -4327,7 +4349,7 @@ local function removeAllVendingESP()
  vendingESPObjects = {}
 end
 
-UI.vmSel:AddToggle({Name = "Show Vending ESP", Default = false, Tooltip = "Highlights every vending with #, item, coins and health. Disable Performance Mode first.", Flag = autoFlag("set"), Callback = initGuard(function(value)
+UI.vmSel:AddToggle({Name = "Vending ESP", Default = false, Tooltip = "Highlights every vending with #, item, coins and health. Disable Performance Mode first.", Flag = autoFlag("set"), Callback = initGuard(function(value)
  vendingESPEnabled = value
  if value then
   if performanceMode then
@@ -4484,7 +4506,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
 
   local cmb = col:AddSection({Name = "Combat", Collapsible = true})
   local sec = cmb
-  sec:AddDropdown({Name = "Select Destination", Options = {"Hub", "Slime Island", "Underworld", "Void Isles", "Maple Island", "Fhanhorn Boss", "Pirate Island"}, Default = "Slime Island", Flag = autoFlag("farm"), Callback = function(v)
+  sec:AddDropdown({Name = "Destination", Options = {"Hub", "Slime Island", "Underworld", "Void Isles", "Maple Island", "Fhanhorn Boss", "Pirate Island"}, Default = "Slime Island", Flag = autoFlag("farm"), Callback = function(v)
    selTeleport = v
   end})
   sec:AddButton({Name = "Teleport", Tooltip = "Travels to the selected island.", Callback = function()
@@ -4533,7 +4555,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    selWeapon = WeaponDisplay[v] or "Best"
   end})
 
-  cmb:AddToggle({Name = "Auto Spawn Bosses", Default = false, Tooltip = "Walks to the selected boss's spawn altar and fires the prompt when that boss isn't alive.", Flag = autoFlag("farm"), Callback = function(value)
+  cmb:AddToggle({Name = "Auto Spawn", Default = false, Tooltip = "Walks to the selected boss's spawn altar and fires the prompt when that boss isn't alive.", Flag = autoFlag("farm"), Callback = function(value)
    spawnOn = value
    if not value then return end
    spawnGen = spawnGen + 1
@@ -4906,7 +4928,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   UI.farmActions = UI.farmCrop:AddDropdown({Name = "Farm Actions", Options = FARM_ACTIONS, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Pick which farming actions to run, then flip Perform Farm Actions.", Flag = autoFlag("farm"), Callback = function(chosen)
    selectedFarmActions = chosen or {}
   end})
-  UI.farmPerform = UI.farmCrop:AddToggle({Name = "Perform Farm Actions", Default = false, Tooltip = "Runs every action picked above. Turn off to stop them all.", Flag = autoFlag("farm"), Callback = function(value)
+  UI.farmPerform = UI.farmCrop:AddToggle({Name = "Farm Actions", Default = false, Tooltip = "Runs every action picked above. Turn off to stop them all.", Flag = autoFlag("farm"), Callback = function(value)
    if not value then
     stopAllFarmActions()
     updateNotification("Farming", "Stopped", 2)
@@ -4923,7 +4945,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    updateNotification("Farming", "Running selected actions", 2)
   end})
 
-  UI.farmEat:AddToggle({Name = "Auto Eat Held Item", Default = false, Tooltip = "Repeatedly eats whatever tool you are holding.", Flag = autoFlag("farm"), Callback = function(value)
+  UI.farmEat:AddToggle({Name = "Auto Eat", Default = false, Tooltip = "Repeatedly eats whatever tool you are holding.", Flag = autoFlag("farm"), Callback = function(value)
    eatOn = value
    if not value then return end
    eatGen = eatGen + 1
@@ -4983,10 +5005,10 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
     if n % 20 == 0 then task.wait() end
    end
   end
-  UI.flowerDrop = fl:AddDropdown({Name = "Select Flowers", Options = flowerNames(), Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only these flower types get watered.", Flag = autoFlag("farm"), Callback = function(chosen)
+  UI.flowerDrop = fl:AddDropdown({Name = "Flowers", Options = flowerNames(), Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only these flower types get watered.", Flag = autoFlag("farm"), Callback = function(chosen)
    selectedFlowers = chosen or {}
   end})
-  fl:AddButton({Name = "Refresh Flowers", Callback = function()
+  fl:AddButton({Name = "Refresh", Callback = function()
    pcall(function() UI.flowerDrop:Refresh(flowerNames(), true) end)
    updateNotification("Flowers", "Flower list refreshed", 2)
   end})
@@ -5027,7 +5049,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
 
 
   local tr = col:AddSection({Name = "Trees", Collapsible = true})
-  tr:AddDropdown({Name = "Select Tree Type", Options = {"All", "Oak", "Birch", "Pine", "Maple", "Hickory", "Spirit", "Cherry Blossom", "Apple", "Orange", "Lemon", "Plum", "Avocado", "Coconut"}, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("farm"), Callback = function(v)
+  tr:AddDropdown({Name = "Tree Type", Options = {"All", "Oak", "Birch", "Pine", "Maple", "Hickory", "Spirit", "Cherry Blossom", "Apple", "Orange", "Lemon", "Plum", "Avocado", "Coconut"}, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("farm"), Callback = function(v)
    treeTypes = v or {"All"}
   end})
   tr:AddToggle({Name = "Tree Aura", Default = false, Tooltip = "Chops the nearest matching tree in radius over and over. Set radius and fly-to in the gear.", Flag = autoFlag("farm"), Options = {
@@ -5110,7 +5132,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
     nukeSet[b] = true
    end
   end})
-  nk:AddButton({Name = "Refresh Block List", Callback = function()
+  nk:AddButton({Name = "Refresh", Callback = function()
    pcall(function() UI.nukeDrop:Refresh(islandBlockNames(), true) end)
    updateNotification("Demolish Blocks", "Block list refreshed", 2)
   end})
