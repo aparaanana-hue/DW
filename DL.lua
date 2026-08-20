@@ -5558,6 +5558,13 @@ local function MakeKeyUI(cfg, onSuccess)
 	end
 
 	
+	-- The key screen used to be hardcoded purple end to end, so on any other
+	-- theme it was a different product than the hub it unlocks. Everything
+	-- structural now comes from the selected theme; only the states that mean
+	-- something - green for accepted, red for rejected - stay fixed.
+	local KT = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme]
+		or DuvomeLibrary.Themes.Default
+
 	local SG = Instance.new("ScreenGui")
 	SG.Name = "PrizKeySystem"
 	
@@ -5580,7 +5587,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	
 	local Dim = Instance.new("Frame", SG)
 	Dim.Size = UDim2.new(1,0,1,0)
-	Dim.BackgroundColor3 = Color3.fromRGB(4,0,12)
+	Dim.BackgroundColor3 = KT.Main
 	Dim.BackgroundTransparency = 1
 	Dim.BorderSizePixel = 0
 	Dim.ZIndex = 99
@@ -5591,7 +5598,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	local Panel = Instance.new("Frame", SG)
 	Panel.Size = UDim2.new(0,PW,0,PH)
 	Panel.AnchorPoint = Vector2.new(0.5,0.5)
-	Panel.BackgroundColor3 = Color3.fromRGB(8,3,18)
+	Panel.BackgroundColor3 = KT.Main
 	Panel.BackgroundTransparency = DuvomeLibrary.Glass
 	Panel.BorderSizePixel = 0
 	Panel.ZIndex = 100
@@ -5600,7 +5607,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	Instance.new("UICorner",Panel).CornerRadius = UDim.new(0,14)
 
 	local PStroke = Instance.new("UIStroke",Panel)
-	PStroke.Color = Color3.fromRGB(100,35,170)
+	PStroke.Color = KT.Stroke
 	PStroke.Thickness = 1.5
 	PStroke.Transparency = 0.35   -- matches MainStroke on the window
 
@@ -5652,14 +5659,14 @@ local function MakeKeyUI(cfg, onSuccess)
 	
 	local TL = Instance.new("TextLabel",Panel)
 	TL.Text = Title; TL.Font = Enum.Font.GothamBlack; TL.TextSize = 20
-	TL.TextColor3 = Color3.fromRGB(235,210,255); TL.BackgroundTransparency = 1
+	TL.TextColor3 = KT.Text; TL.BackgroundTransparency = 1
 	TL.Size = UDim2.new(1,-50,0,26); TL.Position = UDim2.new(0,18,0,14)
 	TL.TextXAlignment = Enum.TextXAlignment.Left; TL.ZIndex = 101
 
 	
 	local SL = Instance.new("TextLabel",Panel)
 	SL.Text = ""; SL.Font = Enum.Font.GothamSemibold; SL.TextSize = 12
-	SL.TextColor3 = Color3.fromRGB(130,80,180); SL.BackgroundTransparency = 1
+	SL.TextColor3 = KT.TextDark; SL.BackgroundTransparency = 1
 	SL.Size = UDim2.new(1,-50,0,16); SL.Position = UDim2.new(0,18,0,40)
 	SL.TextXAlignment = Enum.TextXAlignment.Left; SL.ZIndex = 101
 	task.spawn(function()
@@ -5686,7 +5693,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	
 	local Div = Instance.new("Frame",Panel)
 	Div.Size = UDim2.new(1,-36,0,1); Div.Position = UDim2.new(0,18,0,62)
-	Div.BackgroundColor3 = Color3.fromRGB(80,25,140); Div.BorderSizePixel = 0; Div.ZIndex = 101
+	Div.BackgroundColor3 = KT.Stroke; Div.BorderSizePixel = 0; Div.ZIndex = 101
 	Instance.new("UICorner",Div).CornerRadius = UDim.new(1,0)
 
 
@@ -5701,13 +5708,13 @@ local function MakeKeyUI(cfg, onSuccess)
 	XBIco.BackgroundTransparency = 1
 	XBIco.Size = UDim2.new(0,16,0,16)
 	XBIco.Position = UDim2.new(0,7,0,7)
-	XBIco.ImageColor3 = Color3.fromRGB(140,90,190)
+	XBIco.ImageColor3 = KT.TextDark
 	XBIco.ZIndex = 113
 	XB.MouseEnter:Connect(function()
-		XBIco.ImageColor3 = Color3.fromRGB(210,150,255)
+		XBIco.ImageColor3 = KT.Text
 	end)
 	XB.MouseLeave:Connect(function()
-		XBIco.ImageColor3 = Color3.fromRGB(140,90,190)
+		XBIco.ImageColor3 = KT.TextDark
 	end)
 	XB.MouseButton1Click:Connect(function()
 		local t = TS2:Create(Panel, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
@@ -5724,13 +5731,13 @@ local function MakeKeyUI(cfg, onSuccess)
 	
 	local IBG = Instance.new("Frame",Panel)
 	IBG.Size = UDim2.new(0,240,0,40); IBG.Position = UDim2.new(0,18,0,92)
-	IBG.BackgroundColor3 = Color3.fromRGB(16,5,32); IBG.BorderSizePixel = 0; IBG.ZIndex = 101
+	IBG.BackgroundColor3 = KT.Second; IBG.BorderSizePixel = 0; IBG.ZIndex = 101
 	-- same glass as an inner surface in the main window, so the key screen and
 	-- the hub it leads to look like one piece of software
 	IBG.BackgroundTransparency = DuvomeLibrary.Glass * DuvomeLibrary.GlassInner
 	Instance.new("UICorner",IBG).CornerRadius = UDim.new(0,8)
 	local IS = Instance.new("UIStroke",IBG)
-	IS.Color = Color3.fromRGB(60,20,105); IS.Thickness = 1; IS.Transparency = 0.35
+	IS.Color = KT.Stroke; IS.Thickness = 1; IS.Transparency = 0.35
 	IBG.ClipsDescendants = true
 
 	
@@ -5743,10 +5750,13 @@ local function MakeKeyUI(cfg, onSuccess)
 			local sq = Instance.new("Frame", IBG)
 			sq.Size = UDim2.new(0, sz, 0, sz)
 			sq.Position = UDim2.new(math.random(5, 85)/100, 0, 1, 0)
+			-- tinted off the theme's stroke rather than fixed purple, with a
+			-- little scatter so they do not all read as one flat colour
+			local base = KT.Stroke
 			sq.BackgroundColor3 = Color3.fromRGB(
-				math.random(100, 160),
-				math.random(40, 80),
-				math.random(200, 255)
+				math.clamp(base.R * 255 + math.random(-20, 60), 0, 255),
+				math.clamp(base.G * 255 + math.random(-20, 60), 0, 255),
+				math.clamp(base.B * 255 + math.random(-20, 60), 0, 255)
 			)
 			sq.BackgroundTransparency = 0.3
 			sq.BorderSizePixel = 0
@@ -5773,15 +5783,15 @@ local function MakeKeyUI(cfg, onSuccess)
 	local TB = Instance.new("TextBox",IBG)
 	TB.Size = UDim2.new(1,-34,1,0); TB.Position = UDim2.new(0,8,0,0)
 	TB.BackgroundTransparency = 1; TB.Text = ""
-	TB.PlaceholderText = "Enter your key..."; TB.PlaceholderColor3 = Color3.fromRGB(75,45,105)
-	TB.TextColor3 = Color3.fromRGB(210,175,255); TB.Font = Enum.Font.GothamSemibold
+	TB.PlaceholderText = "Enter your key..."; TB.PlaceholderColor3 = KT.TextDark
+	TB.TextColor3 = KT.Text; TB.Font = Enum.Font.GothamSemibold
 	TB.TextSize = 13; TB.TextXAlignment = Enum.TextXAlignment.Left
 	TB.ClearTextOnFocus = false; TB.ZIndex = 103
 	TB:GetPropertyChangedSignal("Text"):Connect(function()
-		TS2:Create(IS,TweenInfo.new(0.15),{Color=Color3.fromRGB(110,40,185)}):Play()
+		TS2:Create(IS,TweenInfo.new(0.15),{Color=KT.Text}):Play()
 	end)
 	TB.FocusLost:Connect(function()
-		TS2:Create(IS,TweenInfo.new(0.25),{Color=Color3.fromRGB(60,20,105)}):Play()
+		TS2:Create(IS,TweenInfo.new(0.25),{Color=KT.Stroke}):Play()
 	end)
 
 	
@@ -5793,7 +5803,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	SetFontFace(PBImg, BICONS_PATH)
 	PBImg.TextSize = 14
 	PBImg.TextWrapped = true
-	PBImg.TextColor3 = Color3.fromRGB(120, 65, 185)
+	PBImg.TextColor3 = KT.TextDark
 	PBImg.BackgroundTransparency = 1
 	PBImg.Size = UDim2.new(1, 0, 1, 0)
 	PBImg.TextXAlignment = Enum.TextXAlignment.Center
@@ -5807,7 +5817,7 @@ local function MakeKeyUI(cfg, onSuccess)
 		TB.Text = link
 		PBImg.TextColor3 = Color3.fromRGB(100, 220, 130)
 		task.delay(1.5, function()
-			if PBImg and PBImg.Parent then PBImg.TextColor3 = Color3.fromRGB(120, 65, 185) end
+			if PBImg and PBImg.Parent then PBImg.TextColor3 = KT.TextDark end
 		end)
 	end)
 
@@ -5816,7 +5826,7 @@ local function MakeKeyUI(cfg, onSuccess)
 	VB.Text = "Verify"
 	VB.Font = Enum.Font.GothamBold
 	VB.TextSize = 14
-	VB.TextColor3 = Color3.fromRGB(190,140,255)
+	VB.TextColor3 = KT.TextDark
 	VB.BackgroundTransparency = 1
 	VB.BorderSizePixel = 0
 	VB.AutoButtonColor = false
@@ -5829,8 +5839,8 @@ local function MakeKeyUI(cfg, onSuccess)
 	VBTip.Text = "Copy Discord\nInvite"
 	VBTip.Font = Enum.Font.GothamSemibold
 	VBTip.TextSize = 11
-	VBTip.TextColor3 = Color3.fromRGB(200,160,255)
-	VBTip.BackgroundColor3 = Color3.fromRGB(18,6,36)
+	VBTip.TextColor3 = KT.Text
+	VBTip.BackgroundColor3 = KT.Second
 	VBTip.BackgroundTransparency = 1
 	VBTip.BorderSizePixel = 0
 	VBTip.AutoButtonColor = false
@@ -5841,10 +5851,10 @@ local function MakeKeyUI(cfg, onSuccess)
 
 
 	VB.MouseEnter:Connect(function()
-		TS2:Create(VB, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(235,200,255)}):Play()
+		TS2:Create(VB, TweenInfo.new(0.15), {TextColor3 = KT.Text}):Play()
 		
 		VBTip.Text = "Copy Discord\nInvite"
-		VBTip.TextColor3 = Color3.fromRGB(200,160,255)
+		VBTip.TextColor3 = KT.Text
 		VBTip.TextTransparency = 1
 		VBTip.Position = UDim2.new(1,-146,0,140)
 		VBTip.Visible = true
@@ -5858,7 +5868,7 @@ local function MakeKeyUI(cfg, onSuccess)
 			if VBTip and VBTip.Parent then
 				VBTip.Visible = false
 				VBTip.Text = "Copy Discord\nInvite"
-				VBTip.TextColor3 = Color3.fromRGB(200,160,255)
+				VBTip.TextColor3 = KT.Text
 			end
 		end)
 	end
@@ -5876,9 +5886,9 @@ local function MakeKeyUI(cfg, onSuccess)
 		local overTip = mp.X>=ttp.X and mp.X<=ttp.X+tts.X and mp.Y>=ttp.Y and mp.Y<=ttp.Y+tts.Y
 		if overVB and not _tipShowing then
 			_tipShowing = true
-			TS2:Create(VB, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(235,200,255)}):Play()
+			TS2:Create(VB, TweenInfo.new(0.15), {TextColor3 = KT.Text}):Play()
 			VBTip.Text = "Copy Discord\nInvite"
-			VBTip.TextColor3 = Color3.fromRGB(200,160,255)
+			VBTip.TextColor3 = KT.Text
 			VBTip.TextTransparency = 1
 			VBTip.Position = UDim2.new(1,-146,0,140)
 			VBTip.Visible = true
@@ -5886,7 +5896,7 @@ local function MakeKeyUI(cfg, onSuccess)
 				{Position = UDim2.new(1,-146,0,128), TextTransparency = 0}):Play()
 		elseif not overVB and not overTip and _tipShowing then
 			_tipShowing = false
-			TS2:Create(VB, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(190,140,255)}):Play()
+			TS2:Create(VB, TweenInfo.new(0.15), {TextColor3 = KT.TextDark}):Play()
 			hideTip()
 		end
 	end)
@@ -5896,14 +5906,14 @@ local function MakeKeyUI(cfg, onSuccess)
 	
 	local StL = Instance.new("TextLabel",Panel)
 	StL.Text = ""; StL.Font = Enum.Font.GothamSemibold; StL.TextSize = 11
-	StL.TextColor3 = Color3.fromRGB(150,100,210); StL.BackgroundTransparency = 1
+	StL.TextColor3 = KT.TextDark; StL.BackgroundTransparency = 1
 	StL.Size = UDim2.new(1,-36,0,14); StL.Position = UDim2.new(0,18,0,144)
 	StL.TextXAlignment = Enum.TextXAlignment.Left; StL.ZIndex = 101
 
 	
 	local VL = Instance.new("TextLabel",Panel)
 	VL.Text = "v1.0"; VL.Font = Enum.Font.Gotham; VL.TextSize = 10
-	VL.TextColor3 = Color3.fromRGB(65,40,95); VL.BackgroundTransparency = 1
+	VL.TextColor3 = KT.TextDark; VL.BackgroundTransparency = 1
 	VL.Size = UDim2.new(0,40,0,14); VL.Position = UDim2.new(1,-48,1,-18); VL.ZIndex = 101
 
 	local function closeAndLoad()
@@ -5930,7 +5940,7 @@ local function MakeKeyUI(cfg, onSuccess)
 		end
 		StL.TextTransparency = 1
 		StL.Text = "Verifying..."
-		StL.TextColor3 = Color3.fromRGB(160,110,220)
+		StL.TextColor3 = KT.TextDark
 		TS2:Create(StL, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {TextTransparency = 0}):Play()
 		task.spawn(function()
 			local valid = getValidKeys()
@@ -5955,8 +5965,8 @@ local function MakeKeyUI(cfg, onSuccess)
 				TS2:Create(KSScale, TweenInfo.new(0.1), {Scale = 1}):Play()
 				TS2:Create(IBG,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(50,6,16)}):Play()
 				task.wait(0.35)
-				TS2:Create(IBG,TweenInfo.new(0.2),{BackgroundColor3=Color3.fromRGB(16,5,32)}):Play()
-				TS2:Create(IS,TweenInfo.new(0.2),{Color=Color3.fromRGB(60,20,105)}):Play()
+				TS2:Create(IBG,TweenInfo.new(0.2),{BackgroundColor3=KT.Second}):Play()
+				TS2:Create(IS,TweenInfo.new(0.2),{Color=KT.Stroke}):Play()
 			end
 		end)
 	end
@@ -5972,7 +5982,7 @@ local function MakeKeyUI(cfg, onSuccess)
 		task.delay(1.5, function()
 			if VBTip and VBTip.Parent then
 				VBTip.Text = "Copy Discord\nInvite"
-				VBTip.TextColor3 = Color3.fromRGB(200,160,255)
+				VBTip.TextColor3 = KT.Text
 			end
 		end)
 	end)
