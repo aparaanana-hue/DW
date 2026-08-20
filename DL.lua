@@ -579,12 +579,35 @@ local NotificationHolder = SetProps(SetChildren(MakeElement("TFrame"), {
 	Parent      = Duvome
 })
 
+-- Live toasts, keyed by title+body, so a repeat can find the one already on
+-- screen instead of stacking beside it.
+DuvomeLibrary._liveNotifs = {}
+
 function DuvomeLibrary:MakeNotification(NotificationConfig)
 	spawn(function()
 		NotificationConfig.Name    = NotificationConfig.Name    or "Notification"
 		NotificationConfig.Content = NotificationConfig.Content or "Test"
 		NotificationConfig.Time    = NotificationConfig.Time    or 15
 		NotificationConfig.Type    = NotificationConfig.Type    or "default"
+
+		-- An automation firing 40 times produces 40 identical toasts and a
+		-- screen you cannot see past. Fold a repeat into the one already up and
+		-- count it instead. Toasts carrying buttons are never folded: two Undo
+		-- offers are two different actions even when the wording matches.
+		local groupKey = NotificationConfig.Name .. "\0" .. NotificationConfig.Content
+		local canGroup = not (type(NotificationConfig.Actions) == "table" and #NotificationConfig.Actions > 0)
+		if canGroup then
+			local live = DuvomeLibrary._liveNotifs[groupKey]
+			if live and live.frame and live.frame.Parent then
+				live.count    = live.count + 1
+				live.expires  = tick() + NotificationConfig.Time
+				pcall(function()
+					local title = live.frame:FindFirstChild("Title")
+					if title then title.Text = NotificationConfig.Name .. "  x" .. live.count end
+				end)
+				return
+			end
+		end
 
 		
 		-- The four semantic types keep their own colours (green means done, red
@@ -682,7 +705,24 @@ function DuvomeLibrary:MakeNotification(NotificationConfig)
 
 		local function nfAlive() return NotificationFrame and NotificationFrame.Parent end
 		if nfAlive() then pcall(function() TweenService:Create(NotificationFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quint), {Position = UDim2.new(0, 0, 0, 0)}):Play() end) end
-		wait(NotificationConfig.Time - 0.88)
+
+		-- Registered so a repeat can extend it. The hold is a poll rather than
+		-- one long wait, because folding a repeat in has to push the expiry out.
+		local entry
+		if canGroup then
+			entry = {frame = NotificationFrame, count = 1, expires = tick() + NotificationConfig.Time}
+			DuvomeLibrary._liveNotifs[groupKey] = entry
+		end
+		local deadline = tick() + NotificationConfig.Time - 0.88
+		while true do
+			if not nfAlive() then break end
+			local stop = entry and (entry.expires - 0.88) or deadline
+			if tick() >= stop then break end
+			task.wait(0.1)
+		end
+		if canGroup and DuvomeLibrary._liveNotifs[groupKey] == entry then
+			DuvomeLibrary._liveNotifs[groupKey] = nil
+		end
 		if nfAlive() then
 			pcall(function()
 				local icon = NotificationFrame:FindFirstChild("Icon")
@@ -1191,6 +1231,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 	local MainStroke = Instance.new("UIStroke")
 	MainStroke.Parent = MainWindow  -- colour, weight and transparency set below
+
+	DuvomeLibrary._mainWindow = MainWindow
 
 	AddDraggingFunctionality(DragPoint, MainWindow)
 
@@ -3386,15 +3428,27 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				Create("UICorner", {CornerRadius = UDim.new(0,4), Parent = kbBox})
 				AddThemeObject(Create("UIStroke", {Color=Color3.fromRGB(80,30,130), Thickness=1, Parent=kbBox}), "Stroke")
 
+				-- keyName -> the name of whatever holds it. It used to be a
+				-- count, which could say a key was taken but never by what, and
+				-- "already bound to something else" is not a thing you can act on.
 				DuvomeLibrary._boundKeys = DuvomeLibrary._boundKeys or {}
 				local boundKey = item.Default
 				local listening = false
 				local _blockUntil = 0
 				local function keyNameOf(k) return k and (k.Name or tostring(k)) or nil end
 
+				-- Whose bind this is. The row's own label is the name the user
+				-- reads, so prefer it over the gear entry's generic "Bind Key".
+				local ownerName = item.Name
+				do
+					local lbl = parent and parent:FindFirstChild("Content")
+					if lbl and lbl:IsA("TextLabel") and lbl.Text ~= "" then ownerName = lbl.Text end
+					ownerName = ownerName or "another feature"
+				end
+
 				if boundKey then
 					local n = keyNameOf(boundKey)
-					DuvomeLibrary._boundKeys[n] = (DuvomeLibrary._boundKeys[n] or 0) + 1
+					if not DuvomeLibrary._boundKeys[n] then DuvomeLibrary._boundKeys[n] = ownerName end
 				end
 
 				AddConnection(UserInputService.InputBegan, function(inp, gpe)
@@ -3420,7 +3474,9 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							conn:Disconnect()
 							if boundKey then
 								local n = keyNameOf(boundKey)
-								DuvomeLibrary._boundKeys[n] = math.max(0,(DuvomeLibrary._boundKeys[n] or 1)-1)
+								if DuvomeLibrary._boundKeys[n] == ownerName then
+									DuvomeLibrary._boundKeys[n] = nil
+								end
 							end
 							kbBox.Text = "None"
 							boundKey = nil
@@ -3430,8 +3486,15 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						if inp.KeyCode ~= Enum.KeyCode.Unknown or inp.UserInputType == Enum.UserInputType.MouseButton1 then
 							local key = inp.KeyCode ~= Enum.KeyCode.Unknown and inp.KeyCode or inp.UserInputType
 							local kn = keyNameOf(key)
-							if kn ~= keyNameOf(boundKey) and (DuvomeLibrary._boundKeys[kn] or 0) > 0 then
-								DuvomeLibrary:MakeNotification({Name="Key In Use", Content=kn.." is already bound to something else.", Type="warning", Time=3})
+							local holder = DuvomeLibrary._boundKeys[kn]
+							if kn ~= keyNameOf(boundKey) and holder then
+								DuvomeLibrary:MakeNotification({
+									Name    = "Key In Use",
+									Content = kn .. " is bound to \"" .. tostring(holder) ..
+									          "\".\nUnbind it there first, or pick another key for \"" ..
+									          tostring(ownerName) .. "\".",
+									Type    = "warning", Time = 5,
+								})
 								listening = false
 								conn:Disconnect()
 								kbBox.Text = boundKey and keyNameOf(boundKey) or "None"
@@ -3441,10 +3504,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							conn:Disconnect()
 							if boundKey then
 								local on = keyNameOf(boundKey)
-								DuvomeLibrary._boundKeys[on] = math.max(0,(DuvomeLibrary._boundKeys[on] or 1)-1)
+								if DuvomeLibrary._boundKeys[on] == ownerName then
+									DuvomeLibrary._boundKeys[on] = nil
+								end
 							end
 							boundKey = key
-							DuvomeLibrary._boundKeys[kn] = (DuvomeLibrary._boundKeys[kn] or 0) + 1
+							DuvomeLibrary._boundKeys[kn] = ownerName
 							kbBox.Text = kn
 							_blockUntil = os.clock() + 0.25
 							if item.OnBind then item.OnBind(key) end
@@ -4637,18 +4702,27 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						Key=Key or Bind.Value
 						local keyName = (type(Key)=="string" and Key) or Key.Name
 						
+						-- Same registry as MakeKeybindBox: keyName -> owner name.
 						DuvomeLibrary._boundKeys = DuvomeLibrary._boundKeys or {}
-						if keyName ~= Bind.Value and (DuvomeLibrary._boundKeys[keyName] or 0) > 0 then
-							DuvomeLibrary:MakeNotification({Name="Key In Use", Content=keyName.." is already bound to something else.", Type="warning", Time=3})
+						local bindOwner = BindConfig.Name or "a keybind"
+						local holder = DuvomeLibrary._boundKeys[keyName]
+						if keyName ~= Bind.Value and holder and holder ~= bindOwner then
+							DuvomeLibrary:MakeNotification({
+								Name    = "Key In Use",
+								Content = keyName .. " is bound to \"" .. tostring(holder) ..
+								          "\".\nUnbind it there first, or pick another key for \"" ..
+								          tostring(bindOwner) .. "\".",
+								Type    = "warning", Time = 5,
+							})
 							Bind.Binding = false
 							BindBox.Value.Text = (type(Bind.Value)=="string" and Bind.Value) or "None"
 							return
 						end
-						
-						if type(Bind.Value)=="string" and DuvomeLibrary._boundKeys[Bind.Value] then
-							DuvomeLibrary._boundKeys[Bind.Value] = math.max(0,(DuvomeLibrary._boundKeys[Bind.Value] or 1)-1)
+
+						if type(Bind.Value)=="string" and DuvomeLibrary._boundKeys[Bind.Value] == bindOwner then
+							DuvomeLibrary._boundKeys[Bind.Value] = nil
 						end
-						DuvomeLibrary._boundKeys[keyName] = (DuvomeLibrary._boundKeys[keyName] or 0) + 1
+						DuvomeLibrary._boundKeys[keyName] = bindOwner
 						Bind:Set(Key); SaveCfg(game.GameId)
 					end
 				end)
@@ -4762,11 +4836,60 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					local w = measureAndSize(TextboxActual.Text)
 					TweenService:Create(TextContainer,TweenInfo.new(0.45,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{Size=UDim2.new(0,w,0,24)}):Play()
 				end)
-				-- The hint is guidance for a field you have not started on. Once
-				-- the cursor is in it, it is in the way.
-				AddConnection(TextboxActual.Focused, function() TextboxActual.PlaceholderText = "" end)
+				-- Inline validation. A notification saying why the input was
+				-- rejected scrolls away while you are still looking at the field;
+				-- the reason belongs under the field, and only for as long as it
+				-- takes to read.
+				local errLbl, errStroke, errToken
+				local function clearError()
+					errToken = nil
+					if errLbl then errLbl.Visible = false end
+					if errStroke then
+						errStroke.Color = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Stroke
+					end
+					TextboxFrame.Size = UDim2.new(1, 0, 0, TextboxFrame:GetAttribute("BaseHeight") or 38)
+				end
+				local function showError(reason)
+					if not errLbl then
+						errLbl = Create("TextLabel", {
+							Text = "", Font = Enum.Font.GothamSemibold, TextSize = 11,
+							TextColor3 = Color3.fromRGB(255, 95, 95),
+							BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
+							TextWrapped = true,
+							Size = UDim2.new(1, -24, 0, 14),
+							Position = UDim2.new(0, 12, 0, (TextboxFrame:GetAttribute("BaseHeight") or 38) - 2),
+							ZIndex = 3, Parent = TextboxFrame,
+						})
+					end
+					errStroke = errStroke or TextboxFrame:FindFirstChildOfClass("UIStroke")
+					errLbl.Text    = reason
+					errLbl.Visible = true
+					if errStroke then errStroke.Color = Color3.fromRGB(255, 95, 95) end
+					TextboxFrame.Size = UDim2.new(1, 0, 0, (TextboxFrame:GetAttribute("BaseHeight") or 38) + 16)
+
+					-- three seconds, then it lets go - a red field that never
+					-- clears becomes part of the furniture
+					local token = {}
+					errToken = token
+					task.delay(3, function()
+						if errToken == token then clearError() end
+					end)
+				end
+				TextboxFrame:SetAttribute("BaseHeight", TextboxFrame.Size.Y.Offset)
+
+				AddConnection(TextboxActual.Focused, function()
+					TextboxActual.PlaceholderText = ""
+					clearError()
+				end)
 				AddConnection(TextboxActual.FocusLost, function()
 					TextboxActual.PlaceholderText = "Input"
+					if TextboxConfig.Validate then
+						local ok, reason = TextboxConfig.Validate(TextboxActual.Text)
+						if not ok then
+							showError(reason or "Not a valid value")
+							return
+						end
+					end
 					TextboxConfig.Callback(TextboxActual.Text)
 					if TextboxConfig.TextDisappear then TextboxActual.Text="" end
 				end)
@@ -6111,6 +6234,41 @@ function DuvomeLibrary:SetGlass(amount)
 			end)
 		end
 	end
+end
+
+-- Click-through: while the cursor is outside the window, the window stops
+-- taking input, so a click lands in the game instead of on a panel you were
+-- not aiming at. Detection is positional rather than event-based on purpose -
+-- a frame that has stopped taking input also stops reporting MouseEnter, so
+-- anything driven by hover events could never turn itself back on.
+function DuvomeLibrary:SetClickThrough(enabled)
+	DuvomeLibrary._clickThrough = enabled and true or false
+	local win = DuvomeLibrary._mainWindow
+	if not win then return end
+	if DuvomeLibrary._ctConn then
+		DuvomeLibrary._ctConn:Disconnect()
+		DuvomeLibrary._ctConn = nil
+	end
+	local function setInteractable(v)
+		pcall(function() win.Interactable = v end)
+	end
+	if not DuvomeLibrary._clickThrough then
+		setInteractable(true)
+		return
+	end
+	local inside = true
+	DuvomeLibrary._ctConn = RunService.RenderStepped:Connect(function()
+		if not win.Parent then return end
+		local m  = UserInputService:GetMouseLocation()
+		local p, sz = win.AbsolutePosition, win.AbsoluteSize
+		-- a small margin, so the edge of the window is not a dead strip
+		local now = m.X >= p.X - 6 and m.X <= p.X + sz.X + 6
+			and m.Y >= p.Y - 6 and m.Y <= p.Y + sz.Y + 6
+		if now ~= inside then
+			inside = now
+			setInteractable(now)
+		end
+	end)
 end
 
 function DuvomeLibrary:GetThemes()

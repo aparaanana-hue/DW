@@ -19,7 +19,7 @@ Duvome:Init()
 
 -- Bumped on every push. If the notification on load does not match the
 -- newest commit, the script came from a cache, not from GitHub.
-local IAB_BUILD = "Aug 14 19:40"
+local IAB_BUILD = "Aug 20 18:30"
 
 local DuvomeWindow = Duvome:MakeWindow({
     Name         = "Priz's Islands Hub",
@@ -1464,7 +1464,62 @@ turboTeleport = true
 turboDelay = 0
 turboAbort = false
 
-local function turboPrint(blocks)
+-- ---------------------------------------------------------------------------
+-- BUILD CHECKPOINT
+--
+-- An 80k-block build takes long enough that a disconnect part way through is
+-- routine, and there is no memory of it afterwards.
+--
+-- The main builder is already self-healing: every pass recomputes what is
+-- missing, so re-running it on the same file continues from wherever it got to.
+-- What it cannot do is remember WHICH file that was. Turbo Print is the one
+-- that genuinely loses its place, because it never verifies anything - so for
+-- that mode the index matters and is recorded.
+--
+-- The checkpoint stores a fingerprint of the block list (count plus the first
+-- and last coordinates). On resume the reloaded file must match it, or the
+-- resume is refused rather than dropping half a build into the wrong place.
+-- ---------------------------------------------------------------------------
+-- Hung off BuilderAPI rather than declared as locals: this chunk is already at
+-- Luau's 200-register limit, and five more would not fit.
+BuilderAPI.RESUME_PATH = "autoBuilder/.resume.json"
+
+function BuilderAPI.listFingerprint(blocks)
+    if #blocks == 0 then return "0" end
+    local a, b = blocks[1].cframe, blocks[#blocks].cframe
+    return #blocks .. ":" .. table.concat({a[1], a[2], a[3]}, ",")
+        .. ":" .. table.concat({b[1], b[2], b[3]}, ",")
+end
+
+function BuilderAPI.saveCheckpoint(mode, index, total, fingerprint)
+    pcall(function()
+        writefile(BuilderAPI.RESUME_PATH, HttpService:JSONEncode({
+            file  = selectedFile,
+            mode  = mode,
+            index = index,
+            total = total,
+            fp    = fingerprint,
+            at    = os.time(),
+        }))
+    end)
+end
+
+function BuilderAPI.clearCheckpoint()
+    pcall(function()
+        if isfile(BuilderAPI.RESUME_PATH) then delfile(BuilderAPI.RESUME_PATH) end
+    end)
+end
+
+function BuilderAPI.readCheckpoint()
+    local ok, data = pcall(function()
+        if not isfile(BuilderAPI.RESUME_PATH) then return nil end
+        return HttpService:JSONDecode(readfile(BuilderAPI.RESUME_PATH))
+    end)
+    if ok and type(data) == "table" and data.file then return data end
+    return nil
+end
+
+local function turboPrint(blocks, startAt)
     if isBuilding then
         notifyWarn("Busy", "A build is already running", 3)
         return
@@ -1476,8 +1531,13 @@ local function turboPrint(blocks)
     progressStart = tick()
     refreshProgress(true)
 
-    local placed = 0
-    for _, b in ipairs(blocks) do
+    local fp    = BuilderAPI.listFingerprint(blocks)
+    local first = math.max(1, (startAt or 0) + 1)
+    local placed = first - 1
+    progressPlaced = placed
+
+    for i = first, #blocks do
+        local b = blocks[i]
         if turboAbort or not isBuilding then break end
         local cf = arrayToCFrame(b.cframe)
 
@@ -1509,7 +1569,16 @@ local function turboPrint(blocks)
         placed = placed + 1
         progressPlaced = placed
         refreshProgress(false)
+        -- every 25, not every block: a write per block would cost more than
+        -- the placing does
+        if placed % 25 == 0 then BuilderAPI.saveCheckpoint("turbo", placed, #blocks, fp) end
         if turboDelay > 0 then task.wait(turboDelay) end
+    end
+
+    if placed >= #blocks then
+        BuilderAPI.clearCheckpoint()
+    else
+        BuilderAPI.saveCheckpoint("turbo", placed, #blocks, fp)
     end
 
     -- flyTo attaches a mover on demand; Turbo Print owns no build loop to clean
@@ -1589,6 +1658,7 @@ local function runBuild(blocks, missingOnly)
             progressPlaced = 0
             progressStart = tick()
             refreshProgress(true)
+            BuilderAPI.saveCheckpoint("verify", 0, #blocks, BuilderAPI.listFingerprint(blocks))
 
             local pass = 1
             local lastCount = #currentMissing + 1
@@ -1614,8 +1684,14 @@ local function runBuild(blocks, missingOnly)
 
             local finalMissing = missingOwned(blocks)
             if #finalMissing == 0 then
+                BuilderAPI.clearCheckpoint()
                 notify("Done", "Placed everything you have blocks for", 5)
             else
+                -- Left behind on purpose. This builder recomputes what is
+                -- missing every pass, so re-running it on the same file is the
+                -- resume - the checkpoint only has to remember which file.
+                BuilderAPI.saveCheckpoint("verify", #blocks - #finalMissing, #blocks,
+                    BuilderAPI.listFingerprint(blocks))
                 notify("Finished With Skips", "Still " .. #finalMissing .. " to go (need more blocks?)", 6)
             end
         else
@@ -1632,6 +1708,7 @@ local function runBuild(blocks, missingOnly)
             progressPlaced = 0
             progressStart = tick()
             refreshProgress(true)
+            BuilderAPI.saveCheckpoint("verify", 0, #blocks, BuilderAPI.listFingerprint(blocks))
 
             local pass = 1
             while isBuilding and #missing > 0 do
@@ -3235,6 +3312,60 @@ BuilderAPI.toggles.build = auto:CreateToggle({
         end
     end
 })
+
+-- Resume. Offered rather than done automatically: the checkpoint says a build
+-- was interrupted, not that you still want it, and re-firing a place loop
+-- unasked on someone's island is not a thing to guess at.
+BuilderAPI.resumeCheck = auto:CreateButton({
+    Name = "Resume Last Build",
+    Tooltip = "Continues the build that was interrupted, from where it stopped.",
+    Callback = function()
+        local cp = BuilderAPI.readCheckpoint()
+        if not cp then
+            notify("Nothing To Resume", "No interrupted build was recorded", 3)
+            return
+        end
+        if isBuilding then
+            notifyWarn("Busy", "A build is already running", 3)
+            return
+        end
+        selectedFile = cp.file
+        local data = loadSelectedBuild()
+        if not data then
+            notifyWarn("Cannot Resume", "The file " .. tostring(cp.file) .. " is gone", 5)
+            return
+        end
+        task.spawn(function()
+            local blocks = filterShapes(hollowExterior(dedupeBlocks(dropOmittedBlocks(data.blocks))))
+            -- The fingerprint has to match. If the file changed since, the
+            -- recorded index points at a different block, and resuming would
+            -- place the rest of the build in the wrong order.
+            if BuilderAPI.listFingerprint(blocks) ~= cp.fp then
+                notifyWarn("Cannot Resume",
+                    "That build file has changed since it was interrupted. Start it again from the top.", 6)
+                return
+            end
+            if cp.mode == "turbo" then
+                notify("Resuming", "Turbo Print from block " .. cp.index .. " of " .. cp.total, 4, "info")
+                turboPrint(blocks, cp.index)
+            else
+                -- the verifying builder finds what is missing itself, so it
+                -- only has to be pointed at the same file
+                notify("Resuming", "Rescanning " .. tostring(cp.file), 4, "info")
+                runBuild(blocks, placeMissingOnly)
+            end
+        end)
+    end
+})
+
+task.defer(function()
+    local cp = BuilderAPI.readCheckpoint()
+    if not cp then return end
+    local pct = cp.total > 0 and math.floor(cp.index / cp.total * 100) or 0
+    notify("Unfinished Build",
+        tostring(cp.file) .. " stopped at " .. pct .. "% (" .. cp.index .. "/" .. cp.total ..
+        ").\nUse Resume Last Build to continue it.", 10, "info")
+end)
 
 BuilderAPI.toggles.destroy = auto:CreateToggle({
     Name = "Block Destroyer",

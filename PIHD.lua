@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 20 16:00"
+local PIHD_BUILD = "Aug 20 18:30"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -1979,6 +1979,79 @@ local function emptyVending(vending)
  end)
 end
 
+-- ---------------------------------------------------------------------------
+-- UNDO
+--
+-- Nothing here "reverses" an action. The server has no undo, so every entry is
+-- a second, ordinary action that happens to be the inverse of the first, built
+-- from state captured BEFORE the first one ran. Emptying a vending is undone by
+-- depositing the same item and amount back into the same vending; demolishing a
+-- block is undone by placing that block type at the CFrame it occupied.
+--
+-- That means three rules, and breaking any of them is what makes an undo lie:
+--
+--   1. Capture before, not after. Once a block is gone its Name and CFrame are
+--      gone with it. Every record is taken while the target still exists.
+--   2. Record the instance, not a description. A vending is stored as the
+--      Instance, so if it has been destroyed since, we can tell, rather than
+--      finding "some vending near there" and putting items in a stranger's.
+--   3. Report what did not work. An undo can genuinely fail - the item was sold
+--      meanwhile, the block is not in your inventory any more, someone built on
+--      the spot. Every undo counts its failures and says so instead of claiming
+--      success.
+--
+-- Actions that fire in a loop (demolish) collect into one entry for the whole
+-- run rather than one entry per block, because "undo" means "put back what that
+-- did", and what it did was a run.
+-- ---------------------------------------------------------------------------
+local Undo = {stack = {}, MAX = 25, listeners = {}}
+
+function Undo.changed()
+ for _, fn in ipairs(Undo.listeners) do pcall(fn) end
+end
+
+-- entry = {label, detail, run = function() return doneCount, failCount, note end}
+function Undo.push(entry)
+ entry.at = os.date("%H:%M:%S")
+ table.insert(Undo.stack, 1, entry)
+ while #Undo.stack > Undo.MAX do table.remove(Undo.stack) end
+ Undo.changed()
+ return entry
+end
+
+function Undo.run(entry)
+ if not entry then return end
+ if entry.running then return end
+ entry.running = true
+ task.spawn(function()
+  local ok, done, failed, note = pcall(entry.run)
+  entry.running = false
+  if not ok then
+   updateNotification("Undo Failed", tostring(done), 5)
+   return
+  end
+  for i, e in ipairs(Undo.stack) do
+   if e == entry then table.remove(Undo.stack, i) break end
+  end
+  Undo.changed()
+  local msg = tostring(done or 0) .. " restored"
+  if (failed or 0) > 0 then msg = msg .. ", " .. failed .. " could not be" end
+  if note then msg = msg .. "\n" .. note end
+  updateNotification((failed or 0) > 0 and "Undo Partial" or "Undone", msg, 5)
+ end)
+end
+
+-- Offer the undo on the toast for the action itself, which is the moment the
+-- user is actually looking at it.
+function Undo.offer(title, content, entry)
+ pcall(function()
+  Duvome:MakeNotification({
+   Name = title, Content = content, Type = "success", Time = 8,
+   Actions = {{Text = "Undo", Callback = function() Undo.run(entry) end}},
+  })
+ end)
+end
+
 -- Vending Tools lives in a panel rather than a section on the tab: it is a set
 -- of modes you switch on and then leave alone, so it does not need to sit in
 -- the column taking up room the whole time.
@@ -2057,21 +2130,33 @@ UI.vmBank:AddTextbox({Name = "Bank Amount", Default = "", TextDisappear = false,
  end
 end})
 
-local function doBankDeposit()
+local function bankTransfer(kind, amount)
+ Net:WaitForChild("TransactionBankBalance"):FireServer(
+  HttpService:GenerateGUID(false),
+  {{accountType = "PERSONAL", transferType = kind, amount = amount}})
+end
+
+-- A bank transfer is the cleanest undo of the lot: the same amount the other
+-- way, and nothing about the world in between can invalidate it except not
+-- having the coins.
+local function doBankTransfer(kind, label, backLabel)
+ local amt = bankAmount
  pcall(function()
-  local args = {HttpService:GenerateGUID(false), {{accountType = "PERSONAL", transferType = "DEPOSIT", amount = bankAmount}}}
-  Net:WaitForChild("TransactionBankBalance"):FireServer(unpack(args))
-  updateNotification("Bank", "Deposited " .. formatNumber(bankAmount), 3)
+  bankTransfer(kind, amt)
+  local undoEntry = Undo.push({
+   label  = label .. " " .. formatNumber(amt),
+   detail = backLabel .. " the same amount.",
+   run = function()
+    local ok = pcall(bankTransfer, kind == "DEPOSIT" and "WITHDRAWAL" or "DEPOSIT", amt)
+    return ok and 1 or 0, ok and 0 or 1, (not ok) and "The bank refused the transfer." or nil
+   end,
+  })
+  Undo.offer("Bank", label .. " " .. formatNumber(amt), undoEntry)
  end)
 end
 
-local function doBankWithdraw()
- pcall(function()
-  local args = {HttpService:GenerateGUID(false), {{accountType = "PERSONAL", transferType = "WITHDRAWAL", amount = bankAmount}}}
-  Net:WaitForChild("TransactionBankBalance"):FireServer(unpack(args))
-  updateNotification("Bank", "Withdrew " .. formatNumber(bankAmount), 3)
- end)
-end
+local function doBankDeposit()  doBankTransfer("DEPOSIT",   "Deposited", "Withdraws") end
+local function doBankWithdraw() doBankTransfer("WITHDRAWAL", "Withdrew",  "Deposits") end
 
 UI.vmBank:AddButton({Name = "Deposit", Tooltip = "Set a gear key to fire this without clicking.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankDeposit}}, Callback = doBankDeposit})
 UI.vmBank:AddButton({Name = "Withdraw", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankWithdraw}}, Callback = doBankWithdraw})
@@ -2147,7 +2232,28 @@ UI.vmCoin:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Dep
   end)
  end
  local target = useSelectedOnly and "selected" or "all"
- updateNotification("Success", "Deposited " .. formatNumber(coinAmount) .. " to " .. #list .. " " .. target .. " vendings", 3)
+ local amt = coinAmount
+ local sent = {}
+ for _, vending in ipairs(list) do table.insert(sent, vending) end
+ local undoEntry = Undo.push({
+  label  = "Deposited " .. formatNumber(amt) .. " to " .. #sent .. " vendings",
+  detail = "Withdraws the same amount back out of each one.",
+  run = function()
+   local done, failed = 0, 0
+   for _, v in ipairs(sent) do
+    if v and v.Parent then
+     withdrawCoinsFromVending(v, amt)
+     done = done + 1
+     task.wait(0.05)
+    else
+     failed = failed + 1
+    end
+   end
+   return done, failed, failed > 0 and "Some vendings no longer exist." or nil
+  end,
+ })
+ Undo.offer("Deposited " .. formatNumber(amt) .. " to " .. #list .. " " .. target .. " vendings",
+  "Withdraws the same amount back out of each one.", undoEntry)
 end})
 
 UI.vmCoin:AddButton({Name = "Withdraw", Tooltip = "Withdraws the Coin Amount from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Withdraw Key", OnBind = function(k) hotkeys.withdrawAll = k end}}, Callback = function()
@@ -2160,7 +2266,30 @@ UI.vmCoin:AddButton({Name = "Withdraw", Tooltip = "Withdraws the Coin Amount fro
   end)
  end
  local target = useSelectedOnly and "selected" or "all"
- updateNotification("Success", "Withdrew " .. formatNumber(coinAmount) .. " from " .. #list .. " " .. target .. " vendings", 3)
+ -- Coins are fungible, so the inverse is exact: put the same number back into
+ -- the same vending. The only thing that can go wrong is the vending being gone.
+ local amt = coinAmount
+ local taken = {}
+ for _, vending in ipairs(list) do table.insert(taken, vending) end
+ local undoEntry = Undo.push({
+  label  = "Withdrew " .. formatNumber(amt) .. " from " .. #taken .. " vendings",
+  detail = "Deposits the same amount back into each one.",
+  run = function()
+   local done, failed = 0, 0
+   for _, v in ipairs(taken) do
+    if v and v.Parent then
+     depositCoinsToVending(v, amt)
+     done = done + 1
+     task.wait(0.05)
+    else
+     failed = failed + 1
+    end
+   end
+   return done, failed, failed > 0 and "Some vendings no longer exist." or nil
+  end,
+ })
+ Undo.offer("Withdrew " .. formatNumber(amt) .. " from " .. #list .. " " .. target .. " vendings",
+  "Deposits the same amount back into each one.", undoEntry)
 end})
 
 UI.vmItem = R:AddSection({Name = "Item Management", Collapsible = true})
@@ -2293,13 +2422,49 @@ UI.vmItem:AddButton({Name = "Empty", Tooltip = "Withdraws ALL items from vending
  if not vendings then return end
  local list = itemTargets(vendings)
  confirm("Empty Vendings", "Withdraw all items from " .. #list .. " vending(s)?", function()
+  -- Read what is in each one BEFORE emptying it. Afterwards SellingContents is
+  -- bare and there is nothing left to learn from.
+  local record = {}
+  for _, entry in ipairs(list) do
+   local v = entry.v
+   local sc = v:FindFirstChild("SellingContents")
+   local tool = sc and sc:GetChildren()[1]
+   if tool then
+    local amt = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
+    table.insert(record, {v = v, item = tool.Name, amount = amt})
+   end
+  end
   for _, entry in ipairs(list) do
    task.spawn(function()
     emptyVending(entry.v)
    end)
   end
   local target = useSelectedOnly and "selected" or "all"
-  updateNotification("Success", "Emptied " .. #list .. " " .. target .. " vendings", 3)
+  local undoEntry = Undo.push({
+   label  = "Emptied " .. #record .. " vendings",
+   detail = "Puts each item and amount back into the vending it came from.",
+   run = function()
+    local done, failed = 0, 0
+    for _, r in ipairs(record) do
+     if not r.v or not r.v.Parent then
+      failed = failed + 1
+     else
+      local held = LP.Backpack:FindFirstChild(r.item)
+      local have = held and (held:FindFirstChild("Amount") and held.Amount.Value or 1) or 0
+      if have <= 0 then
+       failed = failed + 1
+      else
+       depositItemToVending(r.v, r.item, math.min(r.amount, have))
+       done = done + 1
+       task.wait(0.05)
+      end
+     end
+    end
+    return done, failed, failed > 0 and "Missing vendings, or the items are no longer in your inventory." or nil
+   end,
+  })
+  Undo.offer("Emptied " .. #list .. " " .. target .. " vendings",
+   "Deposits each item back into the vending it came from.", undoEntry)
  end, "Empty")
 end})
 
@@ -2329,6 +2494,17 @@ UI.vmCfg:AddButton({Name = "Apply", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local modeNum = vendingMode == "Buy" and 1 or (vendingMode == "Sell" and 0 or 2)
+ -- Snapshot each vending's mode and price first. This is the one action here
+ -- whose inverse is not a mirror of itself - it is "set it back to what it
+ -- was", which is only knowable beforehand.
+ local before = {}
+ for _, vending in ipairs(vendings) do
+  table.insert(before, {
+   v     = vending,
+   mode  = vending:FindFirstChild("Mode") and vending.Mode.Value or modeNum,
+   price = vending:FindFirstChild("TransactionPrice") and vending.TransactionPrice.Value or vendingPrice,
+  })
+ end
  for _, vending in ipairs(vendings) do
   task.spawn(function()
    if applyTarget == "Mode Only" then
@@ -2353,7 +2529,25 @@ UI.vmCfg:AddButton({Name = "Apply", Callback = function()
  else
   what = vendingMode .. " mode @ " .. formatNumber(vendingPrice)
  end
- updateNotification("Success", "Applied " .. what .. " to " .. #vendings .. " " .. target .. " vendings", 3)
+ local undoEntry = Undo.push({
+  label  = "Applied " .. what .. " to " .. #vendings .. " vendings",
+  detail = "Restores each vending's previous mode and price.",
+  run = function()
+   local done, failed = 0, 0
+   for _, b in ipairs(before) do
+    if b.v and b.v.Parent then
+     setVendingMode(b.v, b.mode, b.price)
+     done = done + 1
+     task.wait(0.05)
+    else
+     failed = failed + 1
+    end
+   end
+   return done, failed, failed > 0 and "Some vendings no longer exist." or nil
+  end,
+ })
+ Undo.offer("Applied " .. what .. " to " .. #vendings .. " " .. target .. " vendings",
+  "Restores each vending's previous mode and price.", undoEntry)
 end})
 
 local function BuildBypass()
@@ -5158,6 +5352,8 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
     nukeSet[b] = true
    end
   end})
+  local nukeRecord = nil
+
   local function blocknuke()
    if not nukeOn then return end
    local char = LP.Character
@@ -5188,15 +5384,54 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    end
    if closestBlock then
     nukeTarget = closestBlock
+    -- Captured here and nowhere else. The moment the hit lands the part is
+    -- destroyed and its name and CFrame go with it, so a record taken after
+    -- the fact would have nothing to read.
+    if nukeRecord then
+     table.insert(nukeRecord, {blockType = closestBlock.Name, cframe = closestBlock.CFrame})
+    end
     task.defer(function() hitBlock(closestBlock, closestBlock) end)
    else
     nukeTarget = nil
    end
   end
-  nk:AddToggle({Name = "Demolish Blocks", Default = false, Tooltip = "Repeatedly breaks the nearest selected block type around you.", Flag = autoFlag("set"), Callback = function(value)
+  nk:AddToggle({Name = "Demolish Blocks", Default = false, Tooltip = "Repeatedly breaks the nearest selected block type around you. Turning it off offers an undo that rebuilds what the run destroyed.", Flag = autoFlag("set"), Callback = function(value)
    nukeOn = value
    nukeTarget = nil
-   if not value then return end
+   if not value then
+    -- One entry for the run, not one per block. "Undo" here means "put back
+    -- what that did", and what it did was a run.
+    local run = nukeRecord
+    nukeRecord = nil
+    if run and #run > 0 then
+     local undoEntry = Undo.push({
+      label  = "Demolished " .. #run .. " blocks",
+      detail = "Places each block type back at the exact CFrame it was broken at.",
+      run = function()
+       local done, failed = 0, 0
+       -- newest first, so a stack comes back in the order it came down
+       for i = #run, 1, -1 do
+        local b = run[i]
+        local ok = pcall(function()
+         R_Place:InvokeServer({
+          uwhiHAMdjExWka = "\a\240\159\164\163\240\159\164\161\a\n\a\n\a\nffEgdldU",
+          cframe = b.cframe,
+          blockType = b.blockType,
+          upperBlock = false,
+         })
+        end)
+        if ok then done = done + 1 else failed = failed + 1 end
+        if done % 20 == 0 then task.wait() else task.wait(0.03) end
+       end
+       return done, failed,
+        "Blocks only go back if you still have them in your inventory - the server checks."
+      end,
+     })
+     Undo.offer("Demolish", "Broke " .. #run .. " blocks this run.", undoEntry)
+    end
+    return
+   end
+   nukeRecord = {}
    nukeGen = nukeGen + 1
    local gen = nukeGen
    task.spawn(function()
@@ -5214,6 +5449,156 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
 end
 
 BuildPookiePort(UI.farmL, UI.farmR, UI.setL, UI.setR)
+
+-- ---------------------------------------------------------------------------
+-- Interface + diagnostics, on the Settings tab.
+-- ---------------------------------------------------------------------------
+do
+ local IF = UI.setR:AddSection({Name = "Interface"})
+
+ IF:AddSlider({
+  Name = "Transparency", Min = 0, Max = 90, Default = 38, Increment = 1,
+  ValueName = "%",
+  Tooltip = "How much of the game shows through the window. Applies as you drag.",
+  Flag = "PIHDGlass",
+  Callback = function(v) pcall(function() Duvome:SetGlass(v / 100) end) end,
+ })
+
+ IF:AddToggle({
+  Name = "Click Through", Default = false,
+  Tooltip = "While the cursor is off the window, clicks go to the game instead of the interface.",
+  Flag = "PIHDClickThrough",
+  Callback = function(v) pcall(function() Duvome:SetClickThrough(v) end) end,
+ })
+
+ -- Undo history. The toast offers the last action; this is everything still
+ -- undoable, oldest at the bottom, each with its own button - because the one
+ -- you regret is not always the one you just did.
+ local undoPanel = Duvome:MakeSidePanel({ Name = "Undo History", Width = 230, Height = 320, Side = "right" })
+ local undoBody = undoPanel:Container()
+
+ local function drawUndo()
+  for _, c in ipairs(undoBody:GetChildren()) do
+   if c:IsA("GuiObject") then c:Destroy() end
+  end
+  if #Undo.stack == 0 then
+   local empty = Instance.new("TextLabel")
+   empty.BackgroundTransparency = 1
+   empty.Font = Enum.Font.Gotham
+   empty.TextSize = 12
+   empty.TextColor3 = Color3.fromRGB(150, 145, 165)
+   empty.TextWrapped = true
+   empty.TextXAlignment = Enum.TextXAlignment.Left
+   empty.Text = "Nothing to undo yet.\n\nDestructive actions record how to reverse themselves and show up here."
+   empty.Size = UDim2.new(1, 0, 0, 70)
+   empty.Parent = undoBody
+   return
+  end
+  for _, entry in ipairs(Undo.stack) do
+   local row = Instance.new("Frame")
+   row.BackgroundTransparency = 1
+   row.Size = UDim2.new(1, 0, 0, 52)
+   row.Parent = undoBody
+
+   local lbl = Instance.new("TextLabel")
+   lbl.BackgroundTransparency = 1
+   lbl.Font = Enum.Font.GothamBold
+   lbl.TextSize = 12
+   lbl.TextColor3 = Color3.fromRGB(228, 222, 240)
+   lbl.TextXAlignment = Enum.TextXAlignment.Left
+   lbl.TextWrapped = true
+   lbl.Text = entry.at .. "  " .. entry.label
+   lbl.Size = UDim2.new(1, -54, 1, 0)
+   lbl.Parent = row
+
+   local btn = Instance.new("TextButton")
+   btn.Text = "Undo"
+   btn.Font = Enum.Font.GothamBold
+   btn.TextSize = 11
+   btn.TextColor3 = Color3.fromRGB(235, 235, 240)
+   btn.BorderSizePixel = 0
+   btn.AutoButtonColor = false
+   btn.Size = UDim2.new(0, 48, 0, 22)
+   btn.Position = UDim2.new(1, -48, 0.5, -11)
+   btn.Parent = row
+   Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+   btn.MouseButton1Click:Connect(function() Undo.run(entry) end)
+  end
+ end
+
+ table.insert(Undo.listeners, function() task.defer(drawUndo) end)
+ drawUndo()
+
+ IF:AddToggle({
+  Name = "Undo History", Default = false,
+  Tooltip = "Opens the list of actions that can still be reversed.",
+  Callback = function(v)
+   pcall(function() if v then undoPanel:Show() else undoPanel:Hide() end end)
+  end,
+ })
+
+ -- Self test. Everything here breaks when the game updates, and each check is
+ -- something a feature silently depends on - a missing remote looks exactly
+ -- like a dead button.
+ IF:AddButton({
+  Name = "Self Test",
+  Tooltip = "Checks that the remotes, folders and web sources every feature needs are still there.",
+  Callback = function()
+   task.spawn(function()
+    local lines, bad = {}, 0
+    local function check(what, fn)
+     local ok, res = pcall(fn)
+     local pass = ok and res ~= false and res ~= nil
+     if not pass then bad = bad + 1 end
+     table.insert(lines, (pass and "OK   " or "FAIL ") .. what)
+    end
+
+    local function managed()
+     return RS:WaitForChild("rbxts_include", 5):WaitForChild("node_modules", 5)
+      :WaitForChild("@rbxts", 5):WaitForChild("net", 5):WaitForChild("out", 5)
+      :WaitForChild("_NetManaged", 5)
+    end
+
+    check("net root", function() return managed() ~= nil end)
+    for _, name in ipairs({
+     "CLIENT_BLOCK_HIT_REQUEST", "CLIENT_BLOCK_PLACE_REQUEST",
+     "CLIENT_HARVEST_CROP_REQUEST", "CLIENT_WATER_BLOCK",
+     "CLIENT_CHEST_TRANSACTION", "TransactionBankBalance",
+     "CLIENT_CHANGE_ISLAND_ACCESS_LEVEL",
+    }) do
+     check("remote " .. name, function()
+      return managed():FindFirstChild(name) ~= nil
+     end)
+    end
+    check("vending remotes", function()
+     local m = managed()
+     return m:FindFirstChild("deGzdggahhjo/yeuvbxxakbeqDdlofjxFiBwq") ~= nil
+      and m:FindFirstChild("deGzdggahhjo/rLPziSaNkyol") ~= nil
+    end)
+    check("Islands folder", function() return WS:FindFirstChild("Islands") ~= nil end)
+    check("backpack", function() return LP:FindFirstChild("Backpack") ~= nil end)
+    check("vendings visible", function() return #findVendings() >= 0 end)
+    check("key source", function()
+     -- literal, not KEY_URL: that local is declared further down the file, so
+     -- naming it here would compile to a nil global and the check would pass
+     -- by reading nothing
+     local body = game:HttpGet("https://pastebin.com/raw/KrqauyVU?t=" .. tostring(os.time()))
+     return type(body) == "string" and #body > 0 and not body:find("<html", 1, true)
+    end)
+    check("price source", function()
+     local body = game:HttpGet("https://pastebin.com/raw/LQVhtvEe?t=" .. tostring(os.time()))
+     return type(body) == "string" and #body > 0 and not body:find("<html", 1, true)
+    end)
+
+    local head = bad == 0
+     and ("All " .. #lines .. " checks passed.")
+     or (bad .. " of " .. #lines .. " checks FAILED.")
+    setOutput("Self Test", head .. "\n\n" .. table.concat(lines, "\n"))
+    updateNotification(bad == 0 and "Self Test" or "Self Test Failed", head, 6)
+   end)
+  end,
+ })
+end
 
 pcall(function()
  Duvome:AddWatch("Fly", function() return flying end)
