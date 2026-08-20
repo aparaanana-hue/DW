@@ -1843,11 +1843,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	end
 
 	
-	-- A slow band of light travelling across the window, the way a highlight
-	-- crosses a sheet of glass when it turns. It replaces a field of forty
-	-- twinkling stars: those drew the eye away from whatever you were reading,
-	-- and at this transparency there is already plenty happening behind the
-	-- panel. One moving highlight is enough to say the surface is glass.
+	-- Holographic metal: a band of light crossing the window the way a
+	-- highlight crosses a brushed, oil-slick surface when it turns, plus a
+	-- blink that runs round the edge. The colours slide *within* the band as
+	-- it travels, which is what separates thin-film iridescence from a plain
+	-- white gleam - a solid highlight just looks like a bar sliding past.
+	-- It replaces a field of forty twinkling stars: those drew the eye away
+	-- from whatever you were reading.
 	do
 		local SheenCanvas = Create("Frame", {
 			Name                   = "SheenCanvas",
@@ -1861,33 +1863,103 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 		local band = Create("Frame", {
 			BackgroundColor3       = Color3.fromRGB(255, 255, 255),
-			BackgroundTransparency = 1,
+			BackgroundTransparency = 0,
 			BorderSizePixel        = 0,
 			AnchorPoint            = Vector2.new(0.5, 0.5),
 			Rotation               = 18,
-			Size                   = UDim2.new(0.42, 0, 2, 0),
+			Size                   = UDim2.new(0.55, 0, 2, 0),
 			Position               = UDim2.new(-0.4, 0, 0.5, 0),
 			ZIndex                 = 0,
 			Parent                 = SheenCanvas
 		})
-		-- soft on both edges, so it is a gleam rather than a bar sliding past
-		Create("UIGradient", {
-			Rotation     = 90,
+
+		-- Across the band: violet, cyan, gold, rose. Kept desaturated, because
+		-- at full saturation this stops reading as metal and starts reading as
+		-- a rainbow.
+		local sheenGrad = Create("UIGradient", {
+			Rotation = 0,
+			Color    = ColorSequence.new({
+				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(150, 110, 235)),
+				ColorSequenceKeypoint.new(0.28, Color3.fromRGB(120, 210, 245)),
+				ColorSequenceKeypoint.new(0.52, Color3.fromRGB(240, 235, 210)),
+				ColorSequenceKeypoint.new(0.74, Color3.fromRGB(245, 170, 215)),
+				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(150, 110, 235)),
+			}),
+			-- soft on both edges, so it is a gleam rather than a bar
 			Transparency = NumberSequence.new({
 				NumberSequenceKeypoint.new(0.00, 1.00),
-				NumberSequenceKeypoint.new(0.50, 0.92),
+				NumberSequenceKeypoint.new(0.22, 0.94),
+				NumberSequenceKeypoint.new(0.50, 0.86),
+				NumberSequenceKeypoint.new(0.78, 0.94),
 				NumberSequenceKeypoint.new(1.00, 1.00),
 			}),
 			Parent = band,
 		})
 
+		-- The edge blink. A separate frame rather than MainStroke itself:
+		-- MainStroke is the black outline that keeps the window legible against
+		-- a bright sky, and a gradient over black stays black.
+		local EdgeFrame = Create("Frame", {
+			Name                   = "EdgeBlink",
+			BackgroundTransparency = 1,
+			-- inset by a pixel: MainWindow clips its descendants, and a border
+			-- stroke draws outward, so a flush frame would have its glow cut off
+			Size                   = UDim2.new(1, -4, 1, -4),
+			Position               = UDim2.new(0, 2, 0, 2),
+			ZIndex                 = 10,
+			Active                 = false,
+			Parent                 = MainWindow
+		})
+		Create("UICorner", { CornerRadius = UDim.new(0, 10), Parent = EdgeFrame })
+		local EdgeStroke = Create("UIStroke", {
+			Color       = Color3.fromRGB(255, 255, 255),
+			Thickness   = 1.6,
+			Transparency = 0.85,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent      = EdgeFrame
+		})
+		local edgeGrad = Create("UIGradient", {
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(120, 210, 245)),
+				ColorSequenceKeypoint.new(0.35, Color3.fromRGB(150, 110, 235)),
+				ColorSequenceKeypoint.new(0.70, Color3.fromRGB(245, 170, 215)),
+				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(120, 210, 245)),
+			}),
+			Parent = EdgeStroke
+		})
+
+		-- One loop drives both, so the blink lands with the sweep instead of
+		-- drifting in and out of step with it.
 		task.spawn(function()
 			while band and band.Parent do
-				band.Position = UDim2.new(-0.4, 0, 0.5, 0)
+				local sweep = 4.5
+				band.Position   = UDim2.new(-0.4, 0, 0.5, 0)
+				sheenGrad.Offset = Vector2.new(-0.5, 0)
+
 				TweenService:Create(band,
-					TweenInfo.new(4.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+					TweenInfo.new(sweep, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
 					{ Position = UDim2.new(1.4, 0, 0.5, 0) }):Play()
-				task.wait(4.5 + 6 + math.random() * 4)
+				-- colours slide the other way inside the band: the shift of hue
+				-- with angle is the whole effect
+				TweenService:Create(sheenGrad,
+					TweenInfo.new(sweep, Enum.EasingStyle.Linear),
+					{ Offset = Vector2.new(0.5, 0) }):Play()
+
+				-- edge: hue travels round the border for the length of the
+				-- sweep, brightening in the middle of it and fading back
+				TweenService:Create(edgeGrad,
+					TweenInfo.new(sweep, Enum.EasingStyle.Linear),
+					{ Rotation = 360 }):Play()
+				TweenService:Create(EdgeStroke,
+					TweenInfo.new(sweep / 2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+					{ Transparency = 0.32 }):Play()
+				task.wait(sweep / 2)
+				TweenService:Create(EdgeStroke,
+					TweenInfo.new(sweep / 2, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+					{ Transparency = 0.85 }):Play()
+
+				task.wait(sweep / 2 + 6 + math.random() * 4)
+				edgeGrad.Rotation = 0
 			end
 		end)
 	end
