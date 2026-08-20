@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 19 12:00"
+local PIHD_BUILD = "Aug 19 13:10"
 
 local TAB_ICONS = {
 	Home                 = "house",

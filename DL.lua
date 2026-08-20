@@ -131,6 +131,8 @@ local DuvomeLibrary = {
 	-- you can actually see through it, so this sits well above a token tint; the
 	-- blur behind the window is what keeps text legible at this level.
 	Glass = 0.38,
+	-- Gated so only the window shell is made of glass - see AddThemeObject.
+	_glassAllowed = true,
 	Folder = nil,
 	SaveCfg = false
 }
@@ -306,10 +308,12 @@ local function AddThemeObject(Object, Type)
 	end
 	table.insert(DuvomeLibrary.ThemeObjects[Type], Object)
 	Object[ReturnProperty(Object)] = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme][Type]
-	-- Surfaces become glass: the game shows through, tinted by the theme colour.
-	-- Only fully opaque objects are touched, so elements that were deliberately
-	-- semi-transparent keep their own value.
-	if (Type == "Main" or Type == "Second") and Object:IsA("GuiObject") then
+	-- Glass goes on the window shell and nothing else. Letting every Main or
+	-- Second surface turn transparent stacked panel on panel on section, and
+	-- the whole interface read as fog rather than as a window over the game.
+	-- MakeWindow closes this gate once the shell exists.
+	if DuvomeLibrary._glassAllowed and (Type == "Main" or Type == "Second")
+		and Object:IsA("GuiObject") then
 		if Object.BackgroundTransparency == 0 then
 			Object:SetAttribute("DuvomeGlass", true)
 			Object.BackgroundTransparency = DuvomeLibrary.Glass
@@ -1163,6 +1167,24 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		}),
 		WindowStuff
 	}), "Main")
+
+	-- The shell is built; everything from here on is content, and content is
+	-- solid. Clear the glass off anything inside that picked it up on the way
+	-- through, then put it back on just the window and the sidebar.
+	do
+		for _, d in ipairs(MainWindow:GetDescendants()) do
+			if d:GetAttribute("DuvomeGlass") then
+				d:SetAttribute("DuvomeGlass", nil)
+				d.BackgroundTransparency = 0
+			end
+		end
+		-- Only the window itself. The sidebar sits on top of it, so glassing
+		-- both would compound the two and make that strip the foggiest part
+		-- of the interface.
+		MainWindow:SetAttribute("DuvomeGlass", true)
+		MainWindow.BackgroundTransparency = DuvomeLibrary.Glass
+		DuvomeLibrary._glassAllowed = false
+	end
 
 	local MainStroke = Instance.new("UIStroke")
 	MainStroke.Color     = Color3.fromRGB(0, 0, 0)
