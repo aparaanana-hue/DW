@@ -3604,24 +3604,27 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					BackgroundTransparency = 1, BorderSizePixel = 0,
 					Size = UDim2.new(1, 0, 1, 0), ZIndex = 61, Parent = pop
 				})
-				local popList = Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = popContent})
-				-- 12 across and 10 down. At 10/8 a slider knob, which overhangs its
-				-- track by 3px each side, ended up sitting on the popover's stroke.
-				Create("UIPadding", {PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10), Parent=popContent})
+				local popList = Create("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = popContent})
+				-- 12 across, because a slider knob overhangs its track by 3px each
+				-- side and at less than that it sat on the popover's stroke. Only 6
+				-- down: the rows are already tall enough to separate themselves, and
+				-- more than that left a gear holding two toggles looking half empty.
+				Create("UIPadding", {PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6), Parent=popContent})
 
 				for _, item in ipairs(items) do
 					if item.Type == "slider" then
 						local val = item.Default or item.Min
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,42), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,38), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(1,-42,0,14), ZIndex=62, Parent=row}), "Text")
-						local valLbl = AddThemeObject(Create("TextLabel", {Text=tostring(val), Font=Enum.Font.GothamBold, TextSize=12,
+						local unit = item.ValueName or ""
+						local valLbl = AddThemeObject(Create("TextLabel", {Text=tostring(val) .. unit, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].TextDark, BackgroundTransparency=1,
 							Size=UDim2.new(0,38,0,14), Position=UDim2.new(1,-38,0,0),
 							TextXAlignment=Enum.TextXAlignment.Right, ZIndex=62, Parent=row}), "TextDark")
 						local track = AddThemeObject(Create("Frame", {BackgroundColor3=Color3.fromRGB(35,12,60),
-							BorderSizePixel=0, Size=UDim2.new(1,-6,0,6), Position=UDim2.new(0,3,0,28), ZIndex=62, Parent=row}), "Main")
+							BorderSizePixel=0, Size=UDim2.new(1,-6,0,6), Position=UDim2.new(0,3,0,24), ZIndex=62, Parent=row}), "Main")
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=track})
 						local pct = (val-item.Min)/math.max(1,item.Max-item.Min)
 						local fill = AddThemeObject(Create("Frame", {BackgroundColor3=Color3.fromRGB(130,55,210),
@@ -3640,12 +3643,12 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 								val = math.floor(item.Min+rel*(item.Max-item.Min))
 								fill.Size = UDim2.new(rel,0,1,0)
 								knob.Position = UDim2.new(rel,-6,0.5,-6)
-								valLbl.Text = tostring(val)
+								valLbl.Text = tostring(val) .. unit
 								item.Callback(val)
 							end
 						end)
 					elseif item.Type == "input" then
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.45,0,1,0), ZIndex=62, Parent=row}), "Text")
@@ -3662,14 +3665,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						AddThemeObject(_inStroke, "Stroke")
 						box.FocusLost:Connect(function() item.Callback(box.Text) end)
 					elseif item.Type == "keybind" then
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text="Keybind", Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.5,0,1,0), ZIndex=62, Parent=row}), "Text")
 						MakeKeybindBox(row, item, UDim2.new(0.45,0,0,24), UDim2.new(0.55,0,0.5,-12), 62)
 					elseif item.Type == "toggle" then
 						local state = item.Default == true
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,36), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=62, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
 							Size=UDim2.new(0.7,0,1,0), ZIndex=62, Parent=row}), "Text")
@@ -3780,7 +3783,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					elseif item.Type == "button" then
 						-- Action row: lets a gear hold things like Refresh or Delete
 						-- instead of them each needing their own control in the panel.
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,26), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,22), ZIndex=62, Parent=popContent})
 						-- Styled like the other popover rows: plain label weight, no
 						-- filled background, so it does not shout next to them.
 						local btn = Create("TextButton", {
@@ -3816,7 +3819,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					task.defer(function()
 						local ap = anchorFrame.AbsolutePosition
 						local as = anchorFrame.AbsoluteSize
-						local h  = math.max(popList.AbsoluteContentSize.Y + 24, 60)
+						local h  = math.max(popList.AbsoluteContentSize.Y + 14, 44)
 						local w  = math.max(as.X, 210)
 						popW, popH = w, h
 						pop.Size                   = UDim2.new(0, w, 0, 0)
@@ -3911,6 +3914,10 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				local loopMode, loopRunning, loopGen = false, false, 0
 				local loopEvery = ButtonConfig.LoopEvery or 5
 				local loopSwitch, loopKnob
+				-- Assigned further down when the row builds its gear. The switch
+				-- lands where the icon was, which is where the gear's right edge
+				-- used to reach, so the gear has to move out of the way.
+				local optBtn
 
 				local function setLoopRunning(on)
 					loopRunning = on
@@ -3942,13 +3949,28 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					loopMode = on
 					if not on and loopRunning then setLoopRunning(false) end
 					local ico = ButtonFrame:FindFirstChild("Ico") or ButtonFrame:FindFirstChildOfClass("ImageLabel")
-					if ico then ico.Visible = not on end
+					-- The icon fades rather than blinking out, and the gear slides
+					-- to its new spot instead of jumping there.
+					if ico then
+						TweenService:Create(ico, btnSmooth, {ImageTransparency = on and 1 or 0}):Play()
+					end
+					if optBtn then
+						TweenService:Create(optBtn, btnSmooth,
+							{Position = UDim2.new(1, on and -80 or -58, 0.5, -12)}):Play()
+						local content = ButtonFrame:FindFirstChild("Content")
+						if content then
+							TweenService:Create(content, btnSmooth,
+								{Size = UDim2.new(1, on and -92 or -66, 1, 0)}):Play()
+						end
+					end
 					if on and not loopSwitch then
 						local theme = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme]
 						loopSwitch = Create("Frame", {
 							Size = UDim2.new(0, 32, 0, 18),
-							Position = UDim2.new(1, -42, 0.5, -9),
+							-- -46 to -14, clear of the gear once it has slid to -80
+							Position = UDim2.new(1, -46, 0.5, -9),
 							BackgroundColor3 = theme.Divider,
+							BackgroundTransparency = 1,
 							BorderSizePixel = 0, ZIndex = 4, Parent = ButtonFrame,
 						})
 						Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = loopSwitch})
@@ -3961,7 +3983,19 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						})
 						Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = loopKnob})
 					end
-					if loopSwitch then loopSwitch.Visible = on end
+					if loopSwitch then
+						loopSwitch.Visible = true
+						TweenService:Create(loopSwitch, btnSmooth,
+							{BackgroundTransparency = on and 0 or 1}):Play()
+						if loopKnob then
+							TweenService:Create(loopKnob, btnSmooth,
+								{BackgroundTransparency = on and 0 or 1}):Play()
+						end
+						local st = loopSwitch:FindFirstChildOfClass("UIStroke")
+						if st then
+							TweenService:Create(st, btnSmooth, {Transparency = on and 0 or 1}):Play()
+						end
+					end
 				end
 
 				if ButtonConfig.Loop then
@@ -3971,9 +4005,21 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						Callback = function(v) setLoopMode(v) end,
 					})
 					table.insert(ButtonConfig.Options, {
-						Type = "slider", Name = "Every (s)", Min = 1, Max = 120,
-						Default = loopEvery,
+						Type = "slider", Name = "Repeat Every", Min = 1, Max = 120,
+						ValueName = "s", Default = loopEvery,
 						Callback = function(v) loopEvery = v end,
+					})
+					-- The key does whatever a click does, which in loop mode means
+					-- starting and stopping the loop rather than firing once.
+					table.insert(ButtonConfig.Options, {
+						Type = "keybind", Name = "Key",
+						OnPress = function()
+							if loopMode then
+								setLoopRunning(not loopRunning)
+							else
+								task.spawn(ButtonConfig.Callback)
+							end
+						end,
 					})
 				end
 
@@ -4023,6 +4069,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						Size = UDim2.new(1,0,1,0), ZIndex = 6, Parent = dotBtn,
 					}), "TextDark")
 					Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=dotBtn})
+					optBtn = dotBtn
 					local _pop, showP, hideP, isOpen, setOpen = MakePopover(dotBtn, ButtonConfig.Options)
 					dotBtn.MouseButton1Click:Connect(function()
 						if isOpen() then hideP() setOpen(false)

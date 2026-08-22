@@ -8,16 +8,15 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 21 10:15"
+local PIHD_BUILD = "Aug 22 09:30"
 
 local TAB_ICONS = {
 	Home                 = "house",
-	["Vendings Manager"] = "shopping-cart",
 	["Price Tool"]       = "tag",
 	Automation           = "code",
 	Farming              = "backpack",
 	Settings             = "gear",
-	Tools                = "wrench-adjustable",
+	["Shop & Storage"]   = "shopping-cart",
 	Presets              = "star",
 }
 
@@ -794,7 +793,18 @@ end
 end
 _initFX()
 
-local HomeTab = Window:MakeTab({Name = "Home", Icon = TAB_ICONS.Home, Columns = true})
+-- All six tabs are made here rather than where their contents happen to be
+-- written, because a tab appears in the sidebar in the order it was created,
+-- and sections no longer live on the tab their code sits next to. AddLeft and
+-- AddRight just hand back an element set bound to the column, so they can be
+-- called again whenever a later block needs to point somewhere else.
+local HomeTab  = Window:MakeTab({Name = "Home",           Icon = TAB_ICONS.Home,               Columns = true})
+local ShopTab  = Window:MakeTab({Name = "Shop & Storage", Icon = TAB_ICONS["Shop & Storage"],  Columns = true})
+local PriceTab = Window:MakeTab({Name = "Price Tool",     Icon = TAB_ICONS["Price Tool"],      Columns = true})
+local AutoTab  = Window:MakeTab({Name = "Automation",     Icon = TAB_ICONS.Automation,         Columns = true})
+local FarmTab  = Window:MakeTab({Name = "Farming",        Icon = TAB_ICONS.Farming,            Columns = true})
+local SetTab   = Window:MakeTab({Name = "Settings",       Icon = TAB_ICONS.Settings,           Columns = true})
+
 L, R = HomeTab:AddLeft(), HomeTab:AddRight()
 
 UI.about = L:AddSection({Name = "About"})
@@ -857,7 +867,7 @@ end
 
 local howSec = L:AddSection({Name = "How To Use"})
 TypingPanel(howSec, "Getting Started", {
- "Every tab is one job.\n\nTools runs things by hand: scanners, chests,\nopenables, saved vending groups.\n\nVendings Manager is your shop - stock, prices,\ncoins, the bank.",
+ "Every tab is one job.\n\nShop & Storage is your shop and your chests -\nstock, prices, coins, the bank.\n\nSettings holds the occasional things: scanners,\nsaved vending groups, openables.",
  "Automation is what runs while you are away:\nauto-restock, the bank loop, the sniper.\n\nFarming waters, harvests, plants and demolishes.\n\nPrice Tool tells you what things are worth.",
  "Selection comes first.\n\nMost vending actions ask 'which vendings?'\nUse Selected Only in Vending Tools answers it:\nOFF means every vending you own,\nON means only the ones you ALT+Clicked.",
  "The gear on a row holds its settings.\n\nWhere the only setting is a key, the row shows\nthe key box directly instead of a gear.\n\nRefresh lives inside the dropdown it refreshes,\nnext to Select All.",
@@ -879,13 +889,10 @@ TypingPanel(tipSec, "Things People Miss", {
  "Transparency is a slider in Settings.\n\nClick Through, next to it, lets clicks reach the\ngame whenever the cursor is off the window.",
 })
 
--- Home is information and nothing else now. Everything that was on it - the
--- scanner, favourites, openables and chests - moved here, to its own tab rather
--- than into Settings: four working sections dropped in among the settings would
--- bury the settings, and the point was to get them off Home, not to pick a
--- particular destination.
-local ToolsTab = Window:MakeTab({Name = "Tools", Icon = TAB_ICONS.Tools, Columns = true})
-L, R = ToolsTab:AddLeft(), ToolsTab:AddRight()
+-- Home is information and nothing else. What used to be on it is split by what
+-- it does: the scanner, favourites and openables are occasional things, so they
+-- sit with the settings; chests are storage, so they sit with the shop.
+L, R = SetTab:AddLeft(), SetTab:AddRight()
 
 UI.homeScanner = L:AddSection({Name = "Scanner & Stats"})
 
@@ -1345,6 +1352,9 @@ UI.openables:AddToggle({Name = "Auto Walk", Default = false, Tooltip = "Walks to
  end
 end)})
 
+-- Chests are storage, and storage belongs beside the shop that draws on it.
+L, R = ShopTab:AddLeft(), ShopTab:AddRight()
+
 UI.chest = R:AddSection({Name = "Chest Manager"})
 
 -- 0 means the whole stack, which is what a manual click does. Anything else is
@@ -1644,77 +1654,59 @@ if not S.selectedChestItem and #S.chestItemsList > 0 and S.chestItemsList[1] ~= 
 end
 
 S.autoWithdrawChests = false
-UI.chest:AddToggle({Name = "Auto-Withdraw", Default = false, Tooltip = "Withdraws all items from chests every 3 seconds.", Flag = autoFlag("home"), Callback = initGuard(function(value)
- if value and S.autoWithdrawChests then
-  updateNotification("Error", "Already running!", 2)
-  return
- end
- S.autoWithdrawChests = value
- if value then
-  updateNotification("Auto Withdraw", "Withdrawing all items from chests every 3s", 3)
-  task.spawn(function()
-   while S.autoWithdrawChests do
-    pcall(function()
-     withdraw()
-    end)
-    task.wait(3)
-   end
-  end)
- else
-  updateNotification("Auto Withdraw", "Disabled", 2)
- end
-end)})
+-- Buttons, not toggles. One click does one pass; turning Loop on in the gear
+-- turns the row into a toggle that repeats it. Same shape as the bank and coin
+-- rows, so "do it once" and "keep doing it" are the same control everywhere.
+UI.chest:AddButton({
+ Name = "Withdraw", Loop = true, LoopEvery = 3,
+ Tooltip = "Withdraws every item from the matching chests. Turn on Loop in the gear to repeat it.",
+ Callback = function() pcall(withdraw) end,
+})
 
-UI.chest:AddToggle({Name = "Auto-Deposit", Default = false, Tooltip = "Deposits your selected items (or the held item if none selected) into nearby chests continuously.", Flag = autoFlag("home"), Callback = initGuard(function(value)
- S.autoDepositChests = value
- if value then
-  updateNotification("Auto Deposit", "Hold items to auto-deposit!", 3)
-  task.spawn(function()
-   while S.autoDepositChests do
-    task.wait(0.05)
-    pcall(function()
-
-     local tools = {}
-     if #S.selectedChestItems > 0 then
-      for _, itemName in ipairs(S.selectedChestItems) do
-       for _, t in pairs(LP.Backpack:GetChildren()) do
-        if t:IsA("Tool") and getDisplayName(t) == itemName then table.insert(tools, t) end
-       end
-      end
-     else
-      local heldTool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
-      if heldTool then
-       local t = LP.Backpack:FindFirstChild(heldTool.Name) or heldTool
-       if t and t:IsA("Tool") then table.insert(tools, t) end
+local function depositHeldToChests()
+    local tools = {}
+    if #S.selectedChestItems > 0 then
+     for _, itemName in ipairs(S.selectedChestItems) do
+      for _, t in pairs(LP.Backpack:GetChildren()) do
+       if t:IsA("Tool") and getDisplayName(t) == itemName then table.insert(tools, t) end
       end
      end
-     if #tools > 0 then
-      local chests = findChests()
-      if #chests > 0 then
-       getChestNet()
-       for _, tool in ipairs(tools) do
-        local amount = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
-        if S.chestDepositAmount and S.chestDepositAmount > 0 then
-         amount = math.min(amount, S.chestDepositAmount)
-        end
-        if amount > 0 then
-         for _, chest in chests do
-          pcall(function()
-           local args = {{chest = chest, player_tracking_category = "join_from_web", amount = amount, tool = tool, action = "deposit"}}
-           if S.CHEST_TRANSACTION then S.CHEST_TRANSACTION:InvokeServer(unpack(args)) end
-          end)
-         end
+    else
+     local heldTool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+     if heldTool then
+      local t = LP.Backpack:FindFirstChild(heldTool.Name) or heldTool
+      if t and t:IsA("Tool") then table.insert(tools, t) end
+     end
+    end
+    if #tools > 0 then
+     local chests = findChests()
+     if #chests > 0 then
+      getChestNet()
+      for _, tool in ipairs(tools) do
+       local amount = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
+       if S.chestDepositAmount and S.chestDepositAmount > 0 then
+        amount = math.min(amount, S.chestDepositAmount)
+       end
+       if amount > 0 then
+        for _, chest in chests do
+         pcall(function()
+          local args = {{chest = chest, player_tracking_category = "join_from_web", amount = amount, tool = tool, action = "deposit"}}
+          if S.CHEST_TRANSACTION then S.CHEST_TRANSACTION:InvokeServer(unpack(args)) end
+         end)
         end
        end
       end
      end
-    end)
-   end
-  end)
- else
-  updateNotification("Auto Deposit", "Disabled", 2)
- end
-end)})
+    end
+end
+
+UI.chest:AddButton({
+ Name = "Deposit", Loop = true, LoopEvery = 3,
+ Tooltip = "Deposits your selected items, or the held item if none are selected, into the matching chests. Turn on Loop in the gear to repeat it.",
+ Callback = function() pcall(depositHeldToChests) end,
+})
+
+L, R = SetTab:AddLeft(), SetTab:AddRight()
 
 UI.homeActions = L:AddSection({Name = "Favorites & Groups"})
 
@@ -1907,8 +1899,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
  end
 end)
 
-local VendingsManager = Window:MakeTab({Name = "Vendings Manager", Icon = TAB_ICONS["Vendings Manager"], Columns = true})
-L, R = VendingsManager:AddLeft(), VendingsManager:AddRight()
+L, R = ShopTab:AddLeft(), ShopTab:AddRight()
 
 local Net
 
@@ -3372,7 +3363,6 @@ local function BuildPriceTool()
   if #guideItemList == 0 then guideItemList = {"(No items)"} end
  end
 
- local PriceTab = Window:MakeTab({Name = "Price Tool", Icon = TAB_ICONS["Price Tool"], Columns = true})
  local PL = PriceTab:AddLeft()
  local PR = PriceTab:AddRight()
  local guideItemDropdown, guideResult, refreshGuideItemDropdown
@@ -3492,8 +3482,7 @@ local function BuildPriceTool()
 end
 BuildPriceTool()
 
-local AutomationTab = Window:MakeTab({Name = "Automation", Icon = TAB_ICONS.Automation, Columns = true})
-L, R = AutomationTab:AddLeft(), AutomationTab:AddRight()
+L, R = AutoTab:AddLeft(), AutoTab:AddRight()
 
 UI.autoRestock = L:AddSection({Name = "Auto-Restock"})
 
@@ -3680,8 +3669,7 @@ UI.autoStock:AddToggle({Name = "Enabled", Default = false, Tooltip = "Picks a ra
  end
 end)})
 
-local FarmingTab = Window:MakeTab({Name = "Farming", Icon = TAB_ICONS.Farming, Columns = true})
-L, R = FarmingTab:AddLeft(), FarmingTab:AddRight()
+L, R = FarmTab:AddLeft(), FarmTab:AddRight()
 UI.farmL, UI.farmR = L, R
 local CollectionService = game:GetService("CollectionService")
 
@@ -3908,8 +3896,7 @@ UI.farmEat:AddToggle({Name = "Auto Eat Food", Default = false, Tooltip = "Eats o
     end
 end)})
 
-local SettingsTab = Window:MakeTab({Name = "Settings", Icon = TAB_ICONS.Settings, Columns = true})
-L, R = SettingsTab:AddLeft(), SettingsTab:AddRight()
+L, R = SetTab:AddLeft(), SetTab:AddRight()
 UI.setL, UI.setR = L, R
 
 local function BuildPurpleShader(col)
