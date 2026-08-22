@@ -1472,6 +1472,53 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	local CfgPanelOpen = false
 	
 	DuvomeLibrary._panelState = DuvomeLibrary._panelState or {cfgOpen=false, cfgSide="left", vpOpen=false, vpSide="right"}
+
+	-- There are three kinds of floating panel - configs, the avatar viewport and
+	-- anything built with MakeSidePanel - and each used to know about only some
+	-- of the others. That is why the avatar panel would dodge the configs panel
+	-- but land straight on top of a Vending Tools panel: it had never heard of it.
+	--
+	-- One registry, two slots. A panel claims a side; if that side is taken it
+	-- takes the other; if both are taken the OLDEST open panel is closed and its
+	-- side handed over. Oldest, not nearest or last - "I opened configs, then my
+	-- account, now vending tools" should retire configs, the one you have been
+	-- done with the longest.
+	DuvomeLibrary._panels = DuvomeLibrary._panels or {}
+
+	function DuvomeLibrary._claimSide(id, want, hide)
+		local list = DuvomeLibrary._panels
+		for i = #list, 1, -1 do
+			if list[i].id == id then table.remove(list, i) end
+		end
+		local taken = {}
+		for _, e in ipairs(list) do taken[e.side] = e end
+		local other = (want == "left") and "right" or "left"
+		local side
+		if not taken[want] then
+			side = want
+		elseif not taken[other] then
+			side = other
+		else
+			local oldest = list[1]
+			for _, e in ipairs(list) do
+				if e.at < oldest.at then oldest = e end
+			end
+			side = oldest.side
+			for i = #list, 1, -1 do
+				if list[i] == oldest then table.remove(list, i) end
+			end
+			pcall(oldest.hide)
+		end
+		table.insert(list, {id = id, side = side, at = tick(), hide = hide})
+		return side
+	end
+
+	function DuvomeLibrary._releaseSide(id)
+		local list = DuvomeLibrary._panels
+		for i = #list, 1, -1 do
+			if list[i].id == id then table.remove(list, i) end
+		end
+	end
 	local PS = DuvomeLibrary._panelState
 	local cfgSide      = PS.cfgSide   
 	local cfgDragging  = false    
@@ -1493,12 +1540,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		end
 	end)
 
+	local closeCfgPanel
 	local function openCfgPanel()
 		CfgPanelOpen = true
-		
-		if PS.vpOpen and PS.vpSide == cfgSide then
-			cfgSide = (cfgSide == "left") and "right" or "left"
-		end
+
+		cfgSide = DuvomeLibrary._claimSide("cfg", cfgSide, function()
+			if closeCfgPanel then closeCfgPanel() end
+		end)
 		PS.cfgOpen = true
 		PS.cfgSide = cfgSide
 		refreshCfgList()
@@ -1520,9 +1568,10 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		):Play()
 	end
 
-	local function closeCfgPanel()
+	function closeCfgPanel()
 		CfgPanelOpen = false
 		PS.cfgOpen = false
+		DuvomeLibrary._releaseSide("cfg")
 		local curY = CfgPanel.Position.Y.Offset
 		local curX = CfgPanel.Position.X.Offset
 		local pw   = CfgPanel.AbsoluteSize.X
@@ -2080,12 +2129,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 	VPScale.Scale  = 1
 	VPScale.Parent = ViewportFrame  
 
+	local closeViewport
 	local function openViewport()
 		ViewportOpen = true
-		
-		if PS.cfgOpen and PS.cfgSide == vpSide then
-			vpSide = (vpSide == "left") and "right" or "left"
-		end
+
+		vpSide = DuvomeLibrary._claimSide("avatar", vpSide, function()
+			if closeViewport then closeViewport() end
+		end)
 		PS.vpOpen = true
 		PS.vpSide = vpSide
 		loadViewportChar()
@@ -2108,9 +2158,10 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		):Play()
 	end
 
-	local function closeViewport()
+	function closeViewport()
 		ViewportOpen = false
 		PS.vpOpen = false
+		DuvomeLibrary._releaseSide("avatar")
 		local curY  = ViewportFrame.Position.Y.Offset
 		local curX  = ViewportFrame.Position.X.Offset
 		local vpW   = ViewportFrame.AbsoluteSize.X
@@ -3853,9 +3904,86 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					TweenService:Create(ButtonFrame, btnFast, {BackgroundColor3 = _Slight(8)}):Play()
 					TweenService:Create(ButtonFrame.Content, btnFast, {TextSize = 14.5}):Play()
 				end)
+				-- Loop mode. Turning Loop on in the gear converts this row from a
+				-- button into a toggle: the icon is replaced by a switch, and the
+				-- row starts firing on an interval instead of once per click.
+				-- Turning it off stops the loop and puts the button back.
+				local loopMode, loopRunning, loopGen = false, false, 0
+				local loopEvery = ButtonConfig.LoopEvery or 5
+				local loopSwitch, loopKnob
+
+				local function setLoopRunning(on)
+					loopRunning = on
+					loopGen = loopGen + 1
+					local myGen = loopGen
+					local theme = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme]
+					if loopSwitch then
+						TweenService:Create(loopSwitch, btnSmooth,
+							{BackgroundColor3 = on and theme.Stroke or theme.Divider}):Play()
+						TweenService:Create(loopKnob, btnSmooth,
+							{Position = on and UDim2.new(1, -15, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)}):Play()
+					end
+					if not on then return end
+					task.spawn(function()
+						while loopRunning and loopMode and myGen == loopGen do
+							pcall(ButtonConfig.Callback)
+							-- checked in slices, so turning it off does not wait
+							-- out a 60-second interval before it stops
+							local waited = 0
+							while waited < loopEvery and loopRunning and myGen == loopGen do
+								task.wait(0.1)
+								waited = waited + 0.1
+							end
+						end
+					end)
+				end
+
+				local function setLoopMode(on)
+					loopMode = on
+					if not on and loopRunning then setLoopRunning(false) end
+					local ico = ButtonFrame:FindFirstChild("Ico") or ButtonFrame:FindFirstChildOfClass("ImageLabel")
+					if ico then ico.Visible = not on end
+					if on and not loopSwitch then
+						local theme = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme]
+						loopSwitch = Create("Frame", {
+							Size = UDim2.new(0, 32, 0, 18),
+							Position = UDim2.new(1, -42, 0.5, -9),
+							BackgroundColor3 = theme.Divider,
+							BorderSizePixel = 0, ZIndex = 4, Parent = ButtonFrame,
+						})
+						Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = loopSwitch})
+						AddThemeObject(Create("UIStroke", {Thickness = 1, Parent = loopSwitch}), "Stroke")
+						loopKnob = Create("Frame", {
+							Size = UDim2.new(0, 14, 0, 14),
+							Position = UDim2.new(0, 3, 0.5, -7),
+							BackgroundColor3 = Color3.fromRGB(160, 160, 180),
+							BorderSizePixel = 0, ZIndex = 5, Parent = loopSwitch,
+						})
+						Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = loopKnob})
+					end
+					if loopSwitch then loopSwitch.Visible = on end
+				end
+
+				if ButtonConfig.Loop then
+					ButtonConfig.Options = ButtonConfig.Options or {}
+					table.insert(ButtonConfig.Options, {
+						Type = "toggle", Name = "Loop", Default = false,
+						Callback = function(v) setLoopMode(v) end,
+					})
+					table.insert(ButtonConfig.Options, {
+						Type = "slider", Name = "Every (s)", Min = 1, Max = 120,
+						Default = loopEvery,
+						Callback = function(v) loopEvery = v end,
+					})
+				end
+
 				AddConnection(Click.MouseButton1Up, function()
 					TweenService:Create(ButtonFrame, btnSmooth, {BackgroundColor3 = _Slight(4)}):Play()
 					TweenService:Create(ButtonFrame.Content, btnSmooth, {TextSize = 15.5}):Play()
+					if loopMode then
+						setLoopRunning(not loopRunning)
+						return
+					end
 					spawn(function() ButtonConfig.Callback() end)
 				end)
 				function Button:Set(ButtonText) ButtonFrame.Content.Text = ButtonText end
@@ -4310,8 +4438,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					DropdownContainer,
 					SetProps(SetChildren(MakeElement("TFrame"), {
 						AddThemeObject(SetProps(MakeElement("Label", DropdownConfig.Name, 15), {Size = UDim2.new(0.5, -12, 1, 0), Position = UDim2.new(0, 12, 0, 0), Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = false, ClipsDescendants = true, Name = "Content"}), "Text"),
+						-- Selected text starts LEFT-aligned just past the label, sized by
+						-- what the label actually measures, rather than both halves being
+						-- pinned to a fixed 50/50 split. At 50/50 a long name like
+						-- "Vending Type" ran into a right-aligned selection and clipped its
+						-- first character off.
 						AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072706796"), {Size = UDim2.new(0, 20, 0, 20), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(1, -30, 0.5, 0), ImageColor3 = Color3.fromRGB(240, 240, 240), Name = "Ico"}), "TextDark"),
-						AddThemeObject(SetProps(MakeElement("Label", "Selected", 13), {Size = UDim2.new(0.5, -40, 1, 0), Position = UDim2.new(0.5, 0, 0, 0), Font = Enum.Font.Gotham, Name = "Selected", TextXAlignment = Enum.TextXAlignment.Right, TextWrapped = false, ClipsDescendants = true}), "TextDark"),
+						AddThemeObject(SetProps(MakeElement("Label", "Selected", 13), {Size = UDim2.new(0.5, -40, 1, 0), Position = UDim2.new(0.5, 0, 0, 0), Font = Enum.Font.Gotham, Name = "Selected", TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = false, ClipsDescendants = true}), "TextDark"),
 						AddThemeObject(SetProps(MakeElement("Frame"), {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), Name = "Line", Visible = false}), "Stroke"),
 						Click
 					}), {Size = UDim2.new(1, 0, 0, 38), ClipsDescendants = true, Name = "F"}),
@@ -4321,6 +4454,28 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				AddConnection(DropdownList:GetPropertyChangedSignal("AbsoluteContentSize"), function()
 					DropdownContainer.CanvasSize = UDim2.new(0, 0, 0, DropdownList.AbsoluteContentSize.Y)
 				end)
+
+				-- The name takes the width it needs and no more; the selection gets
+				-- everything left over, starting 10px after it and stopping short of
+				-- the chevron. A name long enough to eat the whole row is capped at
+				-- 60% so the selection never disappears entirely.
+				do
+					local nameLbl = DropdownFrame.F.Content
+					local selLbl  = DropdownFrame.F.Selected
+					local function layout()
+						local rowW = DropdownFrame.AbsoluteSize.X
+						if rowW <= 0 then return end
+						local w = TextService:GetTextSize(
+							nameLbl.Text, 15, Enum.Font.GothamBold, Vector2.new(10000, 38)).X
+						w = math.min(w + 2, math.floor(rowW * 0.6))
+						nameLbl.Size     = UDim2.new(0, w, 1, 0)
+						selLbl.Position  = UDim2.new(0, 12 + w + 10, 0, 0)
+						selLbl.Size      = UDim2.new(1, -(12 + w + 10) - 34, 1, 0)
+					end
+					task.defer(layout)
+					AddConnection(DropdownFrame:GetPropertyChangedSignal("AbsoluteSize"), layout)
+					AddConnection(nameLbl:GetPropertyChangedSignal("Text"), layout)
+				end
 
 				
 				local SearchBox
@@ -5222,6 +5377,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				-- window, drag it loose, snap to whichever side is nearer.
 				local isOpen, dragging = false, false
 				local side = cfg.Side or "right"
+				local panelId = "panel:" .. title .. ":" .. tostring(math.random(1, 1e6))
 				local dragStart, startPos
 
 				local function sideX(which)
@@ -5296,24 +5452,18 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				end
 
 				function api:Show()
-					-- Right-hand space holds one panel. Close any other side panel
-					-- first so they replace each other instead of stacking.
-					DuvomeLibrary._sidePanels = DuvomeLibrary._sidePanels or {}
-					for _, other in ipairs(DuvomeLibrary._sidePanels) do
-						if other ~= api and other.IsOpen and other:IsOpen() then
-							other:Hide()
-						end
-					end
+					-- No hand-rolled "close the others" pass any more. The registry
+					-- below owns that, and it evicts by age across every kind of
+					-- panel rather than only across side panels.
 					isOpen = true
 					liftZ()
-					-- Step aside if the Configs or avatar panel already holds this
-					-- side, the same way those two avoid each other.
-					local PS = DuvomeLibrary._panelState
-					if PS then
-						if (PS.cfgOpen and PS.cfgSide == side) or (PS.vpOpen and PS.vpSide == side) then
-							side = (side == "left") and "right" or "left"
-						end
-					end
+					-- Claim through the shared registry rather than checking the
+					-- other two panels by hand: this is what makes eviction pick
+					-- the oldest panel instead of whichever one it happened to
+					-- know about.
+					side = DuvomeLibrary._claimSide(panelId, side, function()
+						pcall(function() api:Hide() end)
+					end)
 					-- slide in from off-side, matching the Configs panel entrance
 					local landX = sideX(side)
 					Panel.Position = UDim2.new(0, side == "left" and (landX - width - 40) or (landX + width + 40), 0, centreY())
@@ -5330,6 +5480,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					return cfg.Columns and LeftCol or Content
 				end
 				function api:Hide()
+					DuvomeLibrary._releaseSide(panelId)
 					if not isOpen then Panel.Visible = false return end
 					isOpen = false
 					-- same exit as the avatar panel: slide out, fade, then hide

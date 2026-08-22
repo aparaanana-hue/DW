@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 20 18:30"
+local PIHD_BUILD = "Aug 21 10:15"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -17,6 +17,7 @@ local TAB_ICONS = {
 	Automation           = "code",
 	Farming              = "backpack",
 	Settings             = "gear",
+	Tools                = "wrench-adjustable",
 	Presets              = "star",
 }
 
@@ -799,6 +800,93 @@ L, R = HomeTab:AddLeft(), HomeTab:AddRight()
 UI.about = L:AddSection({Name = "About"})
 UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVersion: 2.0 (Duvome native)\nBuild: " .. PIHD_BUILD .. "\n\nJoin Discord for updates & support:\ndiscord.gg/NuUzrrNaJz")
 
+-- ---------------------------------------------------------------------------
+-- Home is a guide. Nothing on it does anything to the game.
+--
+-- The panels type themselves out, hold, then erase and move to the next page.
+-- The About paragraph above is deliberately left static: it carries the build
+-- number, which is the one thing on this tab you might need to read at a moment
+-- that is not of the animation's choosing.
+-- ---------------------------------------------------------------------------
+local function TypingPanel(sec, title, pages)
+ local para = sec:AddParagraph(title, "")
+
+ -- Every page is padded to the height of the tallest one. A paragraph resizes
+ -- itself from its text, so without this the section would grow and shrink on
+ -- every keystroke and shove the whole column up and down while you read it.
+ local tallest = 0
+ for _, page in ipairs(pages) do
+  local n = 1
+  for _ in page:gmatch("\n") do n = n + 1 end
+  if n > tallest then tallest = n end
+ end
+ local function pad(text)
+  local n = 1
+  for _ in text:gmatch("\n") do n = n + 1 end
+  return text .. string.rep("\n", math.max(0, tallest - n))
+ end
+
+ task.spawn(function()
+  -- Staggered, so the three panels are not all typing on the same frame.
+  task.wait(math.random(0, 200) / 100)
+  local i = 1
+  while true do
+   local page = pages[i]
+   -- Three characters a tick, not one. A 300-character page typed letter by
+   -- letter is most of a minute before it can be read.
+   for c = 1, #page, 3 do
+    pcall(function() para:Set(pad(page:sub(1, c))) end)
+    task.wait(0.02)
+   end
+   pcall(function() para:Set(pad(page)) end)
+
+   task.wait(5)
+
+   -- Erasing runs faster than typing, the way anyone clearing a line does it.
+   for c = #page, 0, -8 do
+    pcall(function() para:Set(pad(page:sub(1, c))) end)
+    task.wait(0.012)
+   end
+   task.wait(0.4)
+   i = i + 1
+   if i > #pages then i = 1 end
+  end
+ end)
+ return para
+end
+
+local howSec = L:AddSection({Name = "How To Use"})
+TypingPanel(howSec, "Getting Started", {
+ "Every tab is one job.\n\nTools runs things by hand: scanners, chests,\nopenables, saved vending groups.\n\nVendings Manager is your shop - stock, prices,\ncoins, the bank.",
+ "Automation is what runs while you are away:\nauto-restock, the bank loop, the sniper.\n\nFarming waters, harvests, plants and demolishes.\n\nPrice Tool tells you what things are worth.",
+ "Selection comes first.\n\nMost vending actions ask 'which vendings?'\nUse Selected Only in Vending Tools answers it:\nOFF means every vending you own,\nON means only the ones you ALT+Clicked.",
+ "The gear on a row holds its settings.\n\nWhere the only setting is a key, the row shows\nthe key box directly instead of a gear.\n\nRefresh lives inside the dropdown it refreshes,\nnext to Select All.",
+})
+
+local safeSec = L:AddSection({Name = "Before You Run Anything"})
+TypingPanel(safeSec, "Worth Knowing", {
+ "Destructive actions record how to undo themselves.\n\nEmpty, demolish, coin and bank moves all leave an\nUndo button on their notification, and stay in\nSettings > Undo History until you use them.",
+ "An undo is a second action, not a rewind.\n\nBlocks only go back if you still have them.\nItems only go back if they are still on you.\nIt tells you when it could not, instead of\nclaiming it worked.",
+ "If a feature goes quiet after a game update,\nrun Settings > Self Test.\n\nIt checks every remote, folder and web source\nthe hub depends on and names what broke.",
+ "Panels take the left and right of the window.\n\nTwo at a time. Open a third and the one you\nopened first steps aside.",
+})
+
+local tipSec = R:AddSection({Name = "Tips"})
+TypingPanel(tipSec, "Things People Miss", {
+ "Ctrl and drag the window edge to resize it.\n\nThe sidebar expands when you hover it, and the\ntab search at its top filters the tabs.",
+ "Scanner output goes to a panel, not the tab.\n\nPick several modes at once - it runs each and\nappends them into one report.",
+ "Configs are per profile, saved from the topbar.\n\nSet up a farming loadout once, a shop loadout\nonce, and swap between them.",
+ "Transparency is a slider in Settings.\n\nClick Through, next to it, lets clicks reach the\ngame whenever the cursor is off the window.",
+})
+
+-- Home is information and nothing else now. Everything that was on it - the
+-- scanner, favourites, openables and chests - moved here, to its own tab rather
+-- than into Settings: four working sections dropped in among the settings would
+-- bury the settings, and the point was to get them off Home, not to pick a
+-- particular destination.
+local ToolsTab = Window:MakeTab({Name = "Tools", Icon = TAB_ICONS.Tools, Columns = true})
+L, R = ToolsTab:AddLeft(), ToolsTab:AddRight()
+
 UI.homeScanner = L:AddSection({Name = "Scanner & Stats"})
 
 -- Scanner output lives in a side panel rather than a paragraph on the tab.
@@ -819,15 +907,14 @@ outLabel.TextYAlignment         = Enum.TextYAlignment.Top
 outLabel.TextWrapped            = true
 outLabel.RichText               = false
 outLabel.Text                   = "Run a scan to see it here."
-outLabel.Size                   = UDim2.new(1, 0, 0, 40)
+-- AutomaticSize, not a TextBounds measurement on the Text signal. TextBounds
+-- for a wrapped label is only correct after the engine has laid it out, so the
+-- measured version read a stale height, the label stayed 40px, and the panel -
+-- a ScrollingFrame, which clips - showed the first scan and swallowed the rest.
+-- That is why picking several modes only ever displayed one.
+outLabel.AutomaticSize          = Enum.AutomaticSize.Y
+outLabel.Size                   = UDim2.new(1, 0, 0, 0)
 outLabel.Parent                 = outPanel:Container()
--- the panel scrolls off its list layout, which sizes from each child, so the
--- label has to grow to whatever it is holding
-outLabel:GetPropertyChangedSignal("Text"):Connect(function()
- task.defer(function()
-  outLabel.Size = UDim2.new(1, 0, 0, math.max(40, outLabel.TextBounds.Y + 4))
- end)
-end)
 UI.output = { Set = function(_, txt) outLabel.Text = txt end }
 
 UI.outputPanel = outPanel
@@ -1260,6 +1347,23 @@ end)})
 
 UI.chest = R:AddSection({Name = "Chest Manager"})
 
+-- 0 means the whole stack, which is what a manual click does. Anything else is
+-- a cap: deposit that many, or everything you have if you have less.
+S.chestDepositAmount = 0
+UI.chest:AddTextbox({
+ Name = "Amount", Default = "", TextDisappear = false,
+ Tooltip = "How many to deposit per chest. Leave empty or 0 to deposit the whole stack.",
+ Validate = function(text)
+  if text == "" then return true end
+  if not parseAmount(text) then return false, "Numbers only, e.g. 5 or 2k" end
+  if parseAmount(text) < 0 then return false, "Cannot be negative" end
+  return true
+ end,
+ Callback = function(text)
+  S.chestDepositAmount = (text == "") and 0 or (parseAmount(text) or 0)
+ end,
+})
+
 UI.chest:AddDropdown({Name = "Chest Type", Options = {"All", "Expanded Diamond Chest", "Diamond Chest", "Industrial Large Chest", "Industrial Large Chest (IO)", "Large Chest", "Industrial Medium Chest", "Industrial Medium Chest (IO)", "Medium Chest", "Timed Industrial Chest", "Small Chest"}, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Only act on these chest types. ALT+Click or drag-selected chests always override this.", Flag = autoFlag("home"), Callback = function(chosen)
  if not chosen or #chosen == 0 then S.chestTypeSet = nil return end
  local set, all = {}, false
@@ -1426,6 +1530,10 @@ local function deposit()
  end
 
  local amount = btool:FindFirstChild("Amount") and btool.Amount.Value or 1
+ -- Clamped, never raised: asking for 5 of an item you have 3 of deposits 3.
+ if S.chestDepositAmount and S.chestDepositAmount > 0 then
+  amount = math.min(amount, S.chestDepositAmount)
+ end
  if amount <= 0 then
   updateNotification("Error", "Item is empty (0 amount)!", 3)
   return
@@ -1586,6 +1694,9 @@ UI.chest:AddToggle({Name = "Auto-Deposit", Default = false, Tooltip = "Deposits 
        getChestNet()
        for _, tool in ipairs(tools) do
         local amount = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
+        if S.chestDepositAmount and S.chestDepositAmount > 0 then
+         amount = math.min(amount, S.chestDepositAmount)
+        end
         if amount > 0 then
          for _, chest in chests do
           pcall(function()
@@ -1785,9 +1896,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
    selectedVending = vendings[math.random(1, #vendings)]
    updateNotification("Hotkey", "Selected " .. selectedVending.Name, 2)
   end
- elseif input.KeyCode == hotkeys.scanVendings then
-  local vendings = findVendings()
-  updateNotification("Hotkey", "Found " .. #vendings .. " vendings!", 2)
  elseif input.KeyCode == hotkeys.emptyAll then
   local vendings = findVendings()
   if #vendings > 0 then
@@ -2069,7 +2177,9 @@ L:AddToggle({
 
 local useSelectedOnly = false
 
-UI.vmSel:AddToggle({Name = "Use Selected Only", Default = false, Tooltip = "ON = operate only on ALT+Click selected vendings. OFF = all vendings.", Flag = autoFlag("vend"), Options = {{Type = "keybind", Name = "Scan Key", OnBind = function(k) hotkeys.scanVendings = k end}}, Callback = initGuard(function(value)
+-- No keybind. This is a mode you set once and leave; a key for it only made the
+-- row show a bind box it did not need.
+UI.vmSel:AddToggle({Name = "Use Selected Only", Default = false, Tooltip = "ON = operate only on ALT+Click selected vendings. OFF = all vendings.", Flag = autoFlag("vend"), Callback = initGuard(function(value)
  useSelectedOnly = value
  if value then
   updateNotification("Mode", "Operations will apply to SELECTED vendings only", 3)
@@ -2158,8 +2268,10 @@ end
 local function doBankDeposit()  doBankTransfer("DEPOSIT",   "Deposited", "Withdraws") end
 local function doBankWithdraw() doBankTransfer("WITHDRAWAL", "Withdrew",  "Deposits") end
 
-UI.vmBank:AddButton({Name = "Deposit", Tooltip = "Set a gear key to fire this without clicking.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankDeposit}}, Callback = doBankDeposit})
-UI.vmBank:AddButton({Name = "Withdraw", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doBankWithdraw}}, Callback = doBankWithdraw})
+-- Loop instead of a keybind. Turn Loop on in the gear and the row becomes a
+-- toggle that repeats on the interval; turn it off and it is a button again.
+UI.vmBank:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Deposits the Bank Amount. Turn on Loop in the gear to repeat it.", Callback = doBankDeposit})
+UI.vmBank:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "Withdraws the Bank Amount. Turn on Loop in the gear to repeat it.", Callback = doBankWithdraw})
 
 local STOCK_TARGET = 1000
 
@@ -2222,7 +2334,7 @@ local function coinTargets(vendings)
  return list
 end
 
-UI.vmCoin:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Deposit Key", OnBind = function(k) hotkeys.depositAll = k end}}, Callback = function()
+UI.vmCoin:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Deposits the Coin Amount into vendings matching the Vending Type. Turn on Loop in the gear to repeat it.", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = coinTargets(vendings)
@@ -2256,7 +2368,7 @@ UI.vmCoin:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Dep
   "Withdraws the same amount back out of each one.", undoEntry)
 end})
 
-UI.vmCoin:AddButton({Name = "Withdraw", Tooltip = "Withdraws the Coin Amount from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Withdraw Key", OnBind = function(k) hotkeys.withdrawAll = k end}}, Callback = function()
+UI.vmCoin:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "Withdraws the Coin Amount from vendings matching the Vending Type. Turn on Loop in the gear to repeat it.", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = coinTargets(vendings)
