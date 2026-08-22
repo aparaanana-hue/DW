@@ -5710,8 +5710,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				})
 				table.insert(children, ClickBtn)
 
+				-- A column sorts by LayoutOrder, so a section can be placed where it
+				-- belongs on screen without its code having to sit in that order in
+				-- the file. Everything else defaults to 0 and keeps falling back to
+				-- insertion order.
 				local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
-					Size = UDim2.new(1, 0, 0, 28), Parent = Container, ClipsDescendants = true
+					Size = UDim2.new(1, 0, 0, 28), Parent = Container, ClipsDescendants = true,
+					LayoutOrder = SectionConfig.LayoutOrder or 0
 				}), children)
 
 				local tw = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -5748,7 +5753,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 
 			
 			local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
-				Size = UDim2.new(1, 0, 0, 26), Parent = Container
+				Size = UDim2.new(1, 0, 0, 26), Parent = Container,
+				LayoutOrder = SectionConfig.LayoutOrder or 0
 			}), children)
 
 			AddConnection(SectionFrame.Holder.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()

@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 22 09:30"
+local PIHD_BUILD = "Aug 22 12:40"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -45,6 +45,9 @@ local Window = Duvome:MakeWindow({
 	Blur           = false,
 })
 
+-- 38% is the value, not a starting point - the slider that used to adjust it is
+-- gone. Set explicitly anyway, so a config saved while the slider existed cannot
+-- carry some other number back in.
 pcall(function() Duvome:SetGlass(0.38) end)
 
 local UI = {}
@@ -1355,7 +1358,10 @@ end)})
 -- Chests are storage, and storage belongs beside the shop that draws on it.
 L, R = ShopTab:AddLeft(), ShopTab:AddRight()
 
-UI.chest = R:AddSection({Name = "Chest Manager"})
+-- LayoutOrder 10, so it sits below Vending Configuration even though its code
+-- runs a thousand lines earlier. Collapsed by default like the sections around
+-- it - it is a lot of controls for something you use in bursts.
+UI.chest = L:AddSection({Name = "Chest Manager", Collapsible = true, LayoutOrder = 10})
 
 -- 0 means the whole stack, which is what a manual click does. Anything else is
 -- a cap: deposit that many, or everything you have if you have less.
@@ -1385,26 +1391,9 @@ UI.chest:AddDropdown({Name = "Chest Type", Options = {"All", "Expanded Diamond C
  if all or next(set) == nil then S.chestTypeSet = nil else S.chestTypeSet = set end
 end})
 
-UI.chestRadiusToggle = UI.chest:AddToggle({Name = "Radius Limit", Default = false, Tooltip = "Only act on chests within the distance set in the gear.", Flag = autoFlag("home"), Options = {
- {Type = "slider", Name = "Distance", Min = 2, Max = 500, Default = 100, Callback = function(v) chestRadius = v end},
-}, Callback = function(value)
- chestRadiusLimit = value
- updateNotification("Chest Radius", value and ("Enabled - " .. chestRadius .. " studs") or "Disabled", 2)
-end})
-
-UI.chest:AddToggle({Name = "Drag-Select", Default = false, Tooltip = "ON = hold Left-Click and drag a box over chests to select them. ALT+Click a chest for single. Selected chests override the radius.", Flag = autoFlag("home"), Callback = function(value)
- if value then
-  PFX.setDragMode("chest")
-  updateNotification("Chest Drag", "Left-click + drag a box over chests", 3)
- else
-  PFX.setDragMode(nil)
-  updateNotification("Chest Drag", "Disabled", 2)
- end
-end})
-UI.chest:AddButton({Name = "Clear Selection", Callback = function()
- PFX.clearChests()
- updateNotification("Chests", "Selection cleared", 2)
-end})
+-- Radius, drag-select and clearing used to be duplicated here. Selecting things
+-- is one job whatever you are selecting, so it lives in Vending Tools now: pick
+-- Chests as the drag target there, and the same Radius Limit and Clear All apply.
 
 S.autoDepositChests = false
 
@@ -2179,10 +2168,22 @@ UI.vmSel:AddToggle({Name = "Use Selected Only", Default = false, Tooltip = "ON =
  end
 end)})
 
-UI.vmSel:AddToggle({Name = "Drag-Select", Default = false, Tooltip = "Hold Left-Click and drag a box over vendings to select them all at once. ALT+Click still works any time for single select/deselect - no need to enable anything for that.", Flag = autoFlag("vend"), Callback = function(value)
+-- One drag-select for both, rather than a duplicate set of controls in the
+-- chest section. Selecting things is the same job whatever is being selected.
+-- On S rather than as file locals: this chunk is at Luau's 200-register limit.
+S.dragTarget, S.dragSelectOn = "Vendings", false
+UI.vmSel:AddDropdown({Name = "Drag Target", Options = {"Vendings", "Chests"}, Default = "Vendings", Flag = autoFlag("vend"), Tooltip = "What a drag-select box picks up.", Callback = function(value)
+ S.dragTarget = value
+ if S.dragSelectOn then
+  PFX.setDragMode(value == "Chests" and "chest" or "vending")
+ end
+end})
+
+UI.vmSel:AddToggle({Name = "Drag-Select", Default = false, Tooltip = "Hold Left-Click and drag a box over the Drag Target to select them all at once. ALT+Click still works any time for single select/deselect - no need to enable anything for that.", Flag = autoFlag("vend"), Callback = function(value)
+ S.dragSelectOn = value
  if value then
-  PFX.setDragMode("vending")
-  updateNotification("Drag Select", "Left-click + drag a box over vendings", 3)
+  PFX.setDragMode(S.dragTarget == "Chests" and "chest" or "vending")
+  updateNotification("Drag Select", "Left-click + drag a box over " .. S.dragTarget:lower(), 3)
  else
   PFX.setDragMode(nil)
   updateNotification("Drag Select", "Disabled", 2)
@@ -2206,13 +2207,16 @@ local function getTargetVendings()
  end
 end
 
-UI.vmSel:AddButton({Name = "Clear All", Tooltip = "Removes every current ALT+Click selection.", Callback = function()
- if #selectedFavorites == 0 then updateNotification("Selection", "Nothing selected", 2) return end
- confirm("Clear Selections", "Clear all " .. #selectedFavorites .. " selected vending(s)?", function()
+UI.vmSel:AddButton({Name = "Clear All", Tooltip = "Removes every current selection, vendings and chests both.", Callback = function()
+ local nChest = 0
+ pcall(function() nChest = #(PFX.selectedChests or {}) end)
+ if #selectedFavorites == 0 and nChest == 0 then updateNotification("Selection", "Nothing selected", 2) return end
+ confirm("Clear Selections", "Clear " .. #selectedFavorites .. " vending(s) and " .. nChest .. " chest(s)?", function()
   for _, vending in ipairs(selectedFavorites) do
    removeSelectionMarker(vending)
   end
   selectedFavorites = {}
+  pcall(PFX.clearChests)
   updateNotification("Selection", "Cleared all selections", 2)
  end, "Clear")
 end})
@@ -4380,6 +4384,7 @@ UI.radiusToggle = UI.vmSel:AddToggle({Name = "Radius Limit", Default = false, To
   end},
   {Type = "slider", Name = "Distance", Min = 2, Max = 100, Default = 100, Callback = function(value)
    vendingRadius = value
+   chestRadius   = value
    userSettings.radius = value
    if useRadiusLimit then
     if radiusConnection then radiusConnection:Disconnect() radiusConnection = nil end
@@ -4387,7 +4392,14 @@ UI.radiusToggle = UI.vmSel:AddToggle({Name = "Radius Limit", Default = false, To
     createRadiusRing()
    end
   end},
- }, Callback = initGuard(function(value) useRadiusLimit = value if value then createRadiusRing() updateNotification("Radius Limit", "Enabled - " .. vendingRadius .. " studs", 2) else removeRadiusRing() updateNotification("Radius Limit", "Disabled", 2) end end)})
+ }, Callback = initGuard(function(value)
+  useRadiusLimit = value
+  -- chests follow the same ring, instead of carrying their own toggle and
+  -- their own distance that could disagree with this one
+  chestRadiusLimit = value
+  if value then createRadiusRing() updateNotification("Radius Limit", "Enabled - " .. vendingRadius .. " studs", 2)
+  else removeRadiusRing() updateNotification("Radius Limit", "Disabled", 2) end
+ end)})
 
 UI.setMove = R:AddSection({Name = "Movement & Visuals"})
 
@@ -5550,25 +5562,17 @@ end
 BuildPookiePort(UI.farmL, UI.farmR, UI.setL, UI.setR)
 
 -- ---------------------------------------------------------------------------
--- Interface + diagnostics, on the Settings tab.
+-- Undo and diagnostics, on the Settings tab.
+--
+-- The transparency slider and click-through toggle that used to head this
+-- section are gone: 38% is the value worth having, so it is simply the default
+-- and there is nothing left to tune.
+--
+-- Built inside a function rather than a do-block: locals in a do-block still
+-- come out of the enclosing chunk's 200 registers, and this file is at the cap.
 -- ---------------------------------------------------------------------------
-do
- local IF = UI.setR:AddSection({Name = "Interface"})
-
- IF:AddSlider({
-  Name = "Transparency", Min = 0, Max = 90, Default = 38, Increment = 1,
-  ValueName = "%",
-  Tooltip = "How much of the game shows through the window. Applies as you drag.",
-  Flag = "PIHDGlass",
-  Callback = function(v) pcall(function() Duvome:SetGlass(v / 100) end) end,
- })
-
- IF:AddToggle({
-  Name = "Click Through", Default = false,
-  Tooltip = "While the cursor is off the window, clicks go to the game instead of the interface.",
-  Flag = "PIHDClickThrough",
-  Callback = function(v) pcall(function() Duvome:SetClickThrough(v) end) end,
- })
+;(function()
+ local IF = UI.setR:AddSection({Name = "Undo & Diagnostics"})
 
  -- Undo history. The toast offers the last action; this is everything still
  -- undoable, oldest at the bottom, each with its own button - because the one
@@ -5697,7 +5701,7 @@ do
    end)
   end,
  })
-end
+end)()
 
 pcall(function()
  Duvome:AddWatch("Fly", function() return flying end)
