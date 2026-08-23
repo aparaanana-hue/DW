@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 22 12:40"
+local PIHD_BUILD = "Aug 22 14:20"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -839,26 +839,54 @@ local function TypingPanel(sec, title, pages)
   return text .. string.rep("\n", math.max(0, tallest - n))
  end
 
+ -- Split each page into its lines up front, so typing can run a line at a
+ -- time rather than treating the page as one long string. A page arriving all
+ -- at once reads as a block of text appearing; a page arriving line by line
+ -- reads as someone writing it.
+ local split = {}
+ for _, page in ipairs(pages) do
+  local lines = {}
+  for line in (page .. "\n"):gmatch("([^\n]*)\n") do table.insert(lines, line) end
+  table.insert(split, lines)
+ end
+
  task.spawn(function()
-  -- Staggered, so the three panels are not all typing on the same frame.
+  -- Staggered, so the panels are not all typing on the same frame.
   task.wait(math.random(0, 200) / 100)
   local i = 1
   while true do
-   local page = pages[i]
-   -- Three characters a tick, not one. A 300-character page typed letter by
-   -- letter is most of a minute before it can be read.
-   for c = 1, #page, 3 do
-    pcall(function() para:Set(pad(page:sub(1, c))) end)
-    task.wait(0.02)
+   local lines = split[i]
+   local done = {}
+   for _, line in ipairs(lines) do
+    if line == "" then
+     -- a blank line is a beat, not something to type
+     table.insert(done, "")
+     pcall(function() para:Set(pad(table.concat(done, "\n"))) end)
+     task.wait(0.18)
+    else
+     -- three characters a tick: one at a time turns a short paragraph into
+     -- most of a minute before it can be read
+     for c = 1, #line, 3 do
+      local partial = table.concat(done, "\n")
+      if #done > 0 then partial = partial .. "\n" end
+      pcall(function() para:Set(pad(partial .. line:sub(1, c))) end)
+      task.wait(0.02)
+     end
+     table.insert(done, line)
+     pcall(function() para:Set(pad(table.concat(done, "\n"))) end)
+     task.wait(0.12)
+    end
    end
-   pcall(function() para:Set(pad(page)) end)
 
    task.wait(5)
 
-   -- Erasing runs faster than typing, the way anyone clearing a line does it.
-   for c = #page, 0, -8 do
-    pcall(function() para:Set(pad(page:sub(1, c))) end)
-    task.wait(0.012)
+   -- Erasing runs faster than typing, and takes whole lines off the bottom,
+   -- the way anyone clearing something does it.
+   for n = #done, 0, -1 do
+    local kept = {}
+    for k = 1, n do kept[k] = done[k] end
+    pcall(function() para:Set(pad(table.concat(kept, "\n"))) end)
+    task.wait(0.06)
    end
    task.wait(0.4)
    i = i + 1
@@ -868,6 +896,8 @@ local function TypingPanel(sec, title, pages)
  return para
 end
 
+-- Two a side. All three down the left left the right column empty and the
+-- page lopsided.
 local howSec = L:AddSection({Name = "How To Use"})
 TypingPanel(howSec, "Getting Started", {
  "Every tab is one job.\n\nShop & Storage is your shop and your chests -\nstock, prices, coins, the bank.\n\nSettings holds the occasional things: scanners,\nsaved vending groups, openables.",
@@ -876,7 +906,7 @@ TypingPanel(howSec, "Getting Started", {
  "The gear on a row holds its settings.\n\nWhere the only setting is a key, the row shows\nthe key box directly instead of a gear.\n\nRefresh lives inside the dropdown it refreshes,\nnext to Select All.",
 })
 
-local safeSec = L:AddSection({Name = "Before You Run Anything"})
+local safeSec = R:AddSection({Name = "Before You Run Anything"})
 TypingPanel(safeSec, "Worth Knowing", {
  "Destructive actions record how to undo themselves.\n\nEmpty, demolish, coin and bank moves all leave an\nUndo button on their notification, and stay in\nSettings > Undo History until you use them.",
  "An undo is a second action, not a rewind.\n\nBlocks only go back if you still have them.\nItems only go back if they are still on you.\nIt tells you when it could not, instead of\nclaiming it worked.",
@@ -1361,7 +1391,7 @@ L, R = ShopTab:AddLeft(), ShopTab:AddRight()
 -- LayoutOrder 10, so it sits below Vending Configuration even though its code
 -- runs a thousand lines earlier. Collapsed by default like the sections around
 -- it - it is a lot of controls for something you use in bursts.
-UI.chest = L:AddSection({Name = "Chest Manager", Collapsible = true, LayoutOrder = 10})
+UI.chest = L:AddSection({Name = "Chest Manager", Collapsible = true, LayoutOrder = 3})
 
 -- 0 means the whole stack, which is what a manual click does. Anything else is
 -- a cap: deposit that many, or everything you have if you have less.
@@ -2221,7 +2251,7 @@ UI.vmSel:AddButton({Name = "Clear All", Tooltip = "Removes every current selecti
  end, "Clear")
 end})
 
-UI.vmBank = R:AddSection({Name = "Bank Operations", Collapsible = true})
+UI.vmBank = R:AddSection({Name = "Bank Operations", Collapsible = true, LayoutOrder = 1})
 
 local bankAmount = 1000000
 
@@ -2297,7 +2327,7 @@ local function stockedTool(vending)
  return st, (st:FindFirstChild("Amount") and st.Amount.Value or 0)
 end
 
-UI.vmCoin = L:AddSection({Name = "Coin Operations", Collapsible = true})
+UI.vmCoin = L:AddSection({Name = "Coin Operations", Collapsible = true, LayoutOrder = 1})
 
 local coinAmount = 10000000
 
@@ -2399,7 +2429,7 @@ UI.vmCoin:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "W
   "Deposits the same amount back into each one.", undoEntry)
 end})
 
-UI.vmItem = R:AddSection({Name = "Item Management", Collapsible = true})
+UI.vmItem = R:AddSection({Name = "Item Management", Collapsible = true, LayoutOrder = 2})
 
 local itemOptions = {}
 local function refreshItems()
@@ -2575,7 +2605,7 @@ UI.vmItem:AddButton({Name = "Empty", Tooltip = "Withdraws ALL items from vending
  end, "Empty")
 end})
 
-UI.vmCfg = L:AddSection({Name = "Vending Configuration", Collapsible = true})
+UI.vmCfg = L:AddSection({Name = "Vending Configuration", Collapsible = true, LayoutOrder = 2})
 
 local vendingMode = "Sell"
 local vendingPrice = 100
@@ -2740,7 +2770,7 @@ local function BuildBypass()
 end
 local Bypass = BuildBypass()
 
-UI.vmSnipe = R:AddSection({Name = "Vending Sniper", Collapsible = true})
+UI.vmSnipe = R:AddSection({Name = "Vending Sniper", Collapsible = true, LayoutOrder = 3})
 
 local sniperEnabled = false
 local maxPrice = 1000000

@@ -2382,20 +2382,24 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		Size = UDim2.new(1, -50, 1, 0), Position = UDim2.new(0, 10, 0, 0),
 		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52, Parent = WLRow
 	}), "Text")
+	-- Drawn in the OFF state, because watchShown starts false. It used to be
+	-- built with the on colour and the knob on the right, so the switch claimed
+	-- the list was showing while it was not - and one click, which flips
+	-- watchShown to true, made it look like it had just been turned off.
 	local WLTrack = Create("Frame", {
-		BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Stroke,
+		BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Divider,
 		BorderSizePixel  = 0,
 		Size             = UDim2.new(0, 36, 0, 20),
 		Position         = UDim2.new(1, -44, 0.5, -10),
 		ZIndex           = 52, Parent = WLRow
 	})
-	AddThemeObject(WLTrack, "Stroke")
+	AddThemeObject(WLTrack, "Divider")
 	Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = WLTrack})
 	local WLKnob = Create("Frame", {
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		BackgroundColor3 = Color3.fromRGB(160, 160, 180),
 		BorderSizePixel  = 0,
 		Size             = UDim2.new(0, 14, 0, 14),
-		Position         = UDim2.new(0, 19, 0.5, -7),
+		Position         = UDim2.new(0, 3, 0.5, -7),
 		ZIndex           = 53, Parent = WLTrack
 	})
 	Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = WLKnob})
@@ -2403,6 +2407,24 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 		Text = "", BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 1, 0), ZIndex = 54, Parent = WLRow
 	})
+	-- SetWatchVisible can be called from the script rather than from this row -
+	-- PIHD turns the list off at load - so the switch has to follow the setting
+	-- instead of only ever being driven by its own click.
+	local function paintWatchSwitch()
+		local tw = TweenInfo.new(0.2, Enum.EasingStyle.Quint)
+		if watchShown then
+			TweenService:Create(WLTrack, tw, {BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Stroke}):Play()
+			TweenService:Create(WLKnob,  tw, {Position = UDim2.new(0, 19, 0.5, -7), BackgroundColor3 = Color3.fromRGB(255,255,255)}):Play()
+		else
+			TweenService:Create(WLTrack, tw, {BackgroundColor3 = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Divider}):Play()
+			TweenService:Create(WLKnob,  tw, {Position = UDim2.new(0, 3, 0.5, -7), BackgroundColor3 = Color3.fromRGB(160,160,180)}):Play()
+		end
+	end
+	DuvomeLibrary._syncWatchSwitch = function(v)
+		watchShown = v and true or false
+		paintWatchSwitch()
+	end
+
 	WLClickBtn.MouseButton1Click:Connect(function()
 		watchShown = not watchShown
 		DuvomeLibrary:SetWatchVisible(watchShown)
@@ -6569,6 +6591,9 @@ function DuvomeLibrary:AddWatch(name, stateFn, keyCode, setFn)
 end
 function DuvomeLibrary:SetWatchVisible(v)
 	if DuvomeLibrary._watchGui then DuvomeLibrary._watchGui.Visible = v end
+	if DuvomeLibrary._syncWatchSwitch then
+		pcall(DuvomeLibrary._syncWatchSwitch, v)
+	end
 end
 
 
