@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 23 14:10"
+local PIHD_BUILD = "Aug 23 15:30"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -2462,7 +2462,8 @@ UI.vmCoin:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Le
  if not vendings then return end
  local list = S.coinTargets(vendings)
 
- local funded, skipped, capped = 0, 0, 0
+ local funded, skipped, capped, total = 0, 0, 0, 0
+ local sent = {}
  for _, vending in ipairs(list) do
   local give = coinAmount
   if not give or give <= 0 then
@@ -2480,30 +2481,29 @@ UI.vmCoin:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Le
   end
   if give and give > 0 then
    funded = funded + 1
+   total = total + give
+   -- per machine, since each one is worked out from its own price and stock
+   table.insert(sent, {v = vending, amount = give})
    task.spawn(function() depositCoinsToVending(vending, give) end)
   else
    skipped = skipped + 1
   end
  end
- if skipped > 0 or capped > 0 then
-  local note = funded .. " funded"
-  if skipped > 0 then note = note .. ", " .. skipped .. " already full or needing nothing" end
-  if capped > 0 then note = note .. ", " .. capped .. " capped at 5b" end
-  updateNotification("Deposit", note, 4)
+ if #sent == 0 then
+  updateNotification("Nothing To Deposit",
+   #list .. " matching vending(s), none needing coins", 4)
+  return
  end
 
  local target = useSelectedOnly and "selected" or "all"
- local amt = coinAmount
- local sent = {}
- for _, vending in ipairs(list) do table.insert(sent, vending) end
  local undoEntry = Undo.push({
-  label  = "Deposited " .. formatNumber(amt) .. " to " .. #sent .. " vendings",
-  detail = "Withdraws the same amount back out of each one.",
+  label  = "Deposited " .. formatNumber(total) .. " to " .. #sent .. " vendings",
+  detail = "Takes each machine's own amount back out of it.",
   run = function()
    local done, failed = 0, 0
-   for _, v in ipairs(sent) do
-    if v and v.Parent then
-     withdrawCoinsFromVending(v, amt)
+   for _, t in ipairs(sent) do
+    if t.v and t.v.Parent then
+     withdrawCoinsFromVending(t.v, t.amount)
      done = done + 1
      task.wait(0.05)
     else
@@ -2513,33 +2513,50 @@ UI.vmCoin:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Le
    return done, failed, failed > 0 and "Some vendings no longer exist." or nil
   end,
  })
- Undo.offer("Deposited " .. formatNumber(amt) .. " to " .. #list .. " " .. target .. " vendings",
-  "Withdraws the same amount back out of each one.", undoEntry)
+ local msg = "Into " .. #sent .. " " .. target .. " vendings"
+ if skipped > 0 then msg = msg .. "\n" .. skipped .. " skipped: already full, or needing nothing" end
+ if capped > 0 then msg = msg .. "\n" .. capped .. " capped at the 5b ceiling" end
+ Undo.offer("Deposited " .. formatNumber(total), msg, undoEntry)
 end})
 
-UI.vmCoin:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "Withdraws the Coin Amount from the machines actually holding coins. Turn off Only Where Needed in the gear to hit every matching vending instead.", Callback = function()
+-- Coin Amount empty means "take everything", not "take nothing". It used to
+-- pass the box straight through, and once the box started defaulting to 0 for
+-- the deposit side, Withdraw quietly asked every machine for zero coins.
+UI.vmCoin:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "Takes the Coin Amount out of each matching machine. Leave Coin Amount empty to take everything it holds.", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = S.coinTargets(vendings)
+
+ -- Recorded per machine, because the amounts differ once the box is empty.
+ -- One shared figure would have made the undo put the wrong number back.
+ local taken, total, skipped = {}, 0, 0
  for _, vending in ipairs(list) do
-  task.spawn(function()
-   withdrawCoinsFromVending(vending, coinAmount)
-  end)
+  local held = S.coinBalanceOf(vending)
+  local give = (coinAmount and coinAmount > 0) and math.min(coinAmount, held) or held
+  if give > 0 then
+   table.insert(taken, {v = vending, amount = give})
+   total = total + give
+   task.spawn(function() withdrawCoinsFromVending(vending, give) end)
+  else
+   skipped = skipped + 1
+  end
  end
+
+ if #taken == 0 then
+  updateNotification("Nothing To Withdraw",
+   skipped .. " matching vending(s), none holding coins", 4)
+  return
+ end
+
  local target = useSelectedOnly and "selected" or "all"
- -- Coins are fungible, so the inverse is exact: put the same number back into
- -- the same vending. The only thing that can go wrong is the vending being gone.
- local amt = coinAmount
- local taken = {}
- for _, vending in ipairs(list) do table.insert(taken, vending) end
  local undoEntry = Undo.push({
-  label  = "Withdrew " .. formatNumber(amt) .. " from " .. #taken .. " vendings",
-  detail = "Deposits the same amount back into each one.",
+  label  = "Withdrew " .. formatNumber(total) .. " from " .. #taken .. " vendings",
+  detail = "Puts each machine's own amount back into it.",
   run = function()
    local done, failed = 0, 0
-   for _, v in ipairs(taken) do
-    if v and v.Parent then
-     depositCoinsToVending(v, amt)
+   for _, t in ipairs(taken) do
+    if t.v and t.v.Parent then
+     depositCoinsToVending(t.v, t.amount)
      done = done + 1
      task.wait(0.05)
     else
@@ -2549,8 +2566,9 @@ UI.vmCoin:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "W
    return done, failed, failed > 0 and "Some vendings no longer exist." or nil
   end,
  })
- Undo.offer("Withdrew " .. formatNumber(amt) .. " from " .. #list .. " " .. target .. " vendings",
-  "Deposits the same amount back into each one.", undoEntry)
+ local msg = "From " .. #taken .. " " .. target .. " vendings"
+ if skipped > 0 then msg = msg .. "\n" .. skipped .. " skipped: holding nothing" end
+ Undo.offer("Withdrew " .. formatNumber(total), msg, undoEntry)
 end})
 
 UI.vmItem = R:AddSection({Name = "Item Management", Collapsible = true, LayoutOrder = 2})
