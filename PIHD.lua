@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 23 11:00"
+local PIHD_BUILD = "Aug 23 14:10"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -2300,6 +2300,26 @@ UI.vmBank:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "W
 
 local STOCK_TARGET = 1000
 
+-- What the Mode value actually means, settled from getVendingHealth: mode 1 is
+-- judged on whether its coins cover the price plus tax ("OUT OF MONEY"), so it
+-- is the machine that PAYS - BUY ITEM. Mode 0 is judged on item count and on how
+-- much coin room is left below 5b, so it is the machine that EARNS - SELL ITEM.
+--
+-- Every restriction below is gated on one of these, because the restrictions
+-- only mean anything for one kind of machine: only a SELL ITEM machine can be
+-- short of stock, and only a BUY ITEM machine can be short of money.
+S.MODE_SELL, S.MODE_BUY, S.MODE_OFFLINE = 0, 1, 2
+
+-- What one transaction costs the machine, tax included. floor(price * 1.07) + 1
+-- reproduces both known readings: price 10 pays 11, price 100 pays 108. Plain
+-- floor gives 10 for the first and plain ceil gives 107 for the second.
+function S.unitCost(price)
+ return math.floor((price or 0) * 1.07) + 1
+end
+
+S.VEND_MAX_ITEMS = 1000
+S.VEND_MAX_COINS = 5000000000
+
 -- The mode filters read the game's own wording now - a vending set to SELL ITEM
 -- is listed as "Sell (SELL ITEM)" - but the numbers behind them are untouched,
 -- so nothing about which vending is which has changed.
@@ -2308,40 +2328,75 @@ local STOCK_TARGET = 1000
 -- filter and an item filter could not be told apart. They are separate, and both
 -- are read off the vending's own numbers rather than off its mode, so they mean
 -- the same thing the machine's screen means.
-local function parseTypeSel(list)
- local sel = {every = false, needsCoins = false, hasCoins = false, notFull = false, any = false, modes = {}}
+-- Modes and restrictions are two separate lists now, from two separate
+-- dropdowns. They used to share one, which meant "Sell" and "Not Full Items"
+-- read as alternatives when they are really a subject and a condition on it.
+function S.parseModeSel(list)
+ local modes, any = {}, false
  for _, m in ipairs(list or {}) do
-  if m == "All" then sel.every = true
-  elseif m == "Not Enough Money" then sel.needsCoins = true sel.any = true
-  elseif m == "Has Coins"        then sel.hasCoins   = true sel.any = true
-  elseif m == "Not Full Items"   then sel.notFull    = true sel.any = true
-  elseif m == "Sell (SELL ITEM)" then sel.modes[0] = true sel.any = true
-  elseif m == "Buy (BUY ITEM)"   then sel.modes[1] = true sel.any = true
-  elseif m == "Offline"          then sel.modes[2] = true sel.any = true end
+  if m == "Sell (SELL ITEM)" then modes[S.MODE_SELL]    = true any = true
+  elseif m == "Buy (BUY ITEM)" then modes[S.MODE_BUY]   = true any = true
+  elseif m == "Offline"        then modes[S.MODE_OFFLINE] = true any = true end
  end
- if not sel.any then sel.every = true end
- return sel
+ return modes, any
 end
 
-local function coinsShort(vending)
- local bal   = vending:FindFirstChild("CoinBalance") and vending.CoinBalance.Value or 0
- local price = vending:FindFirstChild("TransactionPrice") and vending.TransactionPrice.Value or 0
- return bal < price
+function S.modeOf(vending)
+ return vending:FindFirstChild("Mode") and vending.Mode.Value or nil
 end
 
-local function coinsHeld(vending)
- return (vending:FindFirstChild("CoinBalance") and vending.CoinBalance.Value or 0) > 0
+function S.stockCount(vending)
+ local sc = vending:FindFirstChild("SellingContents")
+ local n = 0
+ if sc then
+  for _, item in pairs(sc:GetChildren()) do
+   if item:IsA("Tool") then n = n + (item:FindFirstChild("Amount") and item.Amount.Value or 1) end
+  end
+ end
+ return n
 end
 
-local function typeAllows(sel, vending)
- local mv = vending:FindFirstChild("Mode") and vending.Mode.Value
- if sel.every then return true, mv end
- -- Picking only a state filter - "Not Enough Money" on its own - should not
- -- also silently mean "no modes", which would match nothing.
- local anyMode = next(sel.modes) ~= nil
- if not anyMode then return true, mv end
- if mv ~= nil and sel.modes[mv] then return true, mv end
- return false, mv
+function S.coinBalanceOf(vending)
+ return vending:FindFirstChild("CoinBalance") and vending.CoinBalance.Value or 0
+end
+
+function S.priceOf(vending)
+ return vending:FindFirstChild("TransactionPrice") and vending.TransactionPrice.Value or 0
+end
+
+-- Each restriction carries the mode it belongs to, so picking one narrows the
+-- machines twice over: to that kind, and then to the ones in that state.
+S.RESTRICTIONS = {
+ ["Not Full Items (SELL ITEM)"] = {mode = 0, test = function(v)
+  return S.stockCount(v) > 0 and S.stockCount(v) < S.VEND_MAX_ITEMS
+ end},
+ ["Leave 1 (BUY ITEM)"] = {mode = 1, test = function(v)
+  return S.stockCount(v) > 1
+ end},
+ ["Not Enough Money (BUY ITEM)"] = {mode = 1, test = function(v)
+  return S.coinBalanceOf(v) < S.unitCost(S.priceOf(v))
+ end},
+ ["Has Coins (SELL ITEM)"] = {mode = 0, test = function(v)
+  return S.coinBalanceOf(v) > 0
+ end},
+}
+
+-- A vending passes when its mode is wanted AND every chosen restriction that
+-- applies to its mode is satisfied. A restriction for a different mode rules the
+-- vending out rather than being ignored - that is what "only applies to SELL
+-- ITEM" has to mean if it is going to skip the buy and offline ones.
+function S.passes(vending, modeList, restrictList)
+ local mv = S.modeOf(vending)
+ local modes, anyMode = S.parseModeSel(modeList)
+ if anyMode and not (mv ~= nil and modes[mv]) then return false, mv end
+ for _, name in ipairs(restrictList or {}) do
+  local r = S.RESTRICTIONS[name]
+  if r then
+   if mv ~= r.mode then return false, mv end
+   if not r.test(vending) then return false, mv end
+  end
+ end
+ return true, mv
 end
 
 local function stockedTool(vending)
@@ -2353,54 +2408,90 @@ end
 
 UI.vmCoin = L:AddSection({Name = "Coin Operations", Collapsible = true, LayoutOrder = 1})
 
-local coinAmount = 10000000
+-- 0 means "work it out per machine". A fixed 10m was a number that suited no
+-- particular vending.
+local coinAmount = 0
 
-UI.vmCoin:AddTextbox({Name = "Coin Amount", Default = "", TextDisappear = false, Callback = function(text)
- local num = parseAmount(text)
- if num then
-  coinAmount = num
-  updateNotification("Amount", "Set to " .. formatNumber(num), 2)
- end
+UI.vmCoin:AddTextbox({Name = "Coin Amount", Default = "", TextDisappear = false,
+ Tooltip = "Leave empty to give each BUY ITEM machine exactly what it needs to reach 1000 items. Set a number to send that flat amount instead.",
+ Validate = function(text)
+  if text == "" then return true end
+  local n = parseAmount(text)
+  if not n then return false, "Numbers only, e.g. 500k or 2b" end
+  if n < 0 then return false, "Cannot be negative" end
+  if n > 5000000000 then return false, "5b is the most a vending holds" end
+  return true
+ end,
+ Callback = function(text)
+  if text == "" then
+   coinAmount = 0
+   updateNotification("Coin Amount", "Working it out per vending", 2)
+   return
+  end
+  local num = parseAmount(text)
+  if num then
+   coinAmount = num
+   updateNotification("Coin Amount", "Flat " .. formatNumber(num) .. " per vending", 2)
+  end
+ end})
+
+-- Two dropdowns: what kind of machine, then what state it has to be in. Clear
+-- All on the second one is how you say "no restriction".
+S.coinModes, S.coinRestrict = {}, {}
+UI.vmCoin:AddDropdown({Name = "Vending Type", Options = {"Buy (BUY ITEM)", "Sell (SELL ITEM)", "Offline"}, Default = {}, MultiSelect = true, SelectAll = true, Tooltip = "Which machines Deposit and Withdraw act on. Nothing picked means all of them.", Flag = autoFlag("vend"), Callback = function(chosen)
+ S.coinModes = chosen or {}
+end})
+UI.vmCoin:AddDropdown({Name = "Restriction", Options = {"Not Enough Money (BUY ITEM)", "Has Coins (SELL ITEM)"}, Default = {}, MultiSelect = true, SelectAll = true, Tooltip = "Narrows to machines in a particular state. Each one only applies to the kind of machine named on it, so picking it skips the others. Clear All for no restriction.", Flag = autoFlag("vend"), Callback = function(chosen)
+ S.coinRestrict = chosen or {}
 end})
 
--- On S, not a local: this chunk is at Luau's register cap.
-S.coinOnlyNeeded = true
-local coinTypeModes = {"All"}
-UI.vmCoin:AddToggle({Name = "Only Where Needed", Default = true, Tooltip = "Deposit skips machines that already have enough; Withdraw skips machines holding nothing. Off means act on every matching vending.", Flag = autoFlag("vend"), Callback = function(v) S.coinOnlyNeeded = v end})
-UI.vmCoin:AddDropdown({Name = "Vending Type", Options = {"All", "Buy (BUY ITEM)", "Sell (SELL ITEM)", "Offline", "Not Enough Money", "Has Coins"}, Default = {"All"}, MultiSelect = true, Tooltip = "Which vendings Deposit and Withdraw act on. 'Not Enough Money' is the machines showing Insufficient Funds; 'Has Coins' is the ones holding any.", Flag = autoFlag("vend"), Callback = function(chosen)
- coinTypeModes = chosen or {}
-end})
-
--- `need` is "coins" for a deposit and "hascoins" for a withdrawal. A deposit
--- that lands on a machine already holding enough does nothing but waste a
--- round trip, and a withdrawal from an empty one is the same, so each button
--- narrows to the machines its action can actually affect. Only Where Needed in
--- the gear turns that off for anyone who wants the blunt version.
-local function coinTargets(vendings, need)
- local sel = parseTypeSel(coinTypeModes)
+function S.coinTargets(vendings)
  local list = {}
  for _, vending in ipairs(vendings) do
-  local ok = typeAllows(sel, vending)
-  if ok and sel.needsCoins and not coinsShort(vending) then ok = false end
-  if ok and sel.hasCoins   and not coinsHeld(vending)  then ok = false end
-  if ok and S.coinOnlyNeeded then
-   if need == "coins"    and not coinsShort(vending) then ok = false end
-   if need == "hascoins" and not coinsHeld(vending)  then ok = false end
-  end
-  if ok then table.insert(list, vending) end
+  if S.passes(vending, S.coinModes, S.coinRestrict) then table.insert(list, vending) end
  end
  return list
 end
 
-UI.vmCoin:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Deposits the Coin Amount into the machines showing Insufficient Funds. Turn off Only Where Needed in the gear to hit every matching vending instead.", Callback = function()
+-- With Coin Amount left empty, each BUY ITEM machine gets exactly what it needs
+-- to buy its way to a full 1000: the room it has left, times the price plus the
+-- 7% tax, less whatever it is already holding. A machine at 1000 is skipped
+-- rather than topped up, and nothing exceeds the 5b ceiling.
+UI.vmCoin:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Leave Coin Amount empty and each BUY ITEM machine gets exactly enough to buy up to 1000 - room x (price + 7% tax), minus what it already holds. Set an amount to send that flat figure instead.", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
- local list = coinTargets(vendings, "coins")
+ local list = S.coinTargets(vendings)
+
+ local funded, skipped, capped = 0, 0, 0
  for _, vending in ipairs(list) do
-  task.spawn(function()
-   depositCoinsToVending(vending, coinAmount)
-  end)
+  local give = coinAmount
+  if not give or give <= 0 then
+   local room = S.VEND_MAX_ITEMS - S.stockCount(vending)
+   if room <= 0 then
+    give = 0
+   else
+    -- Never below zero: a machine already holding more than it needs subtracts
+    -- to a negative figure, and sending that is not a smaller deposit, it is a
+    -- nonsense one.
+    give = math.max(0, room * S.unitCost(S.priceOf(vending)) - S.coinBalanceOf(vending))
+   end
+   local headroom = math.max(0, S.VEND_MAX_COINS - S.coinBalanceOf(vending))
+   if give > headroom then give = headroom capped = capped + 1 end
+  end
+  if give and give > 0 then
+   funded = funded + 1
+   task.spawn(function() depositCoinsToVending(vending, give) end)
+  else
+   skipped = skipped + 1
+  end
  end
+ if skipped > 0 or capped > 0 then
+  local note = funded .. " funded"
+  if skipped > 0 then note = note .. ", " .. skipped .. " already full or needing nothing" end
+  if capped > 0 then note = note .. ", " .. capped .. " capped at 5b" end
+  updateNotification("Deposit", note, 4)
+ end
+
  local target = useSelectedOnly and "selected" or "all"
  local amt = coinAmount
  local sent = {}
@@ -2429,7 +2520,7 @@ end})
 UI.vmCoin:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "Withdraws the Coin Amount from the machines actually holding coins. Turn off Only Where Needed in the gear to hit every matching vending instead.", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
- local list = coinTargets(vendings, "hascoins")
+ local list = S.coinTargets(vendings)
  for _, vending in ipairs(list) do
   task.spawn(function()
    withdrawCoinsFromVending(vending, coinAmount)
@@ -2514,25 +2605,28 @@ UI.vmItem:AddTextbox({Name = "Amount", Default = "", TextDisappear = false,
   end
  end})
 
-local itemTypeModes = {"All"}
-UI.vmItem:AddDropdown({Name = "Vending Type", Options = {"All", "Buy (BUY ITEM)", "Sell (SELL ITEM)", "Offline", "Not Full Items"}, Default = {"All"}, MultiSelect = true, Tooltip = "Which vendings Deposit, Restock and Empty act on. 'Not Full Items' means machines holding something but under 1000 - pair it with Sell (SELL ITEM) to top up only the ones selling to customers.", Flag = autoFlag("vend"), Callback = function(chosen)
- itemTypeModes = chosen or {}
+S.itemModes, S.itemRestrict = {}, {}
+UI.vmItem:AddDropdown({Name = "Vending Type", Options = {"Buy (BUY ITEM)", "Sell (SELL ITEM)", "Offline"}, Default = {}, MultiSelect = true, SelectAll = true, Tooltip = "Which machines Deposit, Restock and Empty act on. Nothing picked means all of them.", Flag = autoFlag("vend"), Callback = function(chosen)
+ S.itemModes = chosen or {}
+end})
+UI.vmItem:AddDropdown({Name = "Restriction", Options = {"Not Full Items (SELL ITEM)", "Leave 1 (BUY ITEM)"}, Default = {}, MultiSelect = true, SelectAll = true, Tooltip = "Narrows to machines in a particular state, and only to the kind named on it. 'Not Full Items' is SELL ITEM machines holding something under 1000. 'Leave 1' is BUY ITEM machines holding more than one - Empty then drains them down to 1 instead of to nothing. Clear All for no restriction.", Flag = autoFlag("vend"), Callback = function(chosen)
+ S.itemRestrict = chosen or {}
 end})
 
 local function itemTargets(vendings)
- local sel = parseTypeSel(itemTypeModes)
  local list = {}
  for _, vending in ipairs(vendings) do
-  local ok, mv = typeAllows(sel, vending)
-  -- Not Full means it holds something and has room for more. Requiring a
-  -- stocked item is the point: an empty machine has room but nothing to top up.
-  if ok and sel.notFull then
-   local st, cur = stockedTool(vending)
-   if not st or cur >= STOCK_TARGET then ok = false end
-  end
+  local ok, mv = S.passes(vending, S.itemModes, S.itemRestrict)
   if ok then table.insert(list, {v = vending, mode = mv}) end
  end
  return list
+end
+
+local function leaveOneChosen()
+ for _, name in ipairs(S.itemRestrict or {}) do
+  if name == "Leave 1 (BUY ITEM)" then return true end
+ end
+ return false
 end
 
 -- Deposit works off whatever each vending already holds, not off the Item
@@ -2595,7 +2689,12 @@ local function doRestockVending()
    local ok = pcall(function()
     local st, cur = stockedTool(vending)
     if not st then skipped = skipped + 1 return end
-    if mv == 1 then
+    -- Mode 0 is SELL ITEM: it hands stock to customers, so it is the one that
+    -- wants topping up. Mode 1 is BUY ITEM: it collects stock from customers,
+    -- so it is the one that wants draining. These two branches were the wrong
+    -- way round - restock was filling the machines that fill themselves and
+    -- emptying the ones that run dry.
+    if mv == S.MODE_SELL then
      if cur >= STOCK_TARGET then skipped = skipped + 1 return end
      local btool = LP.Backpack:FindFirstChild(st.Name)
      if not btool then skipped = skipped + 1 return end
@@ -2612,7 +2711,7 @@ local function doRestockVending()
      task.wait(0.05)
      closeVending(vending)
      filled = filled + 1
-    elseif mv == 0 then
+    elseif mv == S.MODE_BUY then
      local take = cur - 1
      if take <= 0 then skipped = skipped + 1 return end
      openVending(vending)
@@ -2639,11 +2738,13 @@ end
 UI.vmItem:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doDepositItem}}, Callback = doDepositItem})
 UI.vmItem:AddButton({Name = "Restock", Tooltip = "Acts by vending mode: BUY vendings get topped up to 1000 with what you have in your inventory. SELL vendings get their stock pulled out, leaving exactly 1 behind (987 becomes 1). Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
 
-UI.vmItem:AddButton({Name = "Empty", Tooltip = "Withdraws ALL items from vendings matching the Vending Type.", Options = {{Type = "keybind", Name = "Empty Key", OnBind = function(k) hotkeys.emptyAll = k end}}, Callback = function()
+UI.vmItem:AddButton({Name = "Empty", Loop = true, LoopEvery = 5, Tooltip = "Withdraws every item from the matching machines. Pick Leave 1 (BUY ITEM) as the Restriction to drain them down to one instead of to nothing.", Callback = function()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = itemTargets(vendings)
- confirm("Empty Vendings", "Withdraw all items from " .. #list .. " vending(s)?", function()
+ local keepOne = leaveOneChosen()
+ confirm("Empty Vendings",
+  (keepOne and "Drain down to 1 in " or "Withdraw all items from ") .. #list .. " vending(s)?", function()
   -- Read what is in each one BEFORE emptying it. Afterwards SellingContents is
   -- bare and there is nothing left to learn from.
   local record = {}
@@ -2658,7 +2759,13 @@ UI.vmItem:AddButton({Name = "Empty", Tooltip = "Withdraws ALL items from vending
   end
   for _, entry in ipairs(list) do
    task.spawn(function()
-    emptyVending(entry.v)
+    if keepOne then
+     -- one stays behind as the template, so the machine keeps buying that item
+     local st, cur = stockedTool(entry.v)
+     if st and cur > 1 then withdrawFromVending(entry.v, cur - 1) end
+    else
+     emptyVending(entry.v)
+    end
    end)
   end
   local target = useSelectedOnly and "selected" or "all"
