@@ -614,15 +614,18 @@ function DuvomeLibrary:MakeNotification(NotificationConfig)
 		-- means broken). "default" carries no meaning, so it follows the theme
 		-- instead of the purple it was pinned to.
 		local nTheme = DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme] or DuvomeLibrary.Themes.Default
+		-- Glyphs from the icon font, not image assets. The four semantic icons
+		-- were uploaded asset ids that no longer resolve - every notification
+		-- logged "Invalid image or texture" - and the font is what the rest of
+		-- the library already draws its icons with, so it cannot rot the same way.
 		local typeStyles = {
-			default = {Image="rbxassetid://4384403532", Color=nTheme.Text, Stroke=nTheme.Stroke},
-			info    = {Image="rbxassetid://14155658847", Color=Color3.fromRGB(90,160,255),  Stroke=Color3.fromRGB(40,90,180)},
-			success = {Image="rbxassetid://14155623738", Color=Color3.fromRGB(90,220,130),  Stroke=Color3.fromRGB(40,160,80)},
-			warning = {Image="rbxassetid://14155659131", Color=Color3.fromRGB(255,200,80),  Stroke=Color3.fromRGB(190,140,30)},
-			error   = {Image="rbxassetid://14155637241", Color=Color3.fromRGB(255,95,95),   Stroke=Color3.fromRGB(190,40,40)},
+			default = {Icon="bell",             Color=nTheme.Text,                Stroke=nTheme.Stroke},
+			info    = {Icon="info-circle",      Color=Color3.fromRGB(90,160,255), Stroke=Color3.fromRGB(40,90,180)},
+			success = {Icon="check-circle",     Color=Color3.fromRGB(90,220,130), Stroke=Color3.fromRGB(40,160,80)},
+			warning = {Icon="exclamation-triangle", Color=Color3.fromRGB(255,200,80), Stroke=Color3.fromRGB(190,140,30)},
+			error   = {Icon="x-circle",         Color=Color3.fromRGB(255,95,95),  Stroke=Color3.fromRGB(190,40,40)},
 		}
 		local style = typeStyles[NotificationConfig.Type] or typeStyles.default
-		local notifImage = NotificationConfig.Image or style.Image
 
 		local hasActions = type(NotificationConfig.Actions) == "table" and #NotificationConfig.Actions > 0
 
@@ -635,10 +638,17 @@ function DuvomeLibrary:MakeNotification(NotificationConfig)
 		local children = {
 			MakeElement("Stroke", style.Stroke, 1.5),
 			MakeElement("Padding", 12, 12, 12, 12),
-			SetProps(MakeElement("Image", notifImage), {
-				Size        = UDim2.new(0, 18, 0, 18),
-				ImageColor3 = style.Color,
-				Name        = "Icon"
+			SetProps(Create("TextLabel", {
+				Text                   = style.Icon,
+				FontFace               = MakeBIconFont(),
+				TextSize               = 16,
+				TextColor3             = style.Color,
+				BackgroundTransparency = 1,
+				TextXAlignment         = Enum.TextXAlignment.Left,
+				TextYAlignment         = Enum.TextYAlignment.Center,
+			}), {
+				Size = UDim2.new(0, 18, 0, 18),
+				Name = "Icon"
 			}),
 			SetProps(MakeElement("Label", NotificationConfig.Name, 14), {
 				Size      = UDim2.new(1, -30, 0, 20),
@@ -726,7 +736,7 @@ function DuvomeLibrary:MakeNotification(NotificationConfig)
 		if nfAlive() then
 			pcall(function()
 				local icon = NotificationFrame:FindFirstChild("Icon")
-				if icon then TweenService:Create(icon, TweenInfo.new(0.4, Enum.EasingStyle.Quint), {ImageTransparency = 1}):Play() end
+				if icon then TweenService:Create(icon, TweenInfo.new(0.4, Enum.EasingStyle.Quint), {TextTransparency = 1}):Play() end
 				TweenService:Create(NotificationFrame, TweenInfo.new(0.8, Enum.EasingStyle.Quint), {BackgroundTransparency = 0.6}):Play()
 			end)
 		end
@@ -5624,9 +5634,11 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					table.insert(children, ArrowLbl)
 					table.insert(children, ClickBtn)
 					local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
-						-- explicit order lets a caller place a section above ones
-						-- that were created before it
-						LayoutOrder = SectionConfig.Order or 0,
+						-- Explicit order lets a caller place a section above ones that
+						-- were created before it. Both spellings are accepted: this
+						-- AddSection reads Order, the other one reads LayoutOrder,
+						-- and a caller cannot tell which of the two it reached.
+						LayoutOrder = SectionConfig.Order or SectionConfig.LayoutOrder or 0,
 						Size = UDim2.new(1, 0, 0, 28), Parent = colFrame, ClipsDescendants = true
 					}), children)
 					local tw = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -5652,7 +5664,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					end)
 				else
 					local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
-						LayoutOrder = SectionConfig.Order or 0,
+						LayoutOrder = SectionConfig.Order or SectionConfig.LayoutOrder or 0,
 						Size = UDim2.new(1, 0, 0, 26), Parent = colFrame
 					}), children)
 					AddConnection(HolderFrame.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
@@ -5738,7 +5750,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				-- insertion order.
 				local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
 					Size = UDim2.new(1, 0, 0, 28), Parent = Container, ClipsDescendants = true,
-					LayoutOrder = SectionConfig.LayoutOrder or 0
+					LayoutOrder = SectionConfig.LayoutOrder or SectionConfig.Order or 0
 				}), children)
 
 				local tw = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -5776,7 +5788,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 			
 			local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
 				Size = UDim2.new(1, 0, 0, 26), Parent = Container,
-				LayoutOrder = SectionConfig.LayoutOrder or 0
+				LayoutOrder = SectionConfig.LayoutOrder or SectionConfig.Order or 0
 			}), children)
 
 			AddConnection(SectionFrame.Holder.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
