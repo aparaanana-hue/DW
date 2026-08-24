@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 23 17:30"
+local PIHD_BUILD = "Aug 23 18:40"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -3819,6 +3819,13 @@ UI.autoRun:AddButton({
 -- steered at a target and cut when it arrives.
 S.itemRunOn = false
 
+-- Tunables, all on the gear. Speed is the one people actually want; the rest
+-- are here because a number that only works at one speed is not a tunable.
+S.itemRunSpeed   = 60   -- studs/sec
+S.itemRunHover   = 8    -- studs above the machine
+S.itemRunArrive  = 6    -- close enough to stop steering
+S.itemRunTimeout = 8    -- give up on a machine we cannot reach
+
 local function itemRunMover(hrp)
  local m = hrp:FindFirstChild("PIHDMover")
  if not m then
@@ -3850,7 +3857,16 @@ local function itemRunFlyTo(target, stopDist, timeout)
    if mover.Parent then mover.Velocity = Vector3.new(0, 0, 0) end
    return false
   end
-  if mover.Parent then mover.Velocity = to.Unit * 60 end
+  if mover.Parent then
+   -- Ease down over the last stretch. At a flat 300 st/s the mover overshoots
+   -- the stop distance between frames and orbits the machine instead of
+   -- arriving at it.
+   local speed = S.itemRunSpeed or 60
+   if to.Magnitude < speed * 0.25 then
+    speed = math.max(12, to.Magnitude * 4)
+   end
+   mover.Velocity = to.Unit * speed
+  end
   game:GetService("RunService").Heartbeat:Wait()
  end
  if mover.Parent then mover.Velocity = Vector3.new(0, 0, 0) end
@@ -3864,34 +3880,50 @@ local function itemRunStop()
  if m then m:Destroy() end
 end
 
--- Everything within reach of where we are standing, not just the one we flew
--- to. Hovering over a shop wall puts several machines in range at once, and
--- doing them all is free.
-local function itemRunServe(vendings, done)
+-- What this machine wants, or nil. Computed BEFORE flying anywhere, which is
+-- the whole optimisation: a shop where nine machines in ten are already full
+-- used to be nine flights in ten to arrive and do nothing.
+function S.itemRunNeeds(v)
+ if not v.Parent then return nil end
+ local mv = S.modeOf(v)
+ local st, cur = stockedTool(v)
+ if not st then return nil end
+ if mv == S.MODE_SELL and cur < S.VEND_MAX_ITEMS then
+  local btool = LP.Backpack:FindFirstChild(st.Name)
+  local have = btool and (btool:FindFirstChild("Amount") and btool.Amount.Value or 1) or 0
+  local give = math.min(S.VEND_MAX_ITEMS - cur, have)
+  if give > 0 then return {kind = "stock", tool = st.Name, amount = give} end
+ elseif mv == S.MODE_BUY and cur > 1 then
+  return {kind = "pull", amount = cur - 1}
+ end
+ return nil
+end
+
+function S.itemRunPartOf(v)
+ return v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+end
+
+-- Serve everything within reach of where we are standing, not just the machine
+-- we flew to.
+function S.itemRunServe(done)
  local char = LP.Character
  local hrp = char and char:FindFirstChild("HumanoidRootPart")
  if not hrp then return 0 end
  local acted = 0
- for _, v in ipairs(vendings) do
-  if not done[v] and v.Parent then
-   local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
-   if part and inSquare(part.Position, hrp.Position, S.ITEM_REACH) then
-    local mv = S.modeOf(v)
-    local st, cur = stockedTool(v)
-    if mv == S.MODE_SELL and st and cur < S.VEND_MAX_ITEMS then
-     local btool = LP.Backpack:FindFirstChild(st.Name)
-     local have = btool and (btool:FindFirstChild("Amount") and btool.Amount.Value or 1) or 0
-     local give = math.min(S.VEND_MAX_ITEMS - cur, have)
-     if give > 0 then
-      depositItemToVending(v, st.Name, give)
-      acted = acted + 1
-     end
-    elseif mv == S.MODE_BUY and st and cur > 1 then
-     withdrawFromVending(v, cur - 1)
-     acted = acted + 1
+ for v, part in pairs(S.itemRunPending) do
+  if not done[v] and v.Parent and inSquare(part.Position, hrp.Position, S.ITEM_REACH) then
+   -- re-read on arrival: the list was measured before the flight, and a
+   -- machine can be sold out from under us on the way over
+   local need = S.itemRunNeeds(v)
+   if need then
+    if need.kind == "stock" then
+     depositItemToVending(v, need.tool, need.amount)
+    else
+     withdrawFromVending(v, need.amount)
     end
-    done[v] = true
+    acted = acted + 1
    end
+   done[v] = true
   end
  end
  return acted
@@ -3900,35 +3932,96 @@ end
 UI.itemRunToggle = UI.autoRun:AddToggle({
  Name = "Run Items (flies)",
  Default = false,
- Tooltip = "Flies over every vending in turn. SELL ITEM machines under 1000 get topped up from your inventory; BUY ITEM machines holding more than one get drained down to 1. Reach is a 33 stud square, so each stop serves every machine around it.",
+ Tooltip = "Flies over the vendings that need something. SELL ITEM machines under 1000 get topped up from your inventory; BUY ITEM machines holding more than one get drained down to 1. Speed and reach are in the gear.",
+ Options = {
+  {Type = "slider", Name = "Fly Speed", Min = 20, Max = 300, Default = 60, ValueName = " st/s",
+   Callback = function(v) S.itemRunSpeed = v end},
+  {Type = "slider", Name = "Reach", Min = 5, Max = 60, Default = 33, ValueName = " st",
+   Callback = function(v) S.ITEM_REACH = v end},
+  {Type = "slider", Name = "Hover Height", Min = 0, Max = 30, Default = 8, ValueName = " st",
+   Callback = function(v) S.itemRunHover = v end},
+  {Type = "slider", Name = "Arrive Within", Min = 2, Max = 30, Default = 6, ValueName = " st",
+   Callback = function(v) S.itemRunArrive = v end},
+  {Type = "slider", Name = "Give Up After", Min = 2, Max = 30, Default = 8, ValueName = "s",
+   Callback = function(v) S.itemRunTimeout = v end},
+ },
  Callback = function(value)
   S.itemRunOn = value
   if not value then itemRunStop() return end
   task.spawn(function()
-   local vendings = findVendings()
-   if #vendings == 0 then
-    updateNotification("Run Items", "No vendings found", 3)
+   local char = LP.Character
+   local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+   if not hrp then
+    updateNotification("Run Items", "No character", 3)
     S.itemRunOn = false
+    pcall(function() UI.itemRunToggle:Set(false) end)
     return
    end
-   updateNotification("Run Items", "Sweeping " .. #vendings .. " vendings", 3)
-   local done, acted, visited = {}, 0, 0
-   for _, v in ipairs(vendings) do
-    if not S.itemRunOn then break end
-    if not done[v] and v.Parent then
-     local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+
+   -- Build the worklist first: only machines that want something, each with
+   -- the part we will steer at.
+   S.itemRunPending = {}
+   local queue = {}
+   for _, v in ipairs(findVendings()) do
+    if S.itemRunNeeds(v) then
+     local part = S.itemRunPartOf(v)
      if part then
-      -- hover above it, so the body is not inside the machine
-      itemRunFlyTo(part.Position + Vector3.new(0, 8, 0), 6, 8)
-      visited = visited + 1
-      acted = acted + itemRunServe(vendings, done)
+      S.itemRunPending[v] = part
+      table.insert(queue, {v = v, part = part})
      end
     end
    end
+
+   if #queue == 0 then
+    updateNotification("Run Items", "Nothing needs stocking or draining", 4)
+    S.itemRunOn = false
+    pcall(function() UI.itemRunToggle:Set(false) end)
+    return
+   end
+
+   updateNotification("Run Items", #queue .. " vendings need something", 3)
+
+   local done, acted, visited, unreached = {}, 0, 0, 0
+   local at = hrp.Position
+
+   -- Nearest first, recomputed as we go. Vendings come off findVendings in
+   -- whatever order the game holds them, which for a shop laid out in rows
+   -- means crossing the island and coming back for the machine next door.
+   while S.itemRunOn and #queue > 0 do
+    local bestIdx, bestDist
+    for i, entry in ipairs(queue) do
+     if done[entry.v] or not entry.v.Parent then
+      table.remove(queue, i)
+      break
+     end
+     local d = (entry.part.Position - at).Magnitude
+     if not bestDist or d < bestDist then bestIdx, bestDist = i, d end
+    end
+    if not bestIdx then
+     -- the loop above removed something; go round again
+     if #queue == 0 then break end
+    else
+     local entry = table.remove(queue, bestIdx)
+     if not done[entry.v] then
+      local target = entry.part.Position + Vector3.new(0, S.itemRunHover, 0)
+      local arrived = itemRunFlyTo(target, S.itemRunArrive, S.itemRunTimeout)
+      visited = visited + 1
+      if arrived then
+       at = target
+       acted = acted + S.itemRunServe(done)
+      else
+       unreached = unreached + 1
+       done[entry.v] = true
+      end
+     end
+    end
+   end
+
    itemRunStop()
    if S.itemRunOn then
-    updateNotification("Run Items",
-     "Done - " .. visited .. " stops, " .. acted .. " machines served", 5)
+    local msg = visited .. " stops, " .. acted .. " machines served"
+    if unreached > 0 then msg = msg .. "\n" .. unreached .. " could not be reached in time" end
+    updateNotification("Run Items", msg, 5)
     S.itemRunOn = false
     pcall(function() UI.itemRunToggle:Set(false) end)
    end
