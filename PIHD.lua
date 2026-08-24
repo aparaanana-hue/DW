@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 23 15:30"
+local PIHD_BUILD = "Aug 23 16:00"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -523,7 +523,9 @@ local function depositCoinsToVending(vending, amount)
 end
 
 local Mouse = LP:GetMouse()
-local MAX_SELECTIONS = 100
+-- 1500. The cap exists to stop a runaway drag-select, not to be a working
+-- limit, and 100 was low enough to hit while selecting an ordinary shop.
+local MAX_SELECTIONS = 1500
 
 local PFX = {}
 PFX.selectedChests = {}
