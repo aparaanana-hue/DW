@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 23 16:00"
+local PIHD_BUILD = "Aug 23 17:30"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -2682,9 +2682,16 @@ local function doDepositItem()
     else
      if give < math.min(room, want) then short = short + 1 end
      if give > 0 then
-      depositItemToVending(vending, wantName, give)
       sent = sent + 1
-      task.wait(0.05)
+      -- Run Simultaneously means what it says here too. Emptying already fired
+      -- every vending at once while this walked them one at a time, which is
+      -- the difference people were noticing.
+      if allAtOnceMode then
+       task.spawn(function() depositItemToVending(vending, wantName, give) end)
+      else
+       depositItemToVending(vending, wantName, give)
+       task.wait(0.05)
+      end
      else
       skipped = skipped + 1
      end
@@ -2704,9 +2711,13 @@ local function doRestockVending()
  local list = itemTargets(vendings)
  task.spawn(function()
   local filled, pulled, skipped = 0, 0, 0
+  -- One vending's restock is a sequence of open/edit/act/close with waits in
+  -- it, so under Run Simultaneously each vending gets its own thread and they
+  -- overlap, rather than the whole list being walked end to end.
+  local pending = 0
   for _, entry in ipairs(list) do
    local vending, mv = entry.v, entry.mode
-   local ok = pcall(function()
+   local function work()
     local st, cur = stockedTool(vending)
     if not st then skipped = skipped + 1 return end
     -- Mode 0 is SELL ITEM: it hands stock to customers, so it is the one that
@@ -2747,16 +2758,27 @@ local function doRestockVending()
     else
      skipped = skipped + 1
     end
-   end)
-   if not ok then skipped = skipped + 1 end
-   task.wait(0.05)
+   end
+   if allAtOnceMode then
+    pending = pending + 1
+    task.spawn(function()
+     if not pcall(work) then skipped = skipped + 1 end
+     pending = pending - 1
+    end)
+   else
+    if not pcall(work) then skipped = skipped + 1 end
+    task.wait(0.05)
+   end
   end
-  updateNotification("Restock", "Filled " .. filled .. " buy | pulled " .. pulled .. " sell | " .. skipped .. " skipped", 4)
+  -- wait for the overlapped threads before reporting, or the numbers are read
+  -- before the work has happened
+  while pending > 0 do task.wait(0.1) end
+  updateNotification("Restock", "Filled " .. filled .. " sell | pulled " .. pulled .. " buy | " .. skipped .. " skipped", 4)
  end)
 end
 
 UI.vmItem:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doDepositItem}}, Callback = doDepositItem})
-UI.vmItem:AddButton({Name = "Restock", Tooltip = "Acts by vending mode: BUY vendings get topped up to 1000 with what you have in your inventory. SELL vendings get their stock pulled out, leaving exactly 1 behind (987 becomes 1). Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
+UI.vmItem:AddButton({Name = "Restock", Tooltip = "Acts by vending mode: SELL ITEM machines get topped up to 1000 from your inventory. BUY ITEM machines get their collected stock pulled out, leaving exactly 1 behind. Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
 
 UI.vmItem:AddButton({Name = "Empty", Loop = true, LoopEvery = 5, Tooltip = "Withdraws every item from the matching machines. Pick Leave 1 (BUY ITEM) as the Restriction to drain them down to one instead of to nothing.", Callback = function()
  local vendings = getTargetVendings()
@@ -3733,7 +3755,188 @@ BuildPriceTool()
 
 L, R = AutoTab:AddLeft(), AutoTab:AddRight()
 
-UI.autoRestock = L:AddSection({Name = "Auto-Restock"})
+-- ---------------------------------------------------------------------------
+-- ONE-BUTTON RUNS
+--
+-- The manual controls make you pick a mode, pick a restriction and press the
+-- right button; these two just do all four jobs in the order that makes sense,
+-- because the four are always the same four:
+--
+--   BUY ITEM  short of money   -> fund it up to a full 1000 purchases
+--   SELL ITEM holding coins    -> take the coins out
+--   SELL ITEM under 1000 items -> top its stock up
+--   BUY ITEM  holding >1 item  -> pull the stock out, leave 1 behind
+--
+-- Coins split from items because they have different reach. A coin transaction
+-- needs no proximity at all, so that one runs from wherever you are standing.
+-- Item transactions do, so that one flies.
+-- ---------------------------------------------------------------------------
+UI.autoRun = L:AddSection({Name = "One-Button Runs", LayoutOrder = 0})
+
+S.ITEM_REACH = 33   -- studs, square, matching what the game lets you reach
+
+local function inSquare(a, b, half)
+ return math.abs(a.X - b.X) <= half and math.abs(a.Z - b.Z) <= half
+end
+
+-- Coins. No movement, no reach limit: every vending on the island in one press.
+UI.autoRun:AddButton({
+ Name = "Run Coins", Loop = true, LoopEvery = 30,
+ Tooltip = "Funds every BUY ITEM machine that is short and empties the coins out of every SELL ITEM machine holding any. Works at any distance - stand anywhere.",
+ Callback = function()
+  local vendings = findVendings()
+  if #vendings == 0 then updateNotification("Run Coins", "No vendings found", 3) return end
+  local funded, drained, moved = 0, 0, 0
+  for _, v in ipairs(vendings) do
+   local mv = S.modeOf(v)
+   if mv == S.MODE_BUY then
+    local room = S.VEND_MAX_ITEMS - S.stockCount(v)
+    if room > 0 then
+     local give = math.max(0, room * S.unitCost(S.priceOf(v)) - S.coinBalanceOf(v))
+     give = math.min(give, math.max(0, S.VEND_MAX_COINS - S.coinBalanceOf(v)))
+     if give > 0 then
+      funded = funded + 1
+      moved = moved + give
+      task.spawn(function() depositCoinsToVending(v, give) end)
+     end
+    end
+   elseif mv == S.MODE_SELL then
+    local held = S.coinBalanceOf(v)
+    if held > 0 then
+     drained = drained + 1
+     task.spawn(function() withdrawCoinsFromVending(v, held) end)
+    end
+   end
+  end
+  updateNotification("Run Coins",
+   "Funded " .. funded .. " buy machines (" .. formatNumber(moved) .. ")\nDrained " .. drained .. " sell machines", 5)
+ end,
+})
+
+-- Items. These need you within reach, so this one flies: it walks the vending
+-- list, hovers over each in turn and does whatever that machine needs, the same
+-- way the builder flies a block list. Ported from IAB's mover - a BodyVelocity
+-- steered at a target and cut when it arrives.
+S.itemRunOn = false
+
+local function itemRunMover(hrp)
+ local m = hrp:FindFirstChild("PIHDMover")
+ if not m then
+  m = Instance.new("BodyVelocity")
+  m.Name = "PIHDMover"
+  m.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+  m.P = 3000
+  m.Velocity = Vector3.new(0, 0, 0)
+  m.Parent = hrp
+ end
+ return m
+end
+
+local function itemRunFlyTo(target, stopDist, timeout)
+ local char = LP.Character
+ local hrp = char and char:FindFirstChild("HumanoidRootPart")
+ if not hrp then return false end
+ local mover = itemRunMover(hrp)
+ local start = tick()
+ while S.itemRunOn do
+  hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+  if not hrp then return false end
+  local to = target - hrp.Position
+  if to.Magnitude <= stopDist then
+   if mover.Parent then mover.Velocity = Vector3.new(0, 0, 0) end
+   return true
+  end
+  if tick() - start > timeout then
+   if mover.Parent then mover.Velocity = Vector3.new(0, 0, 0) end
+   return false
+  end
+  if mover.Parent then mover.Velocity = to.Unit * 60 end
+  game:GetService("RunService").Heartbeat:Wait()
+ end
+ if mover.Parent then mover.Velocity = Vector3.new(0, 0, 0) end
+ return false
+end
+
+local function itemRunStop()
+ local char = LP.Character
+ local hrp = char and char:FindFirstChild("HumanoidRootPart")
+ local m = hrp and hrp:FindFirstChild("PIHDMover")
+ if m then m:Destroy() end
+end
+
+-- Everything within reach of where we are standing, not just the one we flew
+-- to. Hovering over a shop wall puts several machines in range at once, and
+-- doing them all is free.
+local function itemRunServe(vendings, done)
+ local char = LP.Character
+ local hrp = char and char:FindFirstChild("HumanoidRootPart")
+ if not hrp then return 0 end
+ local acted = 0
+ for _, v in ipairs(vendings) do
+  if not done[v] and v.Parent then
+   local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+   if part and inSquare(part.Position, hrp.Position, S.ITEM_REACH) then
+    local mv = S.modeOf(v)
+    local st, cur = stockedTool(v)
+    if mv == S.MODE_SELL and st and cur < S.VEND_MAX_ITEMS then
+     local btool = LP.Backpack:FindFirstChild(st.Name)
+     local have = btool and (btool:FindFirstChild("Amount") and btool.Amount.Value or 1) or 0
+     local give = math.min(S.VEND_MAX_ITEMS - cur, have)
+     if give > 0 then
+      depositItemToVending(v, st.Name, give)
+      acted = acted + 1
+     end
+    elseif mv == S.MODE_BUY and st and cur > 1 then
+     withdrawFromVending(v, cur - 1)
+     acted = acted + 1
+    end
+    done[v] = true
+   end
+  end
+ end
+ return acted
+end
+
+UI.itemRunToggle = UI.autoRun:AddToggle({
+ Name = "Run Items (flies)",
+ Default = false,
+ Tooltip = "Flies over every vending in turn. SELL ITEM machines under 1000 get topped up from your inventory; BUY ITEM machines holding more than one get drained down to 1. Reach is a 33 stud square, so each stop serves every machine around it.",
+ Callback = function(value)
+  S.itemRunOn = value
+  if not value then itemRunStop() return end
+  task.spawn(function()
+   local vendings = findVendings()
+   if #vendings == 0 then
+    updateNotification("Run Items", "No vendings found", 3)
+    S.itemRunOn = false
+    return
+   end
+   updateNotification("Run Items", "Sweeping " .. #vendings .. " vendings", 3)
+   local done, acted, visited = {}, 0, 0
+   for _, v in ipairs(vendings) do
+    if not S.itemRunOn then break end
+    if not done[v] and v.Parent then
+     local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+     if part then
+      -- hover above it, so the body is not inside the machine
+      itemRunFlyTo(part.Position + Vector3.new(0, 8, 0), 6, 8)
+      visited = visited + 1
+      acted = acted + itemRunServe(vendings, done)
+     end
+    end
+   end
+   itemRunStop()
+   if S.itemRunOn then
+    updateNotification("Run Items",
+     "Done - " .. visited .. " stops, " .. acted .. " machines served", 5)
+    S.itemRunOn = false
+    pcall(function() UI.itemRunToggle:Set(false) end)
+   end
+  end)
+ end,
+})
+
+UI.autoRestock = L:AddSection({Name = "Auto-Restock", LayoutOrder = 1})
 
 local autoRestockEnabled = false
 local restockItem = "grassBlock"
