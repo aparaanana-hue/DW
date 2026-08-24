@@ -3611,6 +3611,8 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				return nil
 			end
 
+			-- ZIndex 209 and up. Side panels sit at 100, so at the old 59-64 a gear
+			-- opened from a panel row drew underneath the panel it belonged to.
 			local function MakePopover(anchorFrame, items)
 				local pop = Create("Frame", {
 					BackgroundColor3       = Color3.fromRGB(18, 6, 36),
@@ -3619,14 +3621,14 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					Size                   = UDim2.new(0, 0, 0, 0),
 					ClipsDescendants       = true,
 					Visible                = false,
-					ZIndex                 = 60,
+					ZIndex                 = 210,
 					Parent                 = Duvome
 				})
 				AddThemeObject(pop, "Second")
 				
 				local clickBlocker = Create("TextButton", {
 					Text = "", BackgroundTransparency = 1, BorderSizePixel = 0,
-					Size = UDim2.new(1, 0, 1, 0), ZIndex = 59, AutoButtonColor = false,
+					Size = UDim2.new(1, 0, 1, 0), ZIndex = 209, AutoButtonColor = false,
 					Parent = pop
 				})
 				Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = pop})
@@ -3634,7 +3636,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				AddThemeObject(_popStroke, "Stroke")
 				local popContent = Create("Frame", {
 					BackgroundTransparency = 1, BorderSizePixel = 0,
-					Size = UDim2.new(1, 0, 1, 0), ZIndex = 61, Parent = pop
+					Size = UDim2.new(1, 0, 1, 0), ZIndex = 211, Parent = pop
 				})
 				local popList = Create("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = popContent})
 				-- 12 across, because a slider knob overhangs its track by 3px each
@@ -3646,25 +3648,25 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 				for _, item in ipairs(items) do
 					if item.Type == "slider" then
 						local val = item.Default or item.Min
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,38), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,38), ZIndex=212, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
-							Size=UDim2.new(1,-42,0,14), ZIndex=62, Parent=row}), "Text")
+							Size=UDim2.new(1,-42,0,14), ZIndex=212, Parent=row}), "Text")
 						local unit = item.ValueName or ""
 						local valLbl = AddThemeObject(Create("TextLabel", {Text=tostring(val) .. unit, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].TextDark, BackgroundTransparency=1,
 							Size=UDim2.new(0,38,0,14), Position=UDim2.new(1,-38,0,0),
-							TextXAlignment=Enum.TextXAlignment.Right, ZIndex=62, Parent=row}), "TextDark")
+							TextXAlignment=Enum.TextXAlignment.Right, ZIndex=212, Parent=row}), "TextDark")
 						local track = AddThemeObject(Create("Frame", {BackgroundColor3=Color3.fromRGB(35,12,60),
-							BorderSizePixel=0, Size=UDim2.new(1,-6,0,6), Position=UDim2.new(0,3,0,24), ZIndex=62, Parent=row}), "Main")
+							BorderSizePixel=0, Size=UDim2.new(1,-6,0,6), Position=UDim2.new(0,3,0,24), ZIndex=212, Parent=row}), "Main")
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=track})
 						local pct = (val-item.Min)/math.max(1,item.Max-item.Min)
 						local fill = AddThemeObject(Create("Frame", {BackgroundColor3=Color3.fromRGB(130,55,210),
-							BorderSizePixel=0, Size=UDim2.new(pct,0,1,0), ZIndex=63, Parent=track}), "Stroke")
+							BorderSizePixel=0, Size=UDim2.new(pct,0,1,0), ZIndex=213, Parent=track}), "Stroke")
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=fill})
 						local knob = Create("Frame", {BackgroundColor3=Color3.fromRGB(255,255,255),
 							BorderSizePixel=0, Size=UDim2.new(0,12,0,12),
-							Position=UDim2.new(pct,-6,0.5,-6), ZIndex=64, Parent=track})
+							Position=UDim2.new(pct,-6,0.5,-6), ZIndex=214, Parent=track})
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=knob})
 						local drag = false
 						track.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=true end end)
@@ -3680,13 +3682,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							end
 						end)
 					elseif item.Type == "input" then
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=212, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
-							Size=UDim2.new(0.45,0,1,0), ZIndex=62, Parent=row}), "Text")
+							Size=UDim2.new(0.45,0,1,0), ZIndex=212, Parent=row}), "Text")
 						local box = AddThemeObject(Create("TextBox", {Text=tostring(item.Default or ""), Font=Enum.Font.Gotham, TextSize=12,
 							BorderSizePixel=0, Size=UDim2.new(0.55,-4,0,24), Position=UDim2.new(0.45,4,0.5,-12),
-							TextXAlignment=Enum.TextXAlignment.Center, ZIndex=62, ClearTextOnFocus=false, Parent=row}), "Text")
+							TextXAlignment=Enum.TextXAlignment.Center, ZIndex=212, ClearTextOnFocus=false, Parent=row}), "Text")
 						-- a TextBox only gets TextColor3 from AddThemeObject, so its fill
 						-- needs painting separately
 						AddThemePainter(function(theme)
@@ -3697,17 +3699,17 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						AddThemeObject(_inStroke, "Stroke")
 						box.FocusLost:Connect(function() item.Callback(box.Text) end)
 					elseif item.Type == "keybind" then
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=212, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text="Keybind", Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
-							Size=UDim2.new(0.5,0,1,0), ZIndex=62, Parent=row}), "Text")
+							Size=UDim2.new(0.5,0,1,0), ZIndex=212, Parent=row}), "Text")
 						MakeKeybindBox(row, item, UDim2.new(0.45,0,0,24), UDim2.new(0.55,0,0.5,-12), 62)
 					elseif item.Type == "toggle" then
 						local state = item.Default == true
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), ZIndex=212, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
-							Size=UDim2.new(0.7,0,1,0), ZIndex=62, Parent=row}), "Text")
+							Size=UDim2.new(0.7,0,1,0), ZIndex=212, Parent=row}), "Text")
 						-- On used the theme colour but Off was a fixed purple, and the
 						-- registration only happened while it was on, so a themed panel
 						-- still showed purple switches.
@@ -3716,13 +3718,13 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							return state and theme.Stroke or theme.Second
 						end
 						local tBtn = Create("TextButton", {Text="", BackgroundColor3=switchColour(),
-							BorderSizePixel=0, Size=UDim2.new(0,36,0,18), Position=UDim2.new(1,-36,0.5,-9), ZIndex=62, Parent=row})
+							BorderSizePixel=0, Size=UDim2.new(0,36,0,18), Position=UDim2.new(1,-36,0.5,-9), ZIndex=212, Parent=row})
 						AddThemePainter(function(theme)
 							if tBtn.Parent then tBtn.BackgroundColor3 = switchColour(theme) end
 						end)
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=tBtn})
 						local dot = Create("Frame", {BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
-							Size=UDim2.new(0,14,0,14), Position=state and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7), ZIndex=63, Parent=tBtn})
+							Size=UDim2.new(0,14,0,14), Position=state and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7), ZIndex=213, Parent=tBtn})
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=dot})
 						tBtn.MouseButton1Click:Connect(function()
 							state = not state
@@ -3735,25 +3737,25 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 						local alpha = item.DefaultAlpha or 0  
 						local h, s, v = Color3.toHSV(col)
 						local rowH = item.UseAlpha and 102 or 88
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,rowH), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,rowH), ZIndex=212, Parent=popContent})
 						AddThemeObject(Create("TextLabel", {Text=item.Name, Font=Enum.Font.GothamBold, TextSize=12,
 							TextColor3=DuvomeLibrary.Themes[DuvomeLibrary.SelectedTheme].Text, BackgroundTransparency=1,
-							Size=UDim2.new(1,0,0,14), ZIndex=62, Parent=row}), "Text")
+							Size=UDim2.new(1,0,0,14), ZIndex=212, Parent=row}), "Text")
 						local preview = Create("Frame", {BackgroundColor3=col, BorderSizePixel=0,
-							Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-28,0,0), ZIndex=63, Parent=row})
+							Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-28,0,0), ZIndex=213, Parent=row})
 						Create("UICorner", {CornerRadius=UDim.new(0,5), Parent=preview})
 						AddThemeObject(Create("UIStroke", {Thickness=1, Parent=preview}), "Stroke")
 						
 						local svBox = Create("ImageLabel", {Image="rbxassetid://4155801252",
 							BackgroundColor3=Color3.fromHSV(h,1,1), BorderSizePixel=0,
-							Size=UDim2.new(1,0,0,50), Position=UDim2.new(0,0,0,18), ZIndex=62, Parent=row})
+							Size=UDim2.new(1,0,0,50), Position=UDim2.new(0,0,0,18), ZIndex=212, Parent=row})
 						Create("UICorner", {CornerRadius=UDim.new(0,4), Parent=svBox})
 						local svCursor = Create("Frame", {BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
 							Size=UDim2.new(0,6,0,6), AnchorPoint=Vector2.new(0.5,0.5),
-							Position=UDim2.new(s,0,1-v,0), ZIndex=63, Parent=svBox})
+							Position=UDim2.new(s,0,1-v,0), ZIndex=213, Parent=svBox})
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=svCursor})
 						
-						local hueBar = Create("Frame", {BorderSizePixel=0, Size=UDim2.new(1,0,0,10), Position=UDim2.new(0,0,0,72), ZIndex=62, Parent=row})
+						local hueBar = Create("Frame", {BorderSizePixel=0, Size=UDim2.new(1,0,0,10), Position=UDim2.new(0,0,0,72), ZIndex=212, Parent=row})
 						Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=hueBar})
 						local hueGrad = Create("UIGradient", {Parent=hueBar, Color=ColorSequence.new({
 							ColorSequenceKeypoint.new(0,Color3.fromRGB(255,0,0)),
@@ -3765,11 +3767,11 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							ColorSequenceKeypoint.new(1,Color3.fromRGB(255,0,0)),
 						})})
 						local hueCursor = Create("Frame", {BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
-							Size=UDim2.new(0,3,1,2), Position=UDim2.new(h,0,0,-1), ZIndex=63, Parent=hueBar})
+							Size=UDim2.new(0,3,1,2), Position=UDim2.new(h,0,0,-1), ZIndex=213, Parent=hueBar})
 						
 						local alphaBar, alphaCursor, alphaGrad
 						if item.UseAlpha then
-							alphaBar = Create("Frame", {BackgroundColor3=col, BorderSizePixel=0, Size=UDim2.new(1,0,0,10), Position=UDim2.new(0,0,0,88), ZIndex=62, Parent=row})
+							alphaBar = Create("Frame", {BackgroundColor3=col, BorderSizePixel=0, Size=UDim2.new(1,0,0,10), Position=UDim2.new(0,0,0,88), ZIndex=212, Parent=row})
 							Create("UICorner", {CornerRadius=UDim.new(1,0), Parent=alphaBar})
 							
 							alphaGrad = Create("UIGradient", {Parent=alphaBar, Transparency=NumberSequence.new({
@@ -3778,7 +3780,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							})})
 							
 							alphaCursor = Create("Frame", {BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
-								Size=UDim2.new(0,3,1,2), Position=UDim2.new(1-alpha,0,0,-1), ZIndex=63, Parent=alphaBar})
+								Size=UDim2.new(0,3,1,2), Position=UDim2.new(1-alpha,0,0,-1), ZIndex=213, Parent=alphaBar})
 						end
 						local function fire()
 							col = Color3.fromHSV(h,s,v)
@@ -3815,7 +3817,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 					elseif item.Type == "button" then
 						-- Action row: lets a gear hold things like Refresh or Delete
 						-- instead of them each needing their own control in the panel.
-						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,22), ZIndex=62, Parent=popContent})
+						local row = Create("Frame", {BackgroundTransparency=1, Size=UDim2.new(1,0,0,22), ZIndex=212, Parent=popContent})
 						-- Styled like the other popover rows: plain label weight, no
 						-- filled background, so it does not shout next to them.
 						local btn = Create("TextButton", {
@@ -3825,7 +3827,7 @@ function DuvomeLibrary:MakeWindow(WindowConfig)
 							BackgroundTransparency = 1,
 							BorderSizePixel = 0, AutoButtonColor = false,
 							TextXAlignment = Enum.TextXAlignment.Center,
-							Size = UDim2.new(1,0,1,0), ZIndex = 63, Parent = row,
+							Size = UDim2.new(1,0,1,0), ZIndex = 213, Parent = row,
 						})
 						AddThemeObject(btn, "Text")
 						btn.MouseEnter:Connect(function()

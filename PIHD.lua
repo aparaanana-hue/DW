@@ -8,7 +8,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local PIHD_BUILD = "Aug 23 18:40"
+local PIHD_BUILD = "Aug 23 20:10"
 
 local TAB_ICONS = {
 	Home                 = "house",
@@ -3771,7 +3771,7 @@ L, R = AutoTab:AddLeft(), AutoTab:AddRight()
 -- needs no proximity at all, so that one runs from wherever you are standing.
 -- Item transactions do, so that one flies.
 -- ---------------------------------------------------------------------------
-UI.autoRun = L:AddSection({Name = "One-Button Runs", LayoutOrder = 0})
+UI.autoRun = L:AddSection({Name = "Shop Upkeep", LayoutOrder = 0})
 
 S.ITEM_REACH = 33   -- studs, square, matching what the game lets you reach
 
@@ -3821,10 +3821,13 @@ S.itemRunOn = false
 
 -- Tunables, all on the gear. Speed is the one people actually want; the rest
 -- are here because a number that only works at one speed is not a tunable.
-S.itemRunSpeed   = 60   -- studs/sec
+S.itemRunSpeed   = 30   -- studs/sec
 S.itemRunHover   = 8    -- studs above the machine
-S.itemRunArrive  = 6    -- close enough to stop steering
-S.itemRunTimeout = 8    -- give up on a machine we cannot reach
+-- Not tunable. Arriving is "inside reach with room to spare", which follows
+-- from the reach rather than being a taste, and eight seconds is long enough
+-- that anything still unreached is not going to be reached.
+S.itemRunArrive  = 6
+S.itemRunTimeout = 8
 
 local function itemRunMover(hrp)
  local m = hrp:FindFirstChild("PIHDMover")
@@ -3899,8 +3902,18 @@ function S.itemRunNeeds(v)
  return nil
 end
 
-function S.itemRunPartOf(v)
- return v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+-- The middle of the machine, not whichever descendant part FindFirstChild
+-- happened to return. On a model built from several parts that could be a
+-- corner panel or a sign, which is why it looked like it was flying to bits of
+-- vendings rather than to vendings.
+function S.itemRunCentre(v)
+ if v:IsA("BasePart") then return v.Position end
+ local ok, cf = pcall(function() return v:GetPivot() end)
+ if ok and cf then return cf.Position end
+ local ok2, cf2 = pcall(function() return (v:GetBoundingBox()) end)
+ if ok2 and cf2 then return cf2.Position end
+ local part = v:FindFirstChildWhichIsA("BasePart", true)
+ return part and part.Position or nil
 end
 
 -- Serve everything within reach of where we are standing, not just the machine
@@ -3910,8 +3923,8 @@ function S.itemRunServe(done)
  local hrp = char and char:FindFirstChild("HumanoidRootPart")
  if not hrp then return 0 end
  local acted = 0
- for v, part in pairs(S.itemRunPending) do
-  if not done[v] and v.Parent and inSquare(part.Position, hrp.Position, S.ITEM_REACH) then
+ for v, pos in pairs(S.itemRunPending) do
+  if not done[v] and v.Parent and inSquare(pos, hrp.Position, S.ITEM_REACH) then
    -- re-read on arrival: the list was measured before the flight, and a
    -- machine can be sold out from under us on the way over
    local need = S.itemRunNeeds(v)
@@ -3933,17 +3946,16 @@ UI.itemRunToggle = UI.autoRun:AddToggle({
  Name = "Run Items (flies)",
  Default = false,
  Tooltip = "Flies over the vendings that need something. SELL ITEM machines under 1000 get topped up from your inventory; BUY ITEM machines holding more than one get drained down to 1. Speed and reach are in the gear.",
+ -- Arrive Within and Give Up After are gone. Neither is a preference: one has
+ -- a right answer given the reach, and the other only decides how long a
+ -- machine you cannot get to wastes your time.
  Options = {
-  {Type = "slider", Name = "Fly Speed", Min = 20, Max = 300, Default = 60, ValueName = " st/s",
+  {Type = "slider", Name = "Fly Speed", Min = 10, Max = 40, Default = 30, ValueName = " st/s",
    Callback = function(v) S.itemRunSpeed = v end},
-  {Type = "slider", Name = "Reach", Min = 5, Max = 60, Default = 33, ValueName = " st",
+  {Type = "slider", Name = "Reach", Min = 5, Max = 33, Default = 33, ValueName = " st",
    Callback = function(v) S.ITEM_REACH = v end},
   {Type = "slider", Name = "Hover Height", Min = 0, Max = 30, Default = 8, ValueName = " st",
    Callback = function(v) S.itemRunHover = v end},
-  {Type = "slider", Name = "Arrive Within", Min = 2, Max = 30, Default = 6, ValueName = " st",
-   Callback = function(v) S.itemRunArrive = v end},
-  {Type = "slider", Name = "Give Up After", Min = 2, Max = 30, Default = 8, ValueName = "s",
-   Callback = function(v) S.itemRunTimeout = v end},
  },
  Callback = function(value)
   S.itemRunOn = value
@@ -3964,10 +3976,10 @@ UI.itemRunToggle = UI.autoRun:AddToggle({
    local queue = {}
    for _, v in ipairs(findVendings()) do
     if S.itemRunNeeds(v) then
-     local part = S.itemRunPartOf(v)
-     if part then
-      S.itemRunPending[v] = part
-      table.insert(queue, {v = v, part = part})
+     local pos = S.itemRunCentre(v)
+     if pos then
+      S.itemRunPending[v] = pos
+      table.insert(queue, {v = v, pos = pos})
      end
     end
    end
@@ -3987,33 +3999,32 @@ UI.itemRunToggle = UI.autoRun:AddToggle({
    -- Nearest first, recomputed as we go. Vendings come off findVendings in
    -- whatever order the game holds them, which for a shop laid out in rows
    -- means crossing the island and coming back for the machine next door.
-   while S.itemRunOn and #queue > 0 do
-    local bestIdx, bestDist
-    for i, entry in ipairs(queue) do
-     if done[entry.v] or not entry.v.Parent then
-      table.remove(queue, i)
-      break
-     end
-     local d = (entry.part.Position - at).Magnitude
-     if not bestDist or d < bestDist then bestIdx, bestDist = i, d end
+   while S.itemRunOn do
+    -- Drop everything already handled first. Each stop serves every machine
+    -- within reach, so most of the queue disappears without being flown to -
+    -- and dropping them before choosing is what keeps the choice local. The
+    -- old version scanned past them and restarted on each removal.
+    for i = #queue, 1, -1 do
+     if done[queue[i].v] or not queue[i].v.Parent then table.remove(queue, i) end
     end
-    if not bestIdx then
-     -- the loop above removed something; go round again
-     if #queue == 0 then break end
+    if #queue == 0 then break end
+
+    local bestIdx, bestDist = 1, (queue[1].pos - at).Magnitude
+    for i = 2, #queue do
+     local d = (queue[i].pos - at).Magnitude
+     if d < bestDist then bestIdx, bestDist = i, d end
+    end
+
+    local entry = table.remove(queue, bestIdx)
+    local target = entry.pos + Vector3.new(0, S.itemRunHover, 0)
+    local arrived = itemRunFlyTo(target, S.itemRunArrive, S.itemRunTimeout)
+    visited = visited + 1
+    if arrived then
+     at = target
+     acted = acted + S.itemRunServe(done)
     else
-     local entry = table.remove(queue, bestIdx)
-     if not done[entry.v] then
-      local target = entry.part.Position + Vector3.new(0, S.itemRunHover, 0)
-      local arrived = itemRunFlyTo(target, S.itemRunArrive, S.itemRunTimeout)
-      visited = visited + 1
-      if arrived then
-       at = target
-       acted = acted + S.itemRunServe(done)
-      else
-       unreached = unreached + 1
-       done[entry.v] = true
-      end
-     end
+     unreached = unreached + 1
+     done[entry.v] = true
     end
    end
 
