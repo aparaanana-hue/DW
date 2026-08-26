@@ -1,0 +1,167 @@
+================================================================================
+01 - BLOCK REFERENCE
+Every block in Category:Electricity. All are 1 block each.
+================================================================================
+
+--------------------------------------------------------------------------------
+POWER SOURCES
+--------------------------------------------------------------------------------
+COAL GENERATOR
+  Recipe   : 40 Iron Ingot + 4 Electrite
+  Bench    : Electrical Workbench (Level 1)
+  Hardness : 6
+  Output   : ~20-30 power (was 20 at launch; exact current value not documented)
+  Fuel     : coal
+  Notes    : cheapest source. There IS a placement limit on power sources tied
+             to workbench level.
+
+SOLAR PANEL
+  Recipe   : 10 Steel Ingot + 100 Electrite + 10 Copper Bolt
+  Bench    : Electrical Workbench (Level 2)
+  Hardness : 3
+  Output   : up to 26 power, scales with time of day, needs direct sunlight
+  Fuel     : none
+  Notes    : zero upkeep but dies at night. Its variable output is the basis of
+             the "analog power meter / sundial" project (see 05).
+
+STEAM GENERATOR
+  Recipe   : 1 Gearbox + 20 Copper Bolt + 150 Electrite
+  Bench    : Electrical Workbench (Level 3)
+  Hardness : 6
+  Output   : 60 power  <-- best in game
+  Fuel     : coal, holds 10 at a time
+  Notes    : place next to a conveyor belt fed by a coal totem = genuinely
+             infinite power, and it is not a bug. This is the endgame source.
+             Use it for anything with a deep splitter tree.
+
+TEST GENERATOR                                    [DEV ONLY - cannot be obtained]
+  Recipe   : none. Admin commands only.
+  Bench    : n/a
+  Hardness : 6
+  Output   : INFINITE power
+  Fuel     : none
+  Notes    : developer block used to test electricity before the Dec 11 2020
+             launch. Listed in Category:Electricity but also in Unobtainable
+             and Secret Items. Included here only so the block list is complete
+             - you cannot build with it.
+
+--------------------------------------------------------------------------------
+LOGIC GATES  (all pass-through: output power comes FROM the inputs)
+--------------------------------------------------------------------------------
+AND GATE
+  Recipe   : 10 Iron Ingot + 15 Electrite      Bench: L2      Hardness: 3
+  Ports    : 2 in, 1 passthrough
+  Behavior : passes ONLY if BOTH inputs are powered.
+             Output amount = the GREATER of the two inputs.
+  Don't confuse with: Combiner (needs only ONE input on).
+
+OR GATE
+  Recipe   : 10 Iron Ingot + 15 Electrite      Bench: L2      Hardness: 3
+  Ports    : 2 in, 1 passthrough
+  Behavior : passes if EITHER input is powered.
+             Output amount = the GREATER of the two inputs.
+
+XOR GATE
+  Recipe   : 20 Iron Ingot + 40 Electrite      Bench: L2      Hardness: 6 (pick)
+  Ports    : 2 in, 1 passthrough
+  Behavior : passes ONLY if EXACTLY ONE input is powered.
+             Both powered = nothing passes. This is the real XOR.
+  Notes    : the most expensive gate and the adder needs 7 of them. Budget for it.
+
+--------------------------------------------------------------------------------
+POWER MODIFIERS
+--------------------------------------------------------------------------------
+SPLITTER
+  Recipe   : 8 Iron Ingot + 25 Electrite       Bench: L2      Hardness: 3
+  Ports    : 1 in, 2 out
+  Behavior : divides incoming power between two outputs. Ratio set in its UI:
+             50/50 (default), 60/40, 70/30, 80/20, 90/10, and reversed.
+  Notes    : your ONLY way to feed one signal into two gates. Also your biggest
+             source of power loss. Also doubles as an analog "dimmer".
+
+COMBINER
+  Recipe   : 8 Iron Ingot + 25 Electrite       Bench: L2      Hardness: 3
+             (infobox on wiki says 3 iron - conflicting, assume 8)
+  Ports    : 2 in, 1 out
+  Behavior : ADDS two power inputs into one larger output.
+             Works with only one input live.
+  Notes    : the opposite of a splitter. Use it to top a starved line back up
+             before it enters a gate. NOT an AND gate.
+
+TIMER
+  Recipe   : 20 Iron Ingot + 40 Electrite      Bench: L3      Hardness: 3
+  Ports    : 1 in, 1 passthrough
+  Behavior : while powered, toggles its output ON/OFF every 2 seconds.
+  Notes    : interval is not adjustable. TIMERS CANNOT BE STACKED/CHAINED -
+             placing several together and wiring them does not work. One clock
+             per build, period.
+
+--------------------------------------------------------------------------------
+MANUAL INPUTS
+--------------------------------------------------------------------------------
+SWITCH
+  Recipe   : 5 Iron Ingot + 20 Electrite       Bench: L1      Hardness: 5.5(pick)
+  Ports    : 1 in, 1 out
+  Behavior : latching on/off. On = power flows through. Off = cut.
+  Bug      : displays as "off" after rejoining the game while still passing
+             power. Flip it twice to resync the visual.
+  Notes    : this is your data-entry key. The adder uses 8 of them.
+
+BUTTON
+  Recipe   : 2 Iron Ingot + 10 Electrite       Bench: L2      Hardness: 3
+  Ports    : 1 in, 1 out
+  Behavior : momentary. Passes power for 2 SECONDS when pressed, then off.
+  Notes    : cheapest input block. Good for "fire once" triggers.
+
+--------------------------------------------------------------------------------
+SENSORS
+--------------------------------------------------------------------------------
+CONVEYOR SENSOR
+  Recipe   : 1 Conveyor Belt + 3 Ruby Skorp Scale + 50 Electrite
+  Bench    : Electrical Workbench (Level 3)
+  Skill    : Level 36 Forging     Hardness: 2
+  Behavior : acts as a conveyor; emits a SHORT power pulse when an item or
+             block passes through it. Consumes power itself.
+  Notes    : the only automatic input in the whole system. Everything
+             "automated" starts here.
+
+--------------------------------------------------------------------------------
+OUTPUTS / ACTUATORS
+--------------------------------------------------------------------------------
+LED LIGHT
+  Recipe   : 2 Iron Ingot + 8 Electrite        Bench: L1      Hardness: 6 (pick)
+  Behavior : lights up while powered, any amount. Dark when unpowered.
+  Notes    : the ONLY light block in the game you can turn off without breaking
+             it. This is your display pixel. Cheap - spam them.
+
+FIREWORK LAUNCHER
+  Recipe   : 100 Iron Ingot + 50 Steel Bolt    Bench: L1      Hardness: 6
+  Behavior : launches ONE firework per power-on, with any amount of power.
+             Holds up to 90 fireworks.
+  Notes    : as of Dec 29 2021 you can no longer hand-place items into it.
+
+SPLIT CONVEYOR
+  Recipe   : 1 Crystallized Iron + 4 Steel Rod + 20 Electrite
+  Bench    : L2      Hardness: 3 (pickaxe)
+  Behavior : normal conveyor when unpowered; when powered, items divert to the
+             SIDE instead of continuing forward. Green arrow shows the side
+             output direction. Input belt cannot be re-aimed.
+  Notes    : your only physical actuator. Timer + split conveyor = randomizer.
+             Same model as the Randomizer and Merger, different top texture.
+
+TOTEM DISABLER
+  Recipe   : 10 Red Bronze Ingot + 10 Steel Bolt + 100 Electrite
+  Bench    : L3      Hardness: 5.5 (pickaxe)
+  Behavior : while powered, disables ALL totems within range.
+  Range    : radius 9.5 blocks horizontally (19 diameter).
+             Vertical range 9 blocks; at that height horizontal range shrinks
+             to 4 blocks. Roughly a squat dome, not a sphere.
+  Notes    : has an input AND a passthrough, so it can sit mid-circuit.
+             The single most PRACTICAL block here - see the auto-farm shutoff.
+
+--------------------------------------------------------------------------------
+WIRE TOOL
+--------------------------------------------------------------------------------
+Not a placed block. Used to connect the OUTPUT/passthrough port of one block to
+the INPUT port of another. Every connection in every diagram in these files is
+one Wire Tool action.

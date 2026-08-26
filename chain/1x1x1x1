@@ -1,6 +1,0 @@
--- Entry point. This is the URL you paste.
--- Chain: 1x1x1x1 -> 1x1 -> 1x1x -> 1x1x1 -> 1x1x1x (the library itself)
---
--- The 'return' is load-bearing: without it this link hands back nil and the
--- chain fails silently further down.
-return loadstring(game:HttpGet("https://raw.githubusercontent.com/PrizLovesRice1/PrizsHub/refs/heads/main/1x1x1x1"))()

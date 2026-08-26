@@ -1,0 +1,93 @@
+================================================================================
+02 - POWER RULES
+The physics of the system. Read this before designing anything big.
+================================================================================
+
+RULE 1 - POWER IS AN AMOUNT, NOT A BOOLEAN
+Steam Generator = 60. Solar = up to 26. Coal = ~20-30. Every wire carries a
+number. Blocks care about two different things depending on the block:
+  - LEDs, Firework Launchers, Split Conveyors, Totem Disablers: fire on ANY
+    amount above zero.
+  - Gates: care about "is there at least 1 unit", and then decide what amount
+    to pass onward.
+Treat it like real electronics: you have a supply budget and you can brown out.
+
+RULE 2 - GATES NEVER CREATE POWER
+Every gate is pass-through. The power leaving a gate came in through one of its
+inputs. Nothing in this game outputs power it wasn't given. This is why there is
+no NOT gate: an inverter would have to output power while receiving none.
+
+RULE 3 - WHAT EACH BLOCK DOES TO THE AMOUNT
+  AND Gate    : passes the GREATER of its two inputs  -> no loss
+  OR Gate     : passes the GREATER of its two inputs  -> no loss
+  XOR Gate    : passes the one live input             -> no loss
+  Switch      : passes unchanged                      -> no loss
+  Button      : passes unchanged for 2s               -> no loss
+  Timer       : passes unchanged, chopped in time     -> no loss
+  Totem Disab.: passes through                        -> no loss (consumes some)
+  SPLITTER    : DIVIDES between two outputs           -> LOSS. the only one.
+  COMBINER    : ADDS two inputs                       -> GAIN (recovers loss)
+  Conveyor Sen: consumes power to operate
+
+So: power only ever drops at a SPLITTER. That is the entire power model.
+
+RULE 4 - SPLITTER DEPTH IS YOUR REAL BUDGET
+Each 50/50 split halves a line. Starting from a Steam Generator at 60:
+    depth 0 : 60
+    depth 1 : 30
+    depth 2 : 15
+    depth 3 : 7.5
+    depth 4 : 3.75
+    depth 5 : 1.87
+    depth 6 : 0.94   <-- below 1 unit, gates may stop passing
+Rule of thumb: KEEP EVERY PATH UNDER 5 SPLITTERS DEEP from its generator.
+If a path must go deeper, do one of these:
+    a) give that branch its own generator (cheapest fix, honestly)
+    b) insert a COMBINER fed by a second generator to top the line back up
+    c) use an unbalanced split (90/10) and send 90 down the long path
+Note: the exact minimum power a gate needs is NOT documented on the wiki.
+1 unit is the stated threshold for AND ("at least one power unit"). Verify in
+game before committing to a deep design.
+
+RULE 5 - FAN-OUT COSTS A BLOCK
+One output port feeds one input port. If signal A must reach two gates, you
+need a Splitter between them. If it must reach three, that's two splitters
+(and depth 2, so quarter power). Fan-out is why the adder needs 14 splitters
+for only 17 gates. When you count blocks for a build, count splitters FIRST.
+
+RULE 6 - NO FEEDBACK, THEREFORE NO MEMORY
+You cannot wire an output back to an earlier input to make a latch. The loop
+has no power source of its own and every gate only passes what it receives, so
+the loop is dead the moment the external input drops. Consequence:
+    - no SR latch, no D flip-flop, no register, no counter
+    - no state that survives between inputs
+    - no multi-cycle anything
+Every circuit you build is PURELY COMBINATIONAL: outputs are a direct function
+of the switches that are currently on. The only time-varying element in the
+entire game is the Timer, and you get one of those.
+
+RULE 7 - ONE CLOCK, 2 SECONDS, NOT ADJUSTABLE
+Timers cannot be stacked or chained, so you cannot divide the clock down or
+build a slower one. Every animated build runs at 2s. To get apparent variety,
+vary PHASE (route branches through Buttons) or vary BRIGHTNESS (splitter
+ratios), not frequency.
+
+RULE 8 - MISSING GATE CHEAT SHEET
+  NOT   - impossible
+  NAND  - impossible
+  NOR   - impossible
+  XNOR  - impossible
+The wiki notes these were excluded specifically because they'd output power
+with no input = infinite energy. It also floats a possible future fix (giving
+those gates their own power requirement), so this may change someday.
+
+WORKAROUND for a missing NOT: you cannot invert a SIGNAL, but you can invert
+your INTENT at the input. Instead of "light when switch is OFF", wire a second
+switch and label it as the inverse, and train yourself to flip both. That is
+the only inversion available - a human doing it by hand.
+
+RULE 9 - THE COMBINER IS NOT AN OR GATE
+  Combiner : one input on -> passes. Output = A + B (sums).
+  OR Gate  : one input on -> passes. Output = max(A, B).
+Logically identical, electrically different. Use the OR Gate in logic circuits
+so amounts stay predictable. Use the Combiner when you actually want more power.

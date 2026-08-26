@@ -1,0 +1,145 @@
+================================================================================
+03 - LOGIC COOKBOOK
+Truth tables and reusable sub-circuits.
+================================================================================
+
+--------------------------------------------------------------------------------
+TRUTH TABLES
+--------------------------------------------------------------------------------
+        AND                 OR                  XOR
+  A  B | Out          A  B | Out          A  B | Out
+  0  0 |  0           0  0 |  0           0  0 |  0
+  1  0 |  0           1  0 |  1           1  0 |  1
+  0  1 |  0           0  1 |  1           0  1 |  1
+  1  1 |  1           1  1 |  1           1  1 |  0
+
+  COMBINER (logic = OR, amount = sum)      SPLITTER (1 in, 2 out, ratio)
+  A  B | Out                                In | OutA   OutB
+  0  0 |  0                                 P  | P*r    P*(1-r)
+  1  0 |  1 (amount A)                      r in {.5,.6,.7,.8,.9} either way
+  0  1 |  1 (amount B)
+  1  1 |  1 (amount A+B)
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 1: FAN-OUT (make one signal feed two gates)
+--------------------------------------------------------------------------------
+  [SOURCE] --wire--> [SPLITTER 50/50] --> out A --> gate 1
+                                      \-> out B --> gate 2
+Cost: 1 splitter. Cost in power: half. Unavoidable - there is no other way to
+branch a signal.
+
+For 3-way fan-out use two splitters, and set the FIRST one to 33/67-ish by
+picking 30/70, so the two halves of the second split come out roughly even:
+  [SRC] -> [SPL 30/70] -> 30% -> gate 1
+                       -> 70% -> [SPL 50/50] -> 35% -> gate 2
+                                             -> 35% -> gate 3
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 2: HALF ADDER  (adds 2 bits, gives sum + carry)
+--------------------------------------------------------------------------------
+  Sum   = A XOR B
+  Carry = A AND B
+
+  A --> [SPL] --+--------------------> [XOR] --> SUM
+                |                    /
+  B --> [SPL] --|-------------------+
+                |     |
+                +-----|------------> [AND] --> CARRY
+                      +------------/
+
+Blocks: 1 XOR, 1 AND, 2 Splitters = 4 blocks.
+This is the entire reason a calculator is possible in this game: both halves of
+a half adder are gates that exist, and neither needs inversion.
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 3: FULL ADDER  (adds 2 bits + a carry-in)
+--------------------------------------------------------------------------------
+  Sum   = A XOR B XOR Cin
+  Carry = (A AND B) OR ((A XOR B) AND Cin)
+
+  A ---> [SPL_A] --+--> [XOR1] --> [SPL_X] --+--> [XOR2] --> SUM
+  B ---> [SPL_B] --+-/                       |   /
+                   |                         |  /
+                   +--> [AND1] --+           | /
+                                 |           +--> [AND2] --+
+  Cin -> [SPL_C] --+-------------|----------/              |
+                   +-------------|-------------------------|--> [XOR2] input
+                                 |                         |
+                                 +--> [OR] <---------------+
+                                        |
+                                        +--> CARRY OUT
+
+  Wiring in words:
+    SPL_A out1 -> XOR1 in1        SPL_A out2 -> AND1 in1
+    SPL_B out1 -> XOR1 in2        SPL_B out2 -> AND1 in2
+    XOR1 out   -> SPL_X
+    SPL_X out1 -> XOR2 in1        SPL_X out2 -> AND2 in1
+    SPL_C out1 -> XOR2 in2        SPL_C out2 -> AND2 in2
+    XOR2 out   -> SUM (LED or next stage)
+    AND1 out   -> OR in1
+    AND2 out   -> OR in2
+    OR   out   -> CARRY OUT (feeds next stage's SPL_C)
+
+Blocks: 2 XOR, 2 AND, 1 OR, 4 Splitters = 9 blocks per bit.
+Splitter depth added per stage: 2 on the sum path, 1 on the carry path.
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 4: N-INPUT AND CHAIN (combination lock core)
+--------------------------------------------------------------------------------
+  SW1 --\
+         [AND]--\
+  SW2 --/        \
+                  [AND]--\
+  SW3 ------------/       \
+                           [AND] --> OUTPUT
+  SW4 ---------------------/
+
+Blocks: N-1 AND gates for N switches. NO splitters needed - each switch feeds
+exactly one gate. Zero power loss down the whole chain because AND passes the
+greater input. This is the cheapest useful circuit in the game.
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 5: "WRONG ANSWER BREAKS IT" LOCK
+--------------------------------------------------------------------------------
+Plain AND chains only test for ON. To make a switch that must be OFF matter,
+you cannot invert - but XOR gets you close: XOR passes when EXACTLY ONE input
+is live. Wire a decoy switch and the real switch into an XOR: flipping both
+kills the output.
+  SW_real --\
+             [XOR] --> continues into the AND chain
+  SW_decoy -/
+Now the combination is "real ON, decoy OFF". A player who flips everything on
+gets nothing. This is the only "must be off" condition available.
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 6: PULSE STRETCHER / MANUAL OVERRIDE
+--------------------------------------------------------------------------------
+  [CONVEYOR SENSOR] --\
+                       [OR] --> device
+  [SWITCH] -----------/
+Device fires on an automatic pulse OR when you flip the manual switch.
+Swap the OR for an AND to get a SAFETY INTERLOCK instead: the automation only
+runs while you have armed it with the switch.
+
+--------------------------------------------------------------------------------
+SUB-CIRCUIT 7: FLASHER
+--------------------------------------------------------------------------------
+  [GENERATOR] --> [TIMER] --> [SPL] --> LED
+                                   \--> LED
+Toggles at 2s. Remember: only ONE timer per build works. To drive many LEDs off
+it, build a splitter TREE from the timer's output, watching depth (rule 4).
+
+--------------------------------------------------------------------------------
+WHAT YOU CANNOT COOK
+--------------------------------------------------------------------------------
+  NOT gate / inverter ........ impossible, no workaround in-circuit
+  SR latch / memory bit ...... impossible, needs feedback
+  Counter .................... impossible, needs memory
+  Subtractor ................. impossible, needs NOT for two's complement
+  Multiplier ................. impossible at width, needs accumulation
+  Comparator (A < B) ......... impossible, needs inverted terms
+  7-segment BCD decoder ...... impossible to decode from binary (minterms need
+                               inverted inputs). You CAN hand-wire one digit
+                               driven directly from 10 switches, but that is a
+                               lookup panel, not a decoder.
+  Clock divider .............. impossible, timers do not chain

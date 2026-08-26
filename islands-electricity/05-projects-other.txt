@@ -1,0 +1,130 @@
+================================================================================
+05 - OTHER PROJECTS
+Smaller builds, sorted by usefulness. Block counts in 06-bom.txt.
+================================================================================
+
+--------------------------------------------------------------------------------
+P1 - AUTO-FARM OVERFLOW SHUTOFF          [most practical build in this file]
+--------------------------------------------------------------------------------
+Problem: totem farms keep producing after storage is full and items vanish.
+Fix: sense the backup, cut the totems.
+
+  [CONVEYOR SENSOR] --\
+                       [AND] --> [TOTEM DISABLER]
+  [SWITCH "armed"] ---/
+
+  Place the Conveyor Sensor at the END of the output line, past your chests.
+  Items only reach it when everything upstream is full. Its pulse plus the
+  armed switch powers the Totem Disabler, which kills every totem within
+  9.5 blocks until the line clears.
+
+  Blocks: 1 Conveyor Sensor, 1 And Gate, 1 Switch, 1 Totem Disabler, 1 generator.
+  Notes: the sensor pulse is SHORT, so the disabler blips rather than latching
+  (no memory in this game - see rule 6). For sustained shutoff, place the sensor
+  where items sit ON it continuously while backed up, not where they pass by.
+  Requires L3 bench and Forging 36.
+
+--------------------------------------------------------------------------------
+P2 - COMBINATION LOCK / VAULT DOOR
+--------------------------------------------------------------------------------
+  SW1 --\
+         [AND]--\
+  SW2 --/        [AND]--\
+  SW3 -----------/       [XOR] --> [LED green] and/or [SPLIT CONVEYOR]
+  SW4_decoy -------------/
+
+  The AND chain requires SW1-3 all ON. The final XOR means SW4 must be OFF -
+  flipping everything on breaks it. That is the only "must be off" condition
+  available in the game (see cookbook sub-circuit 5).
+
+  Blocks: 4 Switches, 2 And Gates, 1 Xor Gate, 1 LED, 1 generator = 9.
+  Upgrade: replace the LED with a Split Conveyor to physically move a block out
+  of a doorway, or a Totem Disabler to shut down a defensive setup.
+
+--------------------------------------------------------------------------------
+P3 - ANALOG POWER METER / SOLAR SUNDIAL       [underrated - uses the analog side]
+--------------------------------------------------------------------------------
+Power is an amount, so a chain of splitters set to 90/10 makes a bar graph.
+
+  [SOLAR PANEL] -> [SPL 90/10] -> 10% -> LED1
+                        \-90%-> [SPL 90/10] -> 10% -> LED2
+                                     \-90%-> [SPL 90/10] -> 10% -> LED3
+                                                  \-90%-> LED4
+
+  Each LED needs its tap to stay above the lighting threshold. As the Solar
+  Panel's output rises with the sun (0 up to 26), taps cross that threshold one
+  by one and LEDs light in sequence. Point it at a solar panel and you have a
+  clock that reads out time of day. Point it at a coal generator and you have a
+  fuel gauge.
+
+  Blocks: 1 Solar Panel, 3-5 Splitters, 4-6 LEDs.
+  Tuning: this is the one build that needs real in-game experimentation, since
+  the LED minimum power is undocumented. Adjust splitter ratios until the bar
+  spreads across the day nicely.
+
+--------------------------------------------------------------------------------
+P4 - ITEM SORTER / RANDOMIZER
+--------------------------------------------------------------------------------
+Randomizer (wiki-confirmed trick):
+  [GEN] -> [TIMER] -> [SPLIT CONVEYOR]
+  Timer flips every 2s, so items alternate between straight and side output
+  based on when they arrive. Effectively random for a busy line.
+
+Every-item diverter:
+  [CONVEYOR SENSOR] -> [SPLIT CONVEYOR]
+  Sensor pulses when an item passes; the split conveyor kicks it sideways.
+  Place the sensor one belt UPSTREAM of the split conveyor so the pulse lands
+  while the item is on the splitter.
+
+Gated sorter:
+  [CONVEYOR SENSOR] --\
+                       [AND] --> [SPLIT CONVEYOR]
+  [SWITCH] ----------/
+  Divert only while you have the switch armed. Manual sorting mode.
+
+  Blocks: 1-2 Conveyor Sensors, 1 Timer or 1 And Gate + Switch, 1-2 Split
+  Conveyors, 1 generator.
+
+--------------------------------------------------------------------------------
+P5 - ANIMATED LED SIGN / MARQUEE
+--------------------------------------------------------------------------------
+  [STEAM GEN] -> [TIMER] -> splitter tree -> LED grid
+
+  You get ONE 2-second clock (timers do not chain), so you cannot make a
+  scrolling marquee in the classic sense. What you CAN do:
+    - Half the grid on the timer, half on a plain generator = alternating
+      two-frame animation. This is the whole trick.
+    - Vary brightness per LED with splitter ratios (90/10 taps look dimmer).
+    - Add a Button branch so a player press adds a third state for 2 seconds.
+
+  Blocks: 1 Timer, 7 Splitters (for 8 LEDs, depth 3), 8-16 LEDs, 1-2 generators.
+  Watch splitter depth: an 8-LED tree is already 3 deep, a 16-LED tree is 4.
+
+--------------------------------------------------------------------------------
+P6 - AUTOMATIC FIREWORK SHOW
+--------------------------------------------------------------------------------
+  [STEAM GEN] -> [TIMER] -> [SPL] -> [SPL] -> 4x [FIREWORK LAUNCHER]
+
+  One firework per power-on, 90 held per launcher, so 4 launchers = 360
+  fireworks, firing 4 at a time every 2 seconds = about 3 minutes of show.
+
+  Staggered finale trick: set the splitters to lopsided ratios (90/10). The
+  starved branches sit near the firing threshold, so as the generator's output
+  fluctuates they drop in and out while the strong branch fires steadily.
+
+  Blocks: 3 Splitters, 1 Timer, 4 Firework Launchers, 1 Steam Generator.
+  Cost warning: launchers are 100 Iron + 50 Steel Bolt EACH. 400 iron for four.
+  Add a Switch between generator and timer so you can turn the show off.
+
+--------------------------------------------------------------------------------
+P7 - BASE SECURITY LIGHTING
+--------------------------------------------------------------------------------
+  [CONVEYOR SENSOR at entrance] --\
+                                   [OR] --> [SPLITTER tree] --> LEDs + Fireworks
+  [SWITCH manual panic] ---------/
+
+  Run a short conveyor across your doorway. Anything that rides it trips the
+  sensor and lights the base / launches a firework as an alarm. The OR gate
+  gives you a manual trigger too.
+  Blocks: 1 Conveyor Sensor, 1 Or Gate, 1 Switch, 3 Splitters, 4 LEDs,
+          optional 1 Firework Launcher, 1 generator.

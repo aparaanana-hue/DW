@@ -1,0 +1,122 @@
+================================================================================
+06 - BILL OF MATERIALS
+Block counts and raw materials per project.
+================================================================================
+
+--------------------------------------------------------------------------------
+UNIT COSTS (per single block)
+--------------------------------------------------------------------------------
+Block               Iron  Electrite  Other                      Bench
+------------------  ----  ---------  -------------------------  -----
+LED Light              2          8  -                          L1
+Button                 2         10  -                          L2
+Switch                 5         20  -                          L1
+And Gate              10         15  -                          L2
+Or Gate               10         15  -                          L2
+Xor Gate              20         40  -                          L2
+Splitter               8         25  -                          L2
+Combiner               8         25  -                          L2
+Timer                 20         40  -                          L3
+Coal Generator        40          4  -                          L1
+Split Conveyor         -         20  1 Crystallized Iron,
+                                     4 Steel Rod                L2
+Conveyor Sensor        -         50  1 Conveyor Belt,
+                                     3 Ruby Skorp Scale         L3 + Forging 36
+Totem Disabler         -        100  10 Red Bronze Ingot,
+                                     10 Steel Bolt              L3
+Solar Panel            -        100  10 Steel Ingot,
+                                     10 Copper Bolt             L2
+Steam Generator        -        150  1 Gearbox, 20 Copper Bolt  L3
+Firework Launcher    100          -  50 Steel Bolt              L1
+
+Cheapest block: LED Light (2 iron, 8 electrite).
+Most expensive per-unit: Steam Generator (150 electrite) / Firework Launcher
+(100 iron + 50 steel bolt).
+
+================================================================================
+PROJECT 04 - 4-BIT CALCULATOR (the big one)
+================================================================================
+Blocks:
+   7 x Xor Gate ............ 140 Iron ...  280 Electrite
+   7 x And Gate .............  70 Iron ...  105 Electrite
+   3 x Or Gate ..............  30 Iron ...   45 Electrite
+  14 x Splitter ............. 112 Iron ...  350 Electrite
+   8 x Switch ...............  40 Iron ...  160 Electrite
+   5 x LED Light ............  10 Iron ...   40 Electrite
+   2 x Steam Generator ......   0 Iron ...  300 Electrite
+                                            + 2 Gearbox, 40 Copper Bolt
+  -----------------------------------------------------------------
+  46 blocks total          TOTAL: 402 Iron Ingot, 1280 Electrite,
+                                  2 Gearbox, 40 Copper Bolt
+
+  Budget substitute: swap the 2 Steam Generators for 4 Coal Generators
+  (160 Iron, 16 Electrite) - cheaper on electrite, worse on power headroom,
+  and you will probably need to fiddle with splitter ratios.
+
+  Per extra bit beyond 4 bits: 2 Xor, 2 And, 1 Or, 4 Splitter, 2 Switch, 1 LED
+  = 106 Iron, 300 Electrite, 11 blocks. Consider one more generator per 2 bits.
+
+================================================================================
+SMALL PROJECTS
+================================================================================
+P1 - AUTO-FARM OVERFLOW SHUTOFF                              5 blocks
+  1 Conveyor Sensor, 1 And Gate, 1 Switch, 1 Totem Disabler, 1 Coal Generator
+  TOTAL: 55 Iron, 189 Electrite, 10 Red Bronze Ingot, 10 Steel Bolt,
+         3 Ruby Skorp Scale, 1 Conveyor Belt
+  Requires L3 bench + Forging 36.
+
+P2 - COMBINATION LOCK                                        9 blocks
+  4 Switch, 2 And Gate, 1 Xor Gate, 1 LED Light, 1 Coal Generator
+  TOTAL: 102 Iron, 162 Electrite
+  Cheapest genuinely "smart" build here. Good first project after the flasher.
+
+P3 - ANALOG POWER METER / SUNDIAL                           10 blocks
+  1 Solar Panel, 4 Splitter, 5 LED Light
+  TOTAL: 42 Iron, 240 Electrite, 10 Steel Ingot, 10 Copper Bolt
+
+P4 - ITEM SORTER / RANDOMIZER                                6 blocks
+  1 Conveyor Sensor, 1 Timer, 1 Split Conveyor, 1 And Gate, 1 Switch,
+  1 Coal Generator
+  TOTAL: 75 Iron, 149 Electrite, 1 Crystallized Iron, 4 Steel Rod,
+         3 Ruby Skorp Scale, 1 Conveyor Belt
+
+P5 - ANIMATED LED SIGN (12 LEDs)                            21 blocks
+  1 Timer, 7 Splitter, 12 LED Light, 1 Coal Generator
+  TOTAL: 140 Iron, 315 Electrite
+
+P6 - AUTOMATIC FIREWORK SHOW                                 9 blocks
+  1 Timer, 3 Splitter, 4 Firework Launcher, 1 Steam Generator
+  TOTAL: 444 Iron, 265 Electrite, 200 Steel Bolt, 20 Copper Bolt, 1 Gearbox
+  By far the most iron-hungry build. Launchers are 100 iron each.
+
+P7 - BASE SECURITY LIGHTING                                 11 blocks
+  1 Conveyor Sensor, 1 Or Gate, 1 Switch, 3 Splitter, 4 LED Light,
+  1 Coal Generator
+  TOTAL: 87 Iron, 196 Electrite, 3 Ruby Skorp Scale, 1 Conveyor Belt
+
+================================================================================
+SUGGESTED BUILD ORDER (cheap -> expensive, each teaches the next)
+================================================================================
+  1. Flasher      (timer + splitter + 2 LEDs)     - learn the wire tool
+  2. P2 Lock      (9 blocks)                      - learn AND chains and XOR
+  3. P3 Meter     (10 blocks)                     - learn analog splitter ratios
+  4. P1 Shutoff   (5 blocks, needs L3+Forging 36) - actually useful
+  5. Half adder   (4 blocks, cookbook #2)         - prove XOR+AND before scaling
+  6. P04 Calculator (46 blocks)                   - the real project
+
+================================================================================
+GRAND TOTAL - EVERYTHING IN THIS PACK
+================================================================================
+  Iron Ingot ......... ~1347
+  Electrite .......... ~2796
+  Steel Bolt ..........  210
+  Copper Bolt .........   70
+  Steel Ingot .........   10
+  Red Bronze Ingot ....   10
+  Ruby Skorp Scale ....    9
+  Conveyor Belt .......    3
+  Steel Rod ...........    4
+  Crystallized Iron ...    1
+  Gearbox .............    2
+
+  Electrite is the binding constraint on nearly everything. Farm it first.
