@@ -1051,9 +1051,10 @@ testSec:AddButton({
 
 -- ===========================================================================
 -- Save Instance is the whole of this tab. Decompiling used to live here and
--- has been removed: MacSploit exposes no decompile(), and the Konstant
--- fallback Dex falls back to is only an HTTP client for api.plusgiant5.com,
--- which is unreachable. Neither tier worked, so neither is worth carrying.
+-- has been removed: the Konstant fallback Dex leans on is only an HTTP client
+-- for api.plusgiant5.com, which is unreachable. Whatever decompile() the
+-- executor exposes is still used by the class dump below, which reports per
+-- script whether it worked.
 local DL, DR = DevTab:AddLeft(), DevTab:AddRight()
 
 -- ---------------------------------------------------------------------------
@@ -1215,6 +1216,56 @@ saveSec:AddDropdown({
 -- freezing the client outright.
 local SCAN_YIELD_EVERY = 2000
 
+-- Why a script has no source, in the order the reasons actually apply.
+--
+-- A server Script is not a decompile failure at all: its bytecode never leaves
+-- the server, so the client holds an instance with nothing inside it. No
+-- executor can recover those, and lumping them in with real failures made it
+-- look like decompile was broken when it was just being handed empty shells.
+--
+-- .Source is tried before decompile because executors that allow the read hand
+-- back the genuine article rather than a reconstruction. It errors with a
+-- capability complaint when they do not, which is why it is pcall'd.
+--
+-- Returns the text to write, plus a tally key: "source", "decompiled",
+-- "serverscript" or "failed".
+local function scriptText(d, cls, canDecompile)
+    local ok, src = pcall(function() return d.Source end)
+    if ok and type(src) == "string" and src ~= "" then
+        return src, "source"
+    end
+
+    -- RunContext.Client makes a "Script" run locally, so it does have client
+    -- bytecode - only the server-run ones are hopeless.
+    if cls == "Script" then
+        local ctx
+        pcall(function() ctx = tostring(d.RunContext) end)
+        if ctx ~= "Enum.RunContext.Client" then
+            return "-- (server Script - its source never leaves the server, "
+                .. "nothing to decompile)", "serverscript"
+        end
+    end
+
+    if not canDecompile then
+        return "-- (no decompile() on this executor)", "failed"
+    end
+
+    local dok, res = pcall(decompile, d)
+    if not dok then
+        -- The executor's own error, verbatim. This is the line that tells you
+        -- whether decompile is a working function refusing one script or a stub
+        -- that throws on everything.
+        return "-- (decompile errored: " .. tostring(res):gsub("%s+", " ") .. ")", "failed"
+    end
+    if type(res) ~= "string" then
+        return "-- (decompile returned " .. typeof(res) .. ", not source)", "failed"
+    end
+    if res == "" then
+        return "-- (decompile returned an empty string)", "failed"
+    end
+    return res, "decompiled"
+end
+
 -- Walks a fixed set of roots rather than all of game: the services a full
 -- saveinstance reaches (nil instances, CoreGui, network internals) are exactly
 -- the ones that trip detection, and none of them hold what a class filter is
@@ -1242,6 +1293,9 @@ local function collectSelected(report)
 
     local canDecompile = typeof(decompile) == "function"
     local out, count, scanned = {}, 0, 0
+    -- Tallied per script so the header can say what actually happened, rather
+    -- than leaving one generic failure line to be read as "decompile is broken".
+    local tally = { source = 0, decompiled = 0, serverscript = 0, failed = 0 }
     table.insert(out, "-- Selected-class save of " .. gameName())
     table.insert(out, "-- PlaceId " .. tostring(game.PlaceId)
         .. " - " .. os.date("%Y-%m-%d %H:%M:%S"))
@@ -1273,16 +1327,13 @@ local function collectSelected(report)
                         local isSrc = false
                         pcall(function() isSrc = d:IsA("LuaSourceContainer") end)
                         if isSrc then
-                            if canDecompile then
-                                local dok, src = pcall(decompile, d)
-                                table.insert(out,
-                                    (dok and type(src) == "string" and src ~= "")
-                                    and src or "-- (decompile failed)")
-                                -- decompile is the slowest thing in the loop, so
-                                -- give a frame back after every one.
+                            local text, kind = scriptText(d, cls, canDecompile)
+                            table.insert(out, text)
+                            tally[kind] = (tally[kind] or 0) + 1
+                            -- Only the decompile path is slow enough to be worth
+                            -- a frame; a server Script cost nothing to skip.
+                            if kind == "decompiled" or kind == "failed" then
                                 task.wait()
-                            else
-                                table.insert(out, "-- (no decompile() on this executor)")
                             end
                         end
                         table.insert(out, "")
@@ -1296,7 +1347,14 @@ local function collectSelected(report)
         return nil, "No instances of the chosen classes found in the usual roots."
     end
     report(string.format("Scanned %d, kept %d. Packing...", scanned, count))
+    local scripts = tally.source + tally.decompiled + tally.serverscript + tally.failed
     out[3] = "-- " .. count .. " instances"
+    if scripts > 0 then
+        out[3] = out[3] .. string.format(
+            "  (%d scripts: %d read from .Source, %d decompiled, "
+            .. "%d server Scripts with no client source, %d failed)",
+            scripts, tally.source, tally.decompiled, tally.serverscript, tally.failed)
+    end
     return table.concat(out, "\n"), nil
 end
 
