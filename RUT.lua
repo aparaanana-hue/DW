@@ -5,9 +5,9 @@
 -- worse version of each. Everything here acts on YOUR client: movement,
 -- rendering and camera. Nothing reaches into another player's session.
 --
--- The "?t=" is not decoration: raw.githubusercontent is behind a CDN that
--- serves a stale copy for minutes after a push, so without it you can
--- re-execute all day and still get the old library.
+-- Plain URLs, no cache-buster, matching every other script in this repo.
+-- raw.githubusercontent sits behind a CDN with a five minute TTL, so after a
+-- push give it a moment before deciding a fix did not work.
 -- The executor globals table. Not every executor exposes getgenv, and on the
 -- ones that do not, a fallback table is enough: it only has to survive within
 -- one execution for the unload hook below to be reachable from the next one.
@@ -23,19 +23,17 @@ if type(ENV.RUT_UNLOAD) == "function" then
     ENV.RUT_UNLOAD = nil
 end
 
--- Where to fetch this file from when re-queueing across a teleport. Same
--- cache-buster reasoning as the library URL below.
+-- Where to fetch this file from when re-queueing across a teleport.
 local RUT_URL = "https://raw.githubusercontent.com/aparaanana-hue/DW/"
     .. "refs/heads/main/RUT.lua"
 
 local Duvome = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"
-        .. "?t=" .. tostring(os.time())))()
+    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
 
--- Bumped on every push. If the About panel and the load notification do not
--- show the newest one, the script came from a cache rather than from GitHub -
--- which looks exactly like a fix that did not work.
-local RUT_BUILD = "Aug 26 14:30"
+-- Bumped on every push. If the About panel does not show the newest one, the
+-- CDN is still serving a cached copy - wait out the five minute TTL rather than
+-- chasing a bug that is not there.
+local RUT_BUILD = "Aug 27 09:00"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -103,10 +101,7 @@ local function queueSelf()
         or (syn and syn.queue_on_teleport)
         or (fluxus and fluxus.queue_on_teleport)
     if not q then return false end
-    -- os.time() is evaluated on arrival, not now, so the queued copy busts the
-    -- CDN cache the same way the initial load does.
-    local ok = pcall(q, [[loadstring(game:HttpGet("]] .. RUT_URL
-        .. [[?t=" .. tostring(os.time())))()]])
+    local ok = pcall(q, [[loadstring(game:HttpGet("]] .. RUT_URL .. [["))()]])
     return ok
 end
 
