@@ -33,7 +33,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel does not show the newest one, the
 -- CDN is still serving a cached copy - wait out the five minute TTL rather than
 -- chasing a bug that is not there.
-local RUT_BUILD = "Aug 27 09:00"
+local RUT_BUILD = "Aug 27 10:15"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -157,6 +157,7 @@ local CharTab  = Window:MakeTab({Name = "Character", Icon = "backpack", Columns 
 local ViewTab  = Window:MakeTab({Name = "Visuals",   Icon = "tag",      Columns = true})
 local PlayTab  = Window:MakeTab({Name = "Players",   Icon = "house",    Columns = true})
 local ServTab  = Window:MakeTab({Name = "Server",    Icon = "code",     Columns = true})
+local DevTab   = Window:MakeTab({Name = "Dev",       Icon = "wrench",   Columns = true})
 local SetTab   = Window:MakeTab({Name = "Settings",  Icon = "gear",     Columns = true})
 
 -- ===========================================================================
@@ -1027,11 +1028,338 @@ testSec:AddButton({
                 return type(b) == "string" and #b > 0
             end)
             check("teleport service",  function() return TeleportService ~= nil end)
+            check("writefile (dumps)", function() return typeof(writefile) == "function" end)
+            check("queue_on_teleport", function()
+                return typeof(queue_on_teleport) == "function"
+                    or (syn and syn.queue_on_teleport) ~= nil
+            end)
 
             local head = bad == 0 and ("All " .. #lines .. " checks passed.")
                 or (bad .. " of " .. #lines .. " FAILED.")
             pcall(function() R.testOut:Set(head .. "\n\n" .. table.concat(lines, "\n")) end)
             notify(bad == 0 and "Self Test" or "Self Test Failed", head, 6)
+        end)
+    end,
+})
+
+
+-- ===========================================================================
+-- DEV
+-- ===========================================================================
+-- Module dumping. The name "decompile" oversells what any of this can do: a
+-- ModuleScript's bytecode is not recoverable from a running client, so what
+-- happens here is require() the module and serialise the TABLE IT RETURNS.
+-- Config, keys, stat tables and remote name maps come out intact. Functions do
+-- not - they cannot, there is no source behind them at runtime, only a pointer.
+--
+-- The published one-level tostring() version of this idea returns
+-- "table: 0x55f3a1" for every nested field, which is exactly the part you
+-- wanted to read. Hence the recursive serialiser below.
+local DL, DR = DevTab:AddLeft(), DevTab:AddRight()
+
+local dumpSec = DL:AddSection({Name = "Module Dump"})
+
+dumpSec:AddParagraph("How this works",
+    "Enter a ModuleScript path, then dump the table it returns.\n\n" ..
+    "require() RUNS the module in your client. Do not point this at a\n" ..
+    "module you have reason to distrust.")
+
+local RESERVED = {
+    ["and"]=true,["break"]=true,["do"]=true,["else"]=true,["elseif"]=true,
+    ["end"]=true,["false"]=true,["for"]=true,["function"]=true,["if"]=true,
+    ["in"]=true,["local"]=true,["nil"]=true,["not"]=true,["or"]=true,
+    ["repeat"]=true,["return"]=true,["then"]=true,["true"]=true,["until"]=true,
+    ["while"]=true,["continue"]=true,
+}
+
+-- Bare identifier keys read as `Ammo = 30`; everything else has to go through
+-- the bracket form or the output will not load back in.
+local function isIdent(k)
+    return type(k) == "string"
+        and k:match("^[%a_][%w_]*$") ~= nil
+        and not RESERVED[k]
+end
+
+-- Roblox datatypes have no literal syntax, so they are emitted as the
+-- constructor call that rebuilds them. Anything unrecognised falls through to
+-- tostring() inside a comment rather than producing a file that will not load.
+local function roblox(v)
+    local t = typeof(v)
+    if t == "Vector3" then
+        return string.format("Vector3.new(%s, %s, %s)", v.X, v.Y, v.Z)
+    elseif t == "Vector2" then
+        return string.format("Vector2.new(%s, %s)", v.X, v.Y)
+    elseif t == "Color3" then
+        return string.format("Color3.new(%s, %s, %s)", v.R, v.G, v.B)
+    elseif t == "UDim2" then
+        return string.format("UDim2.new(%s, %s, %s, %s)",
+            v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset)
+    elseif t == "UDim" then
+        return string.format("UDim.new(%s, %s)", v.Scale, v.Offset)
+    elseif t == "CFrame" then
+        return "CFrame.new(" .. table.concat({v:GetComponents()}, ", ") .. ")"
+    elseif t == "BrickColor" then
+        return string.format("BrickColor.new(%q)", v.Name)
+    elseif t == "EnumItem" then
+        return tostring(v)
+    elseif t == "Instance" then
+        -- The path, not the instance: a dump is read later, when this
+        -- particular instance is long gone.
+        return string.format("--[[ Instance ]] %q", v:GetFullName())
+    end
+    return nil
+end
+
+local function serialise(v, depth, maxDepth, seen, out)
+    local t = type(v)
+
+    if t == "string" then
+        table.insert(out, string.format("%q", v))
+        return
+    elseif t == "number" then
+        -- inf and nan are valid numbers and invalid Lua literals.
+        if v ~= v then table.insert(out, "0/0 --[[ nan ]]")
+        elseif v == math.huge then table.insert(out, "math.huge")
+        elseif v == -math.huge then table.insert(out, "-math.huge")
+        else table.insert(out, tostring(v)) end
+        return
+    elseif t == "boolean" or t == "nil" then
+        table.insert(out, tostring(v))
+        return
+    elseif t == "function" then
+        -- The honest answer. A function at runtime is a pointer; there is no
+        -- source to recover, and writing tostring() here would put a useless
+        -- memory address in the file.
+        table.insert(out, "nil --[[ function, not recoverable ]]")
+        return
+    elseif t ~= "table" then
+        local r = roblox(v)
+        table.insert(out, r or ("nil --[[ " .. typeof(v) .. " ]]"))
+        return
+    end
+
+    -- Tables from here down.
+    local r = roblox(v)
+    if r then table.insert(out, r); return end
+
+    if seen[v] then
+        table.insert(out, "nil --[[ cycle ]]")
+        return
+    end
+    if depth >= maxDepth then
+        table.insert(out, "nil --[[ depth limit ]]")
+        return
+    end
+    seen[v] = true
+
+    local pad, padIn = string.rep("    ", depth), string.rep("    ", depth + 1)
+    local keys, arrayLen = {}, 0
+    for i = 1, #v do arrayLen = i end
+    for k in pairs(v) do
+        if not (type(k) == "number" and k % 1 == 0 and k >= 1 and k <= arrayLen) then
+            table.insert(keys, k)
+        end
+    end
+    -- pairs() order is undefined, so an unsorted dump reshuffles itself on
+    -- every run and diffs against the previous one are unreadable.
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+
+    if arrayLen == 0 and #keys == 0 then
+        table.insert(out, "{}")
+        seen[v] = nil
+        return
+    end
+
+    table.insert(out, "{\n")
+    for i = 1, arrayLen do
+        table.insert(out, padIn)
+        serialise(v[i], depth + 1, maxDepth, seen, out)
+        table.insert(out, ",\n")
+    end
+    for _, k in ipairs(keys) do
+        table.insert(out, padIn)
+        if isIdent(k) then
+            table.insert(out, k .. " = ")
+        else
+            table.insert(out, "[")
+            serialise(k, depth + 1, maxDepth, seen, out)
+            table.insert(out, "] = ")
+        end
+        serialise(v[k], depth + 1, maxDepth, seen, out)
+        table.insert(out, ",\n")
+    end
+    table.insert(out, pad .. "}")
+
+    -- Cleared on the way out, not left set: the same table appearing twice as
+    -- siblings is not a cycle, and marking it one would silently drop data.
+    seen[v] = nil
+end
+
+-- "game.ReplicatedStorage.Modules.Guns" -> the instance, or nil and a reason.
+-- FindFirstChild rather than dot indexing so a wrong path reports which
+-- segment was wrong instead of throwing.
+local function resolvePath(path)
+    path = tostring(path or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if path == "" then return nil, "Path is empty" end
+
+    local node, walked = game, "game"
+    local first = true
+    for seg in path:gmatch("[^%.]+") do
+        if first and (seg == "game" or seg == "Game") then
+            first = false
+        else
+            first = false
+            local nxt = node:FindFirstChild(seg)
+            if not nxt then
+                return nil, "No child '" .. seg .. "' under " .. walked
+            end
+            node, walked = nxt, walked .. "." .. seg
+        end
+    end
+    if node == game then return nil, "Path resolved to game itself" end
+    return node
+end
+
+local dumpPath, dumpDepth = "", 6
+
+dumpSec:AddTextbox({
+    Name = "Module Path", Default = "", TextDisappear = false,
+    Callback = function(text) dumpPath = text end,
+})
+
+dumpSec:AddSlider({
+    Name = "Max Depth", Min = 1, Max = 20, Default = 6, Color = nil,
+    Increment = 1, ValueName = " deep",
+    Callback = function(v) dumpDepth = v end,
+})
+
+-- Returns source text, or nil and a reason.
+local function buildDump()
+    local inst, why = resolvePath(dumpPath)
+    if not inst then return nil, why end
+    if not inst:IsA("ModuleScript") then
+        return nil, inst.Name .. " is a " .. inst.ClassName .. ", not a ModuleScript"
+    end
+
+    local ok, result = pcall(require, inst)
+    if not ok then
+        return nil, "require() errored: " .. tostring(result)
+    end
+
+    local out = {}
+    table.insert(out, "-- " .. inst:GetFullName() .. "\n")
+    table.insert(out, "-- Dumped by RUT " .. RUT_BUILD .. "\n")
+    table.insert(out, "--\n")
+    table.insert(out, "-- This is the VALUE the module returned, serialised.\n")
+    table.insert(out, "-- It is not the module's source, and function bodies\n")
+    table.insert(out, "-- are not present - they do not exist at runtime.\n\n")
+    table.insert(out, "return ")
+    serialise(result, 0, dumpDepth, {}, out)
+    table.insert(out, "\n")
+    return table.concat(out)
+end
+
+local dumpOut = DR:AddSection({Name = "Result"})
+R.dumpInfo = dumpOut:AddParagraph("Dump", "Nothing dumped yet.")
+
+dumpSec:AddButton({
+    Name = "Dump To File",
+    Tooltip = "Writes the module's returned table to RUT/dumps.",
+    Callback = function()
+        task.spawn(function()
+            local src, why = buildDump()
+            if not src then
+                pcall(function() R.dumpInfo:Set(why) end)
+                notify("Dump Failed", why, 6)
+                return
+            end
+            if typeof(writefile) ~= "function" then
+                if setclipboard then setclipboard(src) end
+                local m = "No writefile on this executor - copied to clipboard instead."
+                pcall(function() R.dumpInfo:Set(m) end)
+                notify("Dump", m, 6)
+                return
+            end
+            pcall(function() if makefolder then makefolder("RUT") end end)
+            pcall(function() if makefolder then makefolder("RUT/dumps") end end)
+            local name = (resolvePath(dumpPath) or {}).Name or "module"
+            local file = "RUT/dumps/" .. tostring(name) .. "_" .. os.time() .. ".lua"
+            local wrote = pcall(writefile, file, src)
+            local m = wrote and ("Wrote " .. #src .. " bytes to\n" .. file)
+                or "writefile failed"
+            pcall(function() R.dumpInfo:Set(m) end)
+            notify("Dump", m, 6)
+        end)
+    end,
+})
+
+dumpSec:AddButton({
+    Name = "Dump To Clipboard",
+    Tooltip = "Same dump, straight to the clipboard.",
+    Callback = function()
+        task.spawn(function()
+            local src, why = buildDump()
+            if not src then
+                pcall(function() R.dumpInfo:Set(why) end)
+                notify("Dump Failed", why, 6)
+                return
+            end
+            if setclipboard then
+                setclipboard(src)
+                local m = "Copied " .. #src .. " bytes to clipboard."
+                pcall(function() R.dumpInfo:Set(m) end)
+                notify("Dump", m, 5)
+            else
+                notify("Dump", "No setclipboard on this executor", 5)
+            end
+        end)
+    end,
+})
+
+-- Saves guessing at paths. Deliberately not recursive into every descendant of
+-- game: on a large place that is a six figure instance walk and it will hang
+-- the client for long enough to look like a crash.
+local findSec = DL:AddSection({Name = "Find Modules"})
+
+findSec:AddButton({
+    Name = "List Modules",
+    Tooltip = "Lists ModuleScripts in ReplicatedStorage, Workspace and the player.",
+    Callback = function()
+        task.spawn(function()
+            local roots = {
+                game:GetService("ReplicatedStorage"),
+                game:GetService("ReplicatedFirst"),
+                game:GetService("Lighting"),
+                workspace,
+                LP:FindFirstChild("PlayerScripts"),
+                LP:FindFirstChild("PlayerGui"),
+            }
+            local found = {}
+            for _, root in ipairs(roots) do
+                if root then
+                    pcall(function()
+                        for _, d in ipairs(root:GetDescendants()) do
+                            if d:IsA("ModuleScript") then
+                                table.insert(found, d:GetFullName())
+                                if #found >= 200 then return end
+                            end
+                        end
+                    end)
+                end
+                if #found >= 200 then break end
+            end
+            table.sort(found)
+            local head = #found == 0 and "No ModuleScripts found in the usual places."
+                or (#found .. (#found >= 200 and "+ (capped)" or "") .. " found:")
+            pcall(function()
+                R.dumpInfo:Set(head .. "\n\n" .. table.concat(found, "\n"))
+            end)
+            if setclipboard and #found > 0 then
+                setclipboard(table.concat(found, "\n"))
+                notify("Find Modules", head .. "\nPaths copied to clipboard.", 6)
+            else
+                notify("Find Modules", head, 6)
+            end
         end)
     end,
 })
