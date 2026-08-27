@@ -33,7 +33,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel does not show the newest one, the
 -- CDN is still serving a cached copy - wait out the five minute TTL rather than
 -- chasing a bug that is not there.
-local RUT_BUILD = "Aug 27 10:15"
+local RUT_BUILD = "Aug 27 12:45"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -954,7 +954,7 @@ local function stopEverything()
     for name in pairs(R.conns) do unbind(name) end
     -- Toggles do not know their feature was stopped from under them, so put the
     -- switches back by hand or the UI claims things are still running.
-    for _, t in ipairs({R.flyToggle, R.noclipToggle}) do
+    for _, t in ipairs({R.flyToggle, R.noclipToggle, R.saveToggle}) do
         if t then pcall(function() t:Set(false) end) end
     end
     R.flyOn, R.noclipOn, R.infJumpOn = false, false, false
@@ -1029,6 +1029,12 @@ testSec:AddButton({
             end)
             check("teleport service",  function() return TeleportService ~= nil end)
             check("writefile (dumps)", function() return typeof(writefile) == "function" end)
+            check("saveinstance",      function() return typeof(saveinstance) == "function" end)
+            check("request (uploads)", function()
+                return (syn and syn.request) or (fluxus and fluxus.request)
+                    or typeof(http_request) == "function"
+                    or typeof(request) == "function" or false
+            end)
             check("queue_on_teleport", function()
                 return typeof(queue_on_teleport) == "function"
                     or (syn and syn.queue_on_teleport) ~= nil
@@ -1361,6 +1367,259 @@ findSec:AddButton({
                 notify("Find Modules", head, 6)
             end
         end)
+    end,
+})
+
+
+-- ---------------------------------------------------------------------------
+-- Save Instance
+-- ---------------------------------------------------------------------------
+-- saveinstance() serialises the client's copy of the game to disk. That copy
+-- is client-side only: LocalScripts, ModuleScripts and models the client can
+-- see. Server Scripts never replicate, so they are not in the file - this is a
+-- backup of what your machine holds, not the whole place.
+--
+-- Default upload target, mirroring IAB's saveWebhook. The field below is
+-- pre-filled with this and can be overwritten at runtime; SaveConfig then keeps
+-- whatever it holds. This URL is plaintext in a public repo - anyone reading the
+-- repo can see it, so rotate it in Discord if it ever gets abused.
+local SAVE_WEBHOOK = "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE"
+
+local saveSec = DR:AddSection({Name = "Save Instance"})
+
+saveSec:AddParagraph("Client-side scripts & models",
+    "Saves the game to a file, then uploads it to your Discord webhook.\n\n" ..
+    "Discord rejects uploads over ~8 MB, so large games save locally but do\n" ..
+    "not send. The local file is always kept either way.")
+
+-- Human-readable game name, for the filename and the Discord message. The
+-- product info call can yield and can fail on some places, so it is pcall'd and
+-- falls back to the raw PlaceId rather than leaving the file unnamed.
+local function gameName()
+    local ok, info = pcall(function()
+        return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+    end)
+    if ok and type(info) == "table" and info.Name and info.Name ~= "" then
+        return info.Name
+    end
+    return "Place_" .. tostring(game.PlaceId)
+end
+
+-- Strips anything that is not safe in a filename. Game names contain spaces,
+-- emoji and slashes, and a slash in particular would send the save into a
+-- folder that does not exist.
+local function safeName(s)
+    return (tostring(s):gsub("[^%w%-_]", "_")):sub(1, 60)
+end
+
+-- Executors disagree on what the request function is called. None of these is
+-- game:HttpGet - that cannot POST a body or set headers, which the multipart
+-- upload below needs.
+local function httpRequest()
+    return (syn and syn.request)
+        or (http and http.request)
+        or (fluxus and fluxus.request)
+        or (typeof(http_request) == "function" and http_request)
+        or (typeof(request) == "function" and request)
+        or nil
+end
+
+-- saveinstance's option table is spelled differently across executors, so the
+-- typed call is tried first and a bare saveinstance() is the fallback. Returns
+-- the base filename it asked for, so the reader below knows what to look for.
+local function runSaveInstance(base)
+    if typeof(saveinstance) ~= "function" then
+        return nil, "This executor has no saveinstance()"
+    end
+    local opts = {
+        FileName = base, filename = base,
+        mode = "optimized",
+        scripts = true, Scripts = true,
+        decompile = true, DecompileTimeout = 10,
+    }
+    local ok, err = pcall(saveinstance, opts)
+    if not ok then
+        local ok2, err2 = pcall(saveinstance)
+        if not ok2 then
+            return nil, "saveinstance errored: " .. tostring(err2 or err)
+        end
+    end
+    return base
+end
+
+-- saveinstance does not report where it wrote, and the folder varies by
+-- executor, so the likely paths are probed with isfile until one reads back.
+local function readSaved(base)
+    if typeof(readfile) ~= "function" then
+        return nil, nil, "This executor has no readfile()"
+    end
+    local candidates = {
+        base .. ".rbxlx", base .. ".rbxm", base .. ".rbxl",
+        "saveinstance/" .. base .. ".rbxlx",
+        "saveinstance/" .. base .. ".rbxm",
+        "SynSaveInstance/" .. base .. ".rbxlx",
+    }
+    for _, path in ipairs(candidates) do
+        local exists = (typeof(isfile) == "function") and isfile(path)
+        if exists then
+            local ok, data = pcall(readfile, path)
+            if ok and type(data) == "string" and #data > 0 then
+                return data, path
+            end
+        end
+    end
+    return nil, nil, "Saved, but the file was not found to upload (kept on disk)."
+end
+
+-- JSON string escaping, enough for a game name in the "content" field. Not a
+-- general encoder - it only has to survive the characters a place title holds.
+local function jsonStr(s)
+    s = tostring(s)
+    s = s:gsub("\\", "\\\\"):gsub('"', '\\"')
+    s = s:gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t")
+    return '"' .. s .. '"'
+end
+
+local DISCORD_LIMIT = 8 * 1024 * 1024
+
+-- Posts the saved file to the webhook as multipart/form-data. Discord will not
+-- take a file over its size cap, so that case is caught here and reported
+-- rather than fired off to be silently 413'd.
+local function sendToWebhook(url, fname, data, label)
+    local req = httpRequest()
+    if not req then return false, "This executor exposes no request() for uploads." end
+    if #data > DISCORD_LIMIT then
+        return false, string.format(
+            "File is %.1f MB, over Discord's ~8 MB webhook limit. Kept on disk.",
+            #data / 1024 / 1024)
+    end
+
+    local boundary = "RUTb" .. tostring(math.random(1, 1e9))
+    local payload = '{"content":' .. jsonStr(label) .. "}"
+    local body = table.concat({
+        "--" .. boundary,
+        'Content-Disposition: form-data; name="payload_json"',
+        "Content-Type: application/json",
+        "",
+        payload,
+        "--" .. boundary,
+        'Content-Disposition: form-data; name="files[0]"; filename="' .. fname .. '"',
+        "Content-Type: application/octet-stream",
+        "",
+        data,
+        "--" .. boundary .. "--",
+        "",
+    }, "\r\n")
+
+    local ok, resp = pcall(req, {
+        Url = url, Method = "POST",
+        Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+        Body = body,
+    })
+    if not ok then return false, "Upload errored: " .. tostring(resp) end
+
+    local code = resp and (resp.StatusCode or resp.status_code or resp.Status) or 0
+    if type(code) == "number" and code >= 200 and code < 300 then
+        return true, "Uploaded to Discord (" .. #data .. " bytes)."
+    end
+    return false, "Discord replied " .. tostring(code) .. ". Kept on disk."
+end
+
+-- One save-and-send. Shared by the manual button and the interval loop so they
+-- cannot drift apart. Reports every outcome to the status paragraph.
+local function saveAndSend()
+    local base = safeName(gameName())
+    local set = function(m)
+        pcall(function() R.saveInfo:Set(m) end)
+    end
+    set("Saving " .. base .. "...")
+
+    local got, err = runSaveInstance(base)
+    if not got then set(err); notify("Save Instance", err, 6); return false end
+
+    local data, path, rerr = readSaved(base)
+    if not data then
+        set(rerr); notify("Save Instance", rerr, 6); return true
+    end
+
+    local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
+    if url == "" then
+        local m = "Saved to " .. path .. "\nNo webhook set, so not sent."
+        set(m); notify("Save Instance", "Saved locally, no webhook set.", 6)
+        return true
+    end
+
+    local fname = path:match("[^/]+$") or (base .. ".rbxlx")
+    local label = gameName() .. " - client-side scripts & models\n"
+        .. "PlaceId " .. tostring(game.PlaceId) .. " - " .. os.date("%Y-%m-%d %H:%M:%S")
+    local sok, smsg = sendToWebhook(url, fname, data, label)
+    local m = "Saved to " .. path .. "\n" .. smsg
+    set(m)
+    notify(sok and "Save Instance" or "Save Instance (not sent)", smsg, 6)
+    return true
+end
+
+R.webhookUrl = SAVE_WEBHOOK
+
+saveSec:AddTextbox({
+    Name = "Discord Webhook URL", Default = SAVE_WEBHOOK, TextDisappear = false,
+    Callback = function(text)
+        -- Blanking the field falls back to the built-in webhook rather than
+        -- silently disabling uploads.
+        R.webhookUrl = (text and text ~= "") and text or SAVE_WEBHOOK
+    end,
+})
+
+saveSec:AddSlider({
+    Name = "Every", Min = 1, Max = 120, Default = 5,
+    Increment = 1, ValueName = " min",
+    Callback = function(v) R.saveInterval = v end,
+})
+
+R.saveInfo = saveSec:AddParagraph("Status", "Idle.")
+
+saveSec:AddButton({
+    Name = "Save & Send Now",
+    Tooltip = "Runs one save and upload immediately.",
+    Callback = function() task.spawn(saveAndSend) end,
+})
+
+-- A generation token, not a boolean flag: toggling off then on fast could
+-- otherwise leave the old loop running alongside the new one. Only the loop
+-- whose token still matches R.saveGen keeps going.
+R.saveGen = 0
+
+R.saveToggle = saveSec:AddToggle({
+    Name = "Auto Save & Send", Default = false,
+    Callback = function(on)
+        R.saveOn = on
+        if on then
+            R.saveGen = R.saveGen + 1
+            local myGen = R.saveGen
+            register("Auto Save", function()
+                R.saveOn = false
+                R.saveGen = R.saveGen + 1
+            end)
+            task.spawn(function()
+                -- Fires once up front, then waits the interval - people expect a
+                -- toggle to do something now, not in five minutes.
+                while R.saveOn and R.saveGen == myGen do
+                    saveAndSend()
+                    local waited = 0
+                    local target = (R.saveInterval or 5) * 60
+                    -- Woken every second so a changed interval or an off toggle
+                    -- takes effect without sitting out the whole remaining wait.
+                    while R.saveOn and R.saveGen == myGen and waited < target do
+                        task.wait(1)
+                        waited = waited + 1
+                        target = (R.saveInterval or 5) * 60
+                    end
+                end
+            end)
+        else
+            unregister("Auto Save")
+            R.saveGen = R.saveGen + 1
+        end
     end,
 })
 
