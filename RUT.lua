@@ -33,7 +33,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel does not show the newest one, the
 -- CDN is still serving a cached copy - wait out the five minute TTL rather than
 -- chasing a bug that is not there.
-local RUT_BUILD = "Aug 27 14:10"
+local RUT_BUILD = "Aug 27 15:30"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -1424,27 +1424,33 @@ local function httpRequest()
         or nil
 end
 
--- saveinstance's option table is spelled differently across executors, so the
--- typed call is tried first and a bare saveinstance() is the fallback. Returns
--- the base filename it asked for, so the reader below knows what to look for.
+-- Every executor spells saveinstance's options differently and MacSploit
+-- rejects a call with no table at all ("table expected"), so a fixed option set
+-- is a guess that fails on whatever executor did not expect those exact keys.
+-- Instead the shapes are tried richest-first, each in its own pcall, and the
+-- first that does not error wins. A bare saveinstance() is never used - the one
+-- executor that would need it does not exist, and MacSploit throws on it.
+--
+-- Returns true on the first shape that does not error. readSaved probes both
+-- the requested name and the usual default names, so the caller does not need
+-- to know which shape won.
 local function runSaveInstance(base)
     if typeof(saveinstance) ~= "function" then
         return nil, "This executor has no saveinstance()"
     end
-    local opts = {
-        FileName = base, filename = base,
-        mode = "optimized",
-        scripts = true, Scripts = true,
-        decompile = true, DecompileTimeout = 10,
+    local shapes = {
+        { mode = "optimized", FileName = base },
+        { FileName = base },
+        { mode = "optimized" },
+        { },
     }
-    local ok, err = pcall(saveinstance, opts)
-    if not ok then
-        local ok2, err2 = pcall(saveinstance)
-        if not ok2 then
-            return nil, "saveinstance errored: " .. tostring(err2 or err)
-        end
+    local lastErr
+    for _, opts in ipairs(shapes) do
+        local ok, err = pcall(saveinstance, opts)
+        if ok then return true end
+        lastErr = err
     end
-    return base
+    return nil, "saveinstance errored: " .. tostring(lastErr)
 end
 
 -- saveinstance does not report where it wrote, and the folder varies by
@@ -1453,22 +1459,35 @@ local function readSaved(base)
     if typeof(readfile) ~= "function" then
         return nil, nil, "This executor has no readfile()"
     end
-    local candidates = {
-        base .. ".rbxlx", base .. ".rbxm", base .. ".rbxl",
-        "saveinstance/" .. base .. ".rbxlx",
-        "saveinstance/" .. base .. ".rbxm",
-        "SynSaveInstance/" .. base .. ".rbxlx",
-    }
-    for _, path in ipairs(candidates) do
-        local exists = (typeof(isfile) == "function") and isfile(path)
-        if exists then
-            local ok, data = pcall(readfile, path)
-            if ok and type(data) == "string" and #data > 0 then
-                return data, path
+    -- The nameless shapes of runSaveInstance let the executor pick the filename,
+    -- and the usual default is the PlaceId, so both the requested name and the
+    -- PlaceId are probed. Folders vary too - MacSploit uses a workspace root,
+    -- Synapse a SynSaveInstance subfolder.
+    local stems = { base, tostring(game.PlaceId), "PlaceId_" .. tostring(game.PlaceId) }
+    local folders = { "", "saveinstance/", "SynSaveInstance/", "MacSploit/" }
+    local exts = { ".rbxlx", ".rbxm", ".rbxl" }
+
+    local tried = {}
+    for _, folder in ipairs(folders) do
+        for _, stem in ipairs(stems) do
+            for _, ext in ipairs(exts) do
+                local path = folder .. stem .. ext
+                if not tried[path] then
+                    tried[path] = true
+                    local exists = (typeof(isfile) == "function") and isfile(path)
+                    if exists then
+                        local ok, data = pcall(readfile, path)
+                        if ok and type(data) == "string" and #data > 0 then
+                            return data, path
+                        end
+                    end
+                end
             end
         end
     end
-    return nil, nil, "Saved, but the file was not found to upload (kept on disk)."
+    return nil, nil,
+        "Saved, but the file was not found to read back. It is on disk under\n"
+        .. "your executor's workspace folder - open it from there."
 end
 
 -- JSON string escaping, enough for a game name in the "content" field. Not a
