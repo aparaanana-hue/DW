@@ -954,7 +954,7 @@ local function stopEverything()
     for name in pairs(R.conns) do unbind(name) end
     -- Toggles do not know their feature was stopped from under them, so put the
     -- switches back by hand or the UI claims things are still running.
-    for _, t in ipairs({R.flyToggle, R.noclipToggle, R.saveToggle}) do
+    for _, t in ipairs({R.flyToggle, R.noclipToggle}) do
         if t then pcall(function() t:Set(false) end) end
     end
     R.flyOn, R.noclipOn, R.infJumpOn = false, false, false
@@ -1050,8 +1050,6 @@ testSec:AddButton({
 
 
 -- ===========================================================================
--- DEV
--- ===========================================================================
 -- Save Instance is the whole of this tab. Decompiling used to live here and
 -- has been removed: MacSploit exposes no decompile(), and the Konstant
 -- fallback Dex falls back to is only an HTTP client for api.plusgiant5.com,
@@ -1061,23 +1059,26 @@ local DL, DR = DevTab:AddLeft(), DevTab:AddRight()
 -- ---------------------------------------------------------------------------
 -- Save Instance
 -- ---------------------------------------------------------------------------
--- saveinstance() serialises the client's copy of the game to disk. That copy
--- is client-side only: LocalScripts, ModuleScripts and models the client can
--- see. Server Scripts never replicate, so they are not in the file - this is a
--- backup of what your machine holds, not the whole place.
+-- The full saveinstance() path is gone: it does not work on MacSploit. What is
+-- left walks a fixed set of roots, keeps only the classes picked in the
+-- dropdown, and writes them out as a text dump.
 --
--- Default upload target, mirroring IAB's saveWebhook. The field below is
--- pre-filled with this and can be overwritten at runtime; SaveConfig then keeps
--- whatever it holds. This URL is plaintext in a public repo - anyone reading the
--- repo can see it, so rotate it in Discord if it ever gets abused.
+-- Default upload target, mirroring IAB's saveWebhook. It is no longer editable
+-- from the UI - the send button uses this constant directly. This URL is
+-- plaintext in a public repo - anyone reading the repo can see it, so rotate it
+-- in Discord if it ever gets abused.
 local SAVE_WEBHOOK = "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE"
 
 local saveSec = DL:AddSection({Name = "Save Instance"})
 
-saveSec:AddParagraph("Client-side scripts & models",
-    "Saves the game to a file, then uploads it to your Discord webhook.\n\n" ..
-    "Discord rejects uploads over ~8 MB, so large games save locally but do\n" ..
-    "not send. The local file is always kept either way.")
+saveSec:AddParagraph("Selected-class dump",
+    "Walks ReplicatedStorage, workspace, Lighting, the Starter services and\n" ..
+    "your PlayerScripts/PlayerGui, keeps every instance whose class you ticked\n" ..
+    "below, and writes them out as a text listing of class + full path (script\n" ..
+    "source included when the executor can decompile).\n\n" ..
+    "The scan is uncapped and yields as it goes, so a big place takes a while -\n" ..
+    "watch Status for progress. Discord rejects uploads over ~8 MB; the\n" ..
+    "clipboard is the fallback either way.")
 
 -- Human-readable game name, for the filename and the Discord message. The
 -- product info call can yield and can fail on some places, so it is pcall'd and
@@ -1111,72 +1112,6 @@ local function httpRequest()
         or nil
 end
 
--- Every executor spells saveinstance's options differently and MacSploit
--- rejects a call with no table at all ("table expected"), so a fixed option set
--- is a guess that fails on whatever executor did not expect those exact keys.
--- Instead the shapes are tried richest-first, each in its own pcall, and the
--- first that does not error wins. A bare saveinstance() is never used - the one
--- executor that would need it does not exist, and MacSploit throws on it.
---
--- Returns true on the first shape that does not error. readSaved probes both
--- the requested name and the usual default names, so the caller does not need
--- to know which shape won.
-local function runSaveInstance(base)
-    if typeof(saveinstance) ~= "function" then
-        return nil, "This executor has no saveinstance()"
-    end
-    local shapes = {
-        { mode = "optimized", FileName = base },
-        { FileName = base },
-        { mode = "optimized" },
-        { },
-    }
-    local lastErr
-    for _, opts in ipairs(shapes) do
-        local ok, err = pcall(saveinstance, opts)
-        if ok then return true end
-        lastErr = err
-    end
-    return nil, "saveinstance errored: " .. tostring(lastErr)
-end
-
--- saveinstance does not report where it wrote, and the folder varies by
--- executor, so the likely paths are probed with isfile until one reads back.
-local function readSaved(base)
-    if typeof(readfile) ~= "function" then
-        return nil, nil, "This executor has no readfile()"
-    end
-    -- The nameless shapes of runSaveInstance let the executor pick the filename,
-    -- and the usual default is the PlaceId, so both the requested name and the
-    -- PlaceId are probed. Folders vary too - MacSploit uses a workspace root,
-    -- Synapse a SynSaveInstance subfolder.
-    local stems = { base, tostring(game.PlaceId), "PlaceId_" .. tostring(game.PlaceId) }
-    local folders = { "", "saveinstance/", "SynSaveInstance/", "MacSploit/" }
-    local exts = { ".rbxlx", ".rbxm", ".rbxl" }
-
-    local tried = {}
-    for _, folder in ipairs(folders) do
-        for _, stem in ipairs(stems) do
-            for _, ext in ipairs(exts) do
-                local path = folder .. stem .. ext
-                if not tried[path] then
-                    tried[path] = true
-                    local exists = (typeof(isfile) == "function") and isfile(path)
-                    if exists then
-                        local ok, data = pcall(readfile, path)
-                        if ok and type(data) == "string" and #data > 0 then
-                            return data, path
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return nil, nil,
-        "Saved, but the file was not found to read back. It is on disk under\n"
-        .. "your executor's workspace folder - open it from there."
-end
-
 -- JSON string escaping, enough for a game name in the "content" field. Not a
 -- general encoder - it only has to survive the characters a place title holds.
 local function jsonStr(s)
@@ -1188,15 +1123,15 @@ end
 
 local DISCORD_LIMIT = 8 * 1024 * 1024
 
--- Posts the saved file to the webhook as multipart/form-data. Discord will not
--- take a file over its size cap, so that case is caught here and reported
--- rather than fired off to be silently 413'd.
+-- Posts the dump to the webhook as multipart/form-data. Discord will not take a
+-- file over its size cap, so that case is caught here and reported rather than
+-- fired off to be silently 413'd.
 local function sendToWebhook(url, fname, data, label)
     local req = httpRequest()
     if not req then return false, "This executor exposes no request() for uploads." end
     if #data > DISCORD_LIMIT then
         return false, string.format(
-            "File is %.1f MB, over Discord's ~8 MB webhook limit. Kept on disk.",
+            "File is %.1f MB, over Discord's ~8 MB webhook limit.",
             #data / 1024 / 1024)
     end
 
@@ -1228,16 +1163,13 @@ local function sendToWebhook(url, fname, data, label)
     if type(code) == "number" and code >= 200 and code < 300 then
         return true, "Uploaded to Discord (" .. #data .. " bytes)."
     end
-    return false, "Discord replied " .. tostring(code) .. ". Kept on disk."
+    return false, "Discord replied " .. tostring(code) .. "."
 end
 
--- One save-and-send. Shared by the manual button and the interval loop so they
--- cannot drift apart. Reports every outcome to the status paragraph.
--- Last resort when the webhook will not carry the save: put the whole thing on
--- the clipboard so it can be pasted into a file by hand. A saveinstance dump is
--- large, so this can be megabytes of text - some executors truncate a
--- setclipboard that big, which is noted in the status rather than pretended
--- around.
+-- Last resort when the webhook will not carry the dump: put the whole thing on
+-- the clipboard so it can be pasted into a file by hand. An uncapped dump can
+-- be megabytes of text - some executors truncate a setclipboard that big, which
+-- is noted in the status rather than pretended around.
 local function copyToClipboard(data, why)
     if typeof(setclipboard) ~= "function" then
         return false, (why and (why .. " ") or "")
@@ -1249,97 +1181,11 @@ local function copyToClipboard(data, why)
             .. "and setclipboard errored (file may be too large for it)."
     end
     return true, string.format(
-        "%sCopied %.2f MB to the clipboard - paste it into a .rbxlx file.",
+        "%sCopied %.2f MB to the clipboard - paste it into a .txt file.",
         why and (why .. " ") or "", #data / 1024 / 1024)
 end
 
-local function saveAndSend()
-    local base = safeName(gameName())
-    local set = function(m)
-        pcall(function() R.saveInfo:Set(m) end)
-    end
-    set("Saving " .. base .. "...")
-
-    local got, err = runSaveInstance(base)
-    if not got then set(err); notify("Save Instance", err, 6); return false end
-
-    -- readSaved fails when the executor has no writefile, or saved somewhere
-    -- unexpected. There is nothing on disk to reach, so the save is over unless
-    -- something upstream handed us data - which here it did not.
-    local data, path, rerr = readSaved(base)
-    if not data then
-        set(rerr); notify("Save Instance", rerr, 6); return true
-    end
-
-    local fname = path:match("[^/]+$") or (base .. ".rbxlx")
-    local label = gameName() .. " - client-side scripts & models\n"
-        .. "PlaceId " .. tostring(game.PlaceId) .. " - " .. os.date("%Y-%m-%d %H:%M:%S")
-
-    local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
-    local sent, smsg = false, "No webhook set."
-    if url ~= "" then
-        sent, smsg = sendToWebhook(url, fname, data, label)
-    end
-
-    -- Success on the webhook is the whole job; the file is also still on disk.
-    if sent then
-        local m = "Saved to " .. path .. "\n" .. smsg
-        set(m); notify("Save Instance", smsg, 6)
-        return true
-    end
-
-    -- Webhook did not carry it - too big, rejected, or none set. Fall back to
-    -- the clipboard so the save is still recoverable by hand.
-    local copied, cmsg = copyToClipboard(data, smsg)
-    local m = "Saved to " .. path .. "\n" .. cmsg
-    set(m)
-    notify(copied and "Save Instance (clipboard)" or "Save Instance", cmsg, 8)
-    return true
-end
-
-R.webhookUrl = SAVE_WEBHOOK
-
-saveSec:AddTextbox({
-    Name = "Discord Webhook URL", Default = SAVE_WEBHOOK, TextDisappear = false,
-    Callback = function(text)
-        -- Blanking the field falls back to the built-in webhook rather than
-        -- silently disabling uploads.
-        R.webhookUrl = (text and text ~= "") and text or SAVE_WEBHOOK
-    end,
-})
-
-saveSec:AddSlider({
-    Name = "Every", Min = 1, Max = 120, Default = 5,
-    Increment = 1, ValueName = " min",
-    Callback = function(v) R.saveInterval = v end,
-})
-
 R.saveInfo = saveSec:AddParagraph("Status", "Idle.")
-
-saveSec:AddButton({
-    Name = "Save & Send Now",
-    Tooltip = "Save once, upload to the webhook, and fall back to the clipboard if that fails.",
-    Callback = function() task.spawn(saveAndSend) end,
-})
-
-saveSec:AddButton({
-    Name = "Save To Clipboard",
-    Tooltip = "Save and copy the whole thing to the clipboard - no webhook involved.",
-    Callback = function()
-        task.spawn(function()
-            local base = safeName(gameName())
-            local set = function(m) pcall(function() R.saveInfo:Set(m) end) end
-            set("Saving " .. base .. "...")
-            local got, err = runSaveInstance(base)
-            if not got then set(err); notify("Save Instance", err, 6); return end
-            local data, path, rerr = readSaved(base)
-            if not data then set(rerr); notify("Save Instance", rerr, 6); return end
-            local copied, cmsg = copyToClipboard(data)
-            set("Saved to " .. path .. "\n" .. cmsg)
-            notify(copied and "Save Instance (clipboard)" or "Save Instance", cmsg, 8)
-        end)
-    end,
-})
 
 -- Class picker. A full saveinstance walks the entire DataModel, which is both
 -- what the anti-cheat watches for and what threw the DM Lock Violation earlier.
@@ -1364,15 +1210,25 @@ saveSec:AddDropdown({
     end,
 })
 
+-- How many descendants to chew through before handing a frame back. Nothing is
+-- capped any more, so this yield is the only thing keeping a large place from
+-- freezing the client outright.
+local SCAN_YIELD_EVERY = 2000
+
 -- Walks a fixed set of roots rather than all of game: the services a full
 -- saveinstance reaches (nil instances, CoreGui, network internals) are exactly
 -- the ones that trip detection, and none of them hold what a class filter is
 -- after anyway. Scripts come out decompiled when the executor can; everything
 -- else is listed by class and full path.
-local function collectSelected()
+--
+-- `report` is the status setter, called as the scan runs. Without it a big
+-- place looks frozen for however long the walk takes.
+local function collectSelected(report)
     local wanted, n = R.saveClasses or {}, 0
     for _ in pairs(wanted) do n = n + 1 end
     if n == 0 then return nil, "Pick at least one class in the dropdown first." end
+
+    report = report or function() end
 
     local function svc(name)
         local ok, s = pcall(function() return game:GetService(name) end)
@@ -1385,7 +1241,7 @@ local function collectSelected()
     }
 
     local canDecompile = typeof(decompile) == "function"
-    local out, count = {}, 0
+    local out, count, scanned = {}, 0, 0
     table.insert(out, "-- Selected-class save of " .. gameName())
     table.insert(out, "-- PlaceId " .. tostring(game.PlaceId)
         .. " - " .. os.date("%Y-%m-%d %H:%M:%S"))
@@ -1393,104 +1249,99 @@ local function collectSelected()
     table.insert(out, "")
 
     for _, root in ipairs(roots) do
-        if root and count < 3000 then
-            pcall(function()
-                for _, d in ipairs(root:GetDescendants()) do
-                    if wanted[d.ClassName] then
+        if root then
+            -- GetDescendants itself is one shot and cannot be yielded through;
+            -- the pcall is per-root so one unreadable service does not end the
+            -- whole scan. The loop below is where the yielding happens.
+            local ok, kids = pcall(function() return root:GetDescendants() end)
+            if ok and type(kids) == "table" then
+                for _, d in ipairs(kids) do
+                    scanned = scanned + 1
+                    -- Yield on a fixed stride so the frame rate survives a place
+                    -- with hundreds of thousands of descendants.
+                    if scanned % SCAN_YIELD_EVERY == 0 then
+                        report(string.format("Scanned %d, kept %d...", scanned, count))
+                        task.wait()
+                    end
+                    local cls
+                    pcall(function() cls = d.ClassName end)
+                    if cls and wanted[cls] then
                         count = count + 1
-                        table.insert(out,
-                            string.format("-- [%s] %s", d.ClassName, d:GetFullName()))
-                        if d:IsA("LuaSourceContainer") then
+                        local path = cls
+                        pcall(function() path = d:GetFullName() end)
+                        table.insert(out, string.format("-- [%s] %s", cls, path))
+                        local isSrc = false
+                        pcall(function() isSrc = d:IsA("LuaSourceContainer") end)
+                        if isSrc then
                             if canDecompile then
-                                local ok, src = pcall(decompile, d)
+                                local dok, src = pcall(decompile, d)
                                 table.insert(out,
-                                    (ok and type(src) == "string" and src ~= "")
+                                    (dok and type(src) == "string" and src ~= "")
                                     and src or "-- (decompile failed)")
+                                -- decompile is the slowest thing in the loop, so
+                                -- give a frame back after every one.
+                                task.wait()
                             else
                                 table.insert(out, "-- (no decompile() on this executor)")
                             end
                         end
                         table.insert(out, "")
-                        if count >= 3000 then break end
                     end
                 end
-            end)
+            end
         end
     end
 
     if count == 0 then
         return nil, "No instances of the chosen classes found in the usual roots."
     end
-    out[3] = "-- " .. count .. " instances" .. (count >= 3000 and " (capped)" or "")
+    report(string.format("Scanned %d, kept %d. Packing...", scanned, count))
+    out[3] = "-- " .. count .. " instances"
     return table.concat(out, "\n"), nil
+end
+
+-- One collect-and-deliver. Both buttons go through this so they cannot drift:
+-- useWebhook picks whether Discord is tried first, and the clipboard is either
+-- the fallback or the whole destination.
+local function runSelected(useWebhook)
+    local set = function(m) pcall(function() R.saveInfo:Set(m) end) end
+    set("Collecting selected classes...")
+
+    local src, why = collectSelected(set)
+    if not src then set(why); notify("Save Selected", why, 6); return end
+
+    local fname = safeName(gameName()) .. "_selected.txt"
+    local label = gameName() .. " - selected classes\n"
+        .. "PlaceId " .. tostring(game.PlaceId)
+    if typeof(writefile) == "function" then pcall(writefile, fname, src) end
+
+    if useWebhook then
+        local sent, smsg = sendToWebhook(SAVE_WEBHOOK, fname, src, label)
+        if sent then set(smsg); notify("Save Selected", smsg, 6); return end
+        -- Discord refused it - too big or a bad reply. Fall through to the
+        -- clipboard so the dump is still recoverable by hand.
+        local copied, cmsg = copyToClipboard(src, smsg)
+        set(cmsg)
+        notify(copied and "Save Selected (clipboard)" or "Save Selected", cmsg, 8)
+        return
+    end
+
+    local copied, cmsg = copyToClipboard(src)
+    set(cmsg)
+    notify(copied and "Save Selected (clipboard)" or "Save Selected", cmsg, 8)
 end
 
 saveSec:AddButton({
     Name = "Save Selected Classes",
-    Tooltip = "Collects only the chosen classes, then webhook -> clipboard -> disk, same as above.",
-    Callback = function()
-        task.spawn(function()
-            local set = function(m) pcall(function() R.saveInfo:Set(m) end) end
-            set("Collecting selected classes...")
-            local src, why = collectSelected()
-            if not src then set(why); notify("Save Selected", why, 6); return end
-
-            local fname = safeName(gameName()) .. "_selected.txt"
-            local label = gameName() .. " - selected classes\n"
-                .. "PlaceId " .. tostring(game.PlaceId)
-            if typeof(writefile) == "function" then pcall(writefile, fname, src) end
-
-            local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
-            local sent, smsg = false, "No webhook set."
-            if url ~= "" then sent, smsg = sendToWebhook(url, fname, src, label) end
-            if sent then set(smsg); notify("Save Selected", smsg, 6); return end
-
-            local copied, cmsg = copyToClipboard(src, smsg)
-            set(cmsg)
-            notify(copied and "Save Selected (clipboard)" or "Save Selected", cmsg, 8)
-        end)
-    end,
+    Tooltip = "Collects only the chosen classes, uploads to the webhook, falls back to the clipboard.",
+    Callback = function() task.spawn(function() runSelected(true) end) end,
 })
 
--- A generation token, not a boolean flag: toggling off then on fast could
--- otherwise leave the old loop running alongside the new one. Only the loop
--- whose token still matches R.saveGen keeps going.
-R.saveGen = 0
-
-R.saveToggle = saveSec:AddToggle({
-    Name = "Auto Save & Send", Default = false,
-    Callback = function(on)
-        R.saveOn = on
-        if on then
-            R.saveGen = R.saveGen + 1
-            local myGen = R.saveGen
-            register("Auto Save", function()
-                R.saveOn = false
-                R.saveGen = R.saveGen + 1
-            end)
-            task.spawn(function()
-                -- Fires once up front, then waits the interval - people expect a
-                -- toggle to do something now, not in five minutes.
-                while R.saveOn and R.saveGen == myGen do
-                    saveAndSend()
-                    local waited = 0
-                    local target = (R.saveInterval or 5) * 60
-                    -- Woken every second so a changed interval or an off toggle
-                    -- takes effect without sitting out the whole remaining wait.
-                    while R.saveOn and R.saveGen == myGen and waited < target do
-                        task.wait(1)
-                        waited = waited + 1
-                        target = (R.saveInterval or 5) * 60
-                    end
-                end
-            end)
-        else
-            unregister("Auto Save")
-            R.saveGen = R.saveGen + 1
-        end
-    end,
+saveSec:AddButton({
+    Name = "Save Selected To Clipboard",
+    Tooltip = "Same collect, straight to the clipboard - no webhook involved.",
+    Callback = function() task.spawn(function() runSelected(false) end) end,
 })
-
 -- ===========================================================================
 -- LIFECYCLE
 -- ===========================================================================
