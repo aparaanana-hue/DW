@@ -1322,6 +1322,225 @@ dumpSec:AddButton({
     end,
 })
 
+-- ---------------------------------------------------------------------------
+-- Real decompiling, the way Dex does it.
+--
+-- The dump above serialises what a module RETURNS. This section gets the
+-- actual source back, and it is a different mechanism entirely: the client
+-- holds the Luau bytecode for every script that runs on it, and a decompiler
+-- lifts that bytecode back to readable Lua. Names of locals are gone, but
+-- control flow, string constants and remote calls all survive.
+--
+-- Dex resolves a decompiler in three tiers and so does this:
+--   1. the executor's own `decompile`, if it has one;
+--   2. otherwise Konstant - a pure-Lua Luau decompiler - fetched and
+--      loadstring'd, which only needs `getscriptbytecode` + an HTTP call;
+--   3. otherwise nothing, and the buttons say so instead of erroring.
+local DEC = {}
+
+DEC.getbytecode = typeof(getscriptbytecode) == "function" and getscriptbytecode
+    or (typeof(dumpstring) == "function" and dumpstring)
+    or nil
+
+DEC.executor = (function()
+    local id = identifyexecutor or getexecutorname or whatexecutor
+    local ok, name = pcall(function() return tostring(id()) end)
+    return ok and name or "this executor"
+end)()
+
+-- Resolved on first use, not at load: fetching Konstant is a network round
+-- trip and most sessions never open this tab.
+DEC.resolved = false
+function DEC.get()
+    if DEC.resolved then return DEC.fn end
+    DEC.resolved = true
+    if typeof(decompile) == "function" then
+        DEC.fn, DEC.source = decompile, DEC.executor
+        return DEC.fn
+    end
+    if DEC.getbytecode then
+        local ok = pcall(function()
+            loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/infyiff/backup/refs/heads/main/konstant.lua"))()
+        end)
+        if ok and typeof(decompile) == "function" then
+            DEC.fn, DEC.source = decompile, "Konstant"
+            return DEC.fn
+        end
+    end
+    return nil
+end
+
+-- Only scripts that RUN ON THIS CLIENT have bytecode here. A server Script's
+-- body never reaches the client, so asking for it is a guaranteed failure and
+-- is better refused with a reason than attempted.
+function DEC.viable(obj)
+    if obj:IsA("ModuleScript") then
+        return true
+    elseif obj:IsA("LocalScript") then
+        return obj.RunContext == Enum.RunContext.Client
+            or obj.RunContext == Enum.RunContext.Legacy
+    elseif obj:IsA("Script") then
+        return obj.RunContext == Enum.RunContext.Client
+    end
+    return false
+end
+
+local decompSec = DL:AddSection({Name = "Decompile"})
+
+decompSec:AddParagraph("How this works",
+    "Recovers a script's source from the bytecode your client already has.\n\n" ..
+    "Works on ModuleScripts and client-side Scripts. Server Scripts cannot\n" ..
+    "be decompiled from here - their code never reaches you.")
+
+local decompPath = ""
+
+decompSec:AddTextbox({
+    Name = "Script Path", Default = "", TextDisappear = false,
+    Callback = function(text) decompPath = text end,
+})
+
+local decompOut = DR:AddSection({Name = "Decompile Result"})
+R.decompInfo = decompOut:AddParagraph("Decompile", "Nothing decompiled yet.")
+
+local function decompInfo(msg)
+    pcall(function() R.decompInfo:Set(msg) end)
+end
+
+-- Returns source, or nil and a reason. Never throws.
+local function decompileSource()
+    local inst, why = resolvePath(decompPath)
+    if not inst then return nil, why end
+    if not inst:IsA("LuaSourceContainer") then
+        return nil, inst.Name .. " is a " .. inst.ClassName .. ", not a script"
+    end
+    if not DEC.viable(inst) then
+        return nil, inst.ClassName .. " does not run on this client, so there is\n"
+            .. "no bytecode here to decompile."
+    end
+    local fn = DEC.get()
+    if not fn then
+        return nil, "No decompiler available: " .. DEC.executor .. " has no\n"
+            .. "decompile(), and Konstant could not be loaded"
+            .. (DEC.getbytecode and "." or " (no getscriptbytecode).")
+    end
+    local ok, src = pcall(fn, inst)
+    if not ok or not src or src == "" then
+        return nil, "Failed to decompile " .. inst.ClassName .. " via " .. tostring(DEC.source)
+    end
+    -- Decompiler output can carry embedded NULs, which truncate the string in
+    -- a text label and in some file writers. Escape them rather than lose the
+    -- rest of the script.
+    src = (src:gsub("%z", "\\0"))
+    local head = "-- " .. inst:GetFullName() .. "\n"
+        .. "-- Decompiled by RUT " .. RUT_BUILD .. " via " .. tostring(DEC.source) .. "\n"
+        .. "-- Local names are not recoverable from bytecode.\n\n"
+    return head .. src, inst
+end
+
+decompSec:AddButton({
+    Name = "Decompile To File",
+    Tooltip = "Writes the recovered source to RUT/decompiled.",
+    Callback = function()
+        task.spawn(function()
+            decompInfo("Decompiling...")
+            local src, inst = decompileSource()
+            if not src then decompInfo(inst); notify("Decompile Failed", inst, 7); return end
+            if typeof(writefile) ~= "function" then
+                if setclipboard then setclipboard(src) end
+                local m = "No writefile on this executor - copied to clipboard instead."
+                decompInfo(m); notify("Decompile", m, 6)
+                return
+            end
+            pcall(function() if makefolder then makefolder("RUT") end end)
+            pcall(function() if makefolder then makefolder("RUT/decompiled") end end)
+            -- Dex's filename shape, minus the characters no filesystem takes.
+            local safe = tostring(inst.Name):gsub("[*\\/?:<>|\"]+", ""):sub(1, 100)
+            local file = ("RUT/decompiled/%i.%s.%s.lua"):format(game.PlaceId, inst.ClassName, safe)
+            local wrote = pcall(writefile, file, src)
+            local m = wrote and ("Wrote " .. #src .. " bytes to\n" .. file) or "writefile failed"
+            decompInfo(m); notify("Decompile", m, 7)
+        end)
+    end,
+})
+
+decompSec:AddButton({
+    Name = "Decompile To Clipboard",
+    Tooltip = "Same source, straight to the clipboard.",
+    Callback = function()
+        task.spawn(function()
+            decompInfo("Decompiling...")
+            local src, inst = decompileSource()
+            if not src then decompInfo(inst); notify("Decompile Failed", inst, 7); return end
+            if not setclipboard then
+                notify("Decompile", "No setclipboard on this executor", 5)
+                return
+            end
+            setclipboard(src)
+            local m = "Copied " .. #src .. " bytes to clipboard."
+            decompInfo(m); notify("Decompile", m, 5)
+        end)
+    end,
+})
+
+-- When the decompiler chokes, the raw bytecode is still worth having: it is
+-- what you would feed to a decompiler elsewhere.
+decompSec:AddButton({
+    Name = "Dump Bytecode",
+    Tooltip = "Writes the raw Luau bytecode, no decompiler needed.",
+    Callback = function()
+        task.spawn(function()
+            if not DEC.getbytecode then
+                notify("Bytecode", "No getscriptbytecode on " .. DEC.executor, 6)
+                return
+            end
+            local inst, why = resolvePath(decompPath)
+            if not inst then decompInfo(why); notify("Bytecode", why, 6); return end
+            local ok, bc = pcall(DEC.getbytecode, inst)
+            if not ok or not bc or bc == "" then
+                local m = "No bytecode for " .. inst.Name
+                decompInfo(m); notify("Bytecode", m, 6)
+                return
+            end
+            if typeof(writefile) ~= "function" then
+                notify("Bytecode", "No writefile on this executor", 5)
+                return
+            end
+            pcall(function() if makefolder then makefolder("RUT") end end)
+            pcall(function() if makefolder then makefolder("RUT/decompiled") end end)
+            local safe = tostring(inst.Name):gsub("[*\\/?:<>|\"]+", ""):sub(1, 100)
+            local file = ("RUT/decompiled/%i.%s.%s.bytecode.txt"):format(game.PlaceId, inst.ClassName, safe)
+            local wrote = pcall(writefile, file, bc)
+            local m = wrote and ("Wrote " .. #bc .. " bytes to\n" .. file) or "writefile failed"
+            decompInfo(m); notify("Bytecode", m, 7)
+        end)
+    end,
+})
+
+decompSec:AddButton({
+    Name = "Check Decompiler",
+    Tooltip = "Reports which of the three tiers this executor lands on.",
+    Callback = function()
+        task.spawn(function()
+            decompInfo("Checking...")
+            local fn = DEC.get()
+            local m
+            if fn then
+                m = "Decompiler ready: " .. tostring(DEC.source) .. "\n"
+                    .. "Bytecode access: " .. (DEC.getbytecode and "yes" or "no")
+            else
+                m = "No decompiler.\n"
+                    .. "decompile(): no\n"
+                    .. "getscriptbytecode(): " .. (DEC.getbytecode and "yes" or "no") .. "\n"
+                    .. "Konstant fallback: failed to load"
+            end
+            decompInfo(m); notify("Decompiler", m, 8)
+        end)
+    end,
+})
+
+
+
 -- Saves guessing at paths. Deliberately not recursive into every descendant of
 -- game: on a large place that is a six figure instance walk and it will hang
 -- the client for long enough to look like a crash.
