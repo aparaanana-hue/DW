@@ -33,7 +33,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel does not show the newest one, the
 -- CDN is still serving a cached copy - wait out the five minute TTL rather than
 -- chasing a bug that is not there.
-local RUT_BUILD = "Aug 27 12:45"
+local RUT_BUILD = "Aug 27 14:10"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -1527,6 +1527,26 @@ end
 
 -- One save-and-send. Shared by the manual button and the interval loop so they
 -- cannot drift apart. Reports every outcome to the status paragraph.
+-- Last resort when the webhook will not carry the save: put the whole thing on
+-- the clipboard so it can be pasted into a file by hand. A saveinstance dump is
+-- large, so this can be megabytes of text - some executors truncate a
+-- setclipboard that big, which is noted in the status rather than pretended
+-- around.
+local function copyToClipboard(data, why)
+    if typeof(setclipboard) ~= "function" then
+        return false, (why and (why .. " ") or "")
+            .. "and no setclipboard to fall back to."
+    end
+    local ok = pcall(setclipboard, data)
+    if not ok then
+        return false, (why and (why .. " ") or "")
+            .. "and setclipboard errored (file may be too large for it)."
+    end
+    return true, string.format(
+        "%sCopied %.2f MB to the clipboard - paste it into a .rbxlx file.",
+        why and (why .. " ") or "", #data / 1024 / 1024)
+end
+
 local function saveAndSend()
     local base = safeName(gameName())
     local set = function(m)
@@ -1537,25 +1557,37 @@ local function saveAndSend()
     local got, err = runSaveInstance(base)
     if not got then set(err); notify("Save Instance", err, 6); return false end
 
+    -- readSaved fails when the executor has no writefile, or saved somewhere
+    -- unexpected. There is nothing on disk to reach, so the save is over unless
+    -- something upstream handed us data - which here it did not.
     local data, path, rerr = readSaved(base)
     if not data then
         set(rerr); notify("Save Instance", rerr, 6); return true
     end
 
-    local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
-    if url == "" then
-        local m = "Saved to " .. path .. "\nNo webhook set, so not sent."
-        set(m); notify("Save Instance", "Saved locally, no webhook set.", 6)
-        return true
-    end
-
     local fname = path:match("[^/]+$") or (base .. ".rbxlx")
     local label = gameName() .. " - client-side scripts & models\n"
         .. "PlaceId " .. tostring(game.PlaceId) .. " - " .. os.date("%Y-%m-%d %H:%M:%S")
-    local sok, smsg = sendToWebhook(url, fname, data, label)
-    local m = "Saved to " .. path .. "\n" .. smsg
+
+    local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
+    local sent, smsg = false, "No webhook set."
+    if url ~= "" then
+        sent, smsg = sendToWebhook(url, fname, data, label)
+    end
+
+    -- Success on the webhook is the whole job; the file is also still on disk.
+    if sent then
+        local m = "Saved to " .. path .. "\n" .. smsg
+        set(m); notify("Save Instance", smsg, 6)
+        return true
+    end
+
+    -- Webhook did not carry it - too big, rejected, or none set. Fall back to
+    -- the clipboard so the save is still recoverable by hand.
+    local copied, cmsg = copyToClipboard(data, smsg)
+    local m = "Saved to " .. path .. "\n" .. cmsg
     set(m)
-    notify(sok and "Save Instance" or "Save Instance (not sent)", smsg, 6)
+    notify(copied and "Save Instance (clipboard)" or "Save Instance", cmsg, 8)
     return true
 end
 
@@ -1580,8 +1612,27 @@ R.saveInfo = saveSec:AddParagraph("Status", "Idle.")
 
 saveSec:AddButton({
     Name = "Save & Send Now",
-    Tooltip = "Runs one save and upload immediately.",
+    Tooltip = "Save once, upload to the webhook, and fall back to the clipboard if that fails.",
     Callback = function() task.spawn(saveAndSend) end,
+})
+
+saveSec:AddButton({
+    Name = "Save To Clipboard",
+    Tooltip = "Save and copy the whole thing to the clipboard - no webhook involved.",
+    Callback = function()
+        task.spawn(function()
+            local base = safeName(gameName())
+            local set = function(m) pcall(function() R.saveInfo:Set(m) end) end
+            set("Saving " .. base .. "...")
+            local got, err = runSaveInstance(base)
+            if not got then set(err); notify("Save Instance", err, 6); return end
+            local data, path, rerr = readSaved(base)
+            if not data then set(rerr); notify("Save Instance", rerr, 6); return end
+            local copied, cmsg = copyToClipboard(data)
+            set("Saved to " .. path .. "\n" .. cmsg)
+            notify(copied and "Save Instance (clipboard)" or "Save Instance", cmsg, 8)
+        end)
+    end,
 })
 
 -- A generation token, not a boolean flag: toggling off then on fast could
