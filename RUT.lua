@@ -8,6 +8,26 @@
 -- The "?t=" is not decoration: raw.githubusercontent is behind a CDN that
 -- serves a stale copy for minutes after a push, so without it you can
 -- re-execute all day and still get the old library.
+-- The executor globals table. Not every executor exposes getgenv, and on the
+-- ones that do not, a fallback table is enough: it only has to survive within
+-- one execution for the unload hook below to be reachable from the next one.
+local ENV = (typeof(getgenv) == "function" and getgenv()) or _G
+
+-- Re-executing used to stack a second window over the first and, worse, a
+-- second set of RenderStepped handlers - two flies fighting over one velocity,
+-- with only the newer window's toggles able to stop either. bind() prevents
+-- that within one instance and can do nothing across two, so the previous
+-- instance is asked to shut itself down before this one builds anything.
+if type(ENV.RUT_UNLOAD) == "function" then
+    pcall(ENV.RUT_UNLOAD)
+    ENV.RUT_UNLOAD = nil
+end
+
+-- Where to fetch this file from when re-queueing across a teleport. Same
+-- cache-buster reasoning as the library URL below.
+local RUT_URL = "https://raw.githubusercontent.com/aparaanana-hue/DW/"
+    .. "refs/heads/main/RUT.lua"
+
 local Duvome = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"
         .. "?t=" .. tostring(os.time())))()
@@ -15,7 +35,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel and the load notification do not
 -- show the newest one, the script came from a cache rather than from GitHub -
 -- which looks exactly like a fix that did not work.
-local RUT_BUILD = "Aug 26 12:00"
+local RUT_BUILD = "Aug 26 14:30"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -71,6 +91,23 @@ local function notify(title, content, time)
             Name = title, Content = content or "", Time = time or 3,
         })
     end)
+end
+
+-- Teleporting tears the script down with the old place instance, so both the
+-- hop buttons below used to drop RUT on the way out and leave you re-executing
+-- by hand on arrival. queue_on_teleport hands the executor a source string to
+-- run once the next place has loaded. Not every executor spells it the same
+-- way and some do not have it at all, hence the lookup rather than a call.
+local function queueSelf()
+    local q = (typeof(queue_on_teleport) == "function" and queue_on_teleport)
+        or (syn and syn.queue_on_teleport)
+        or (fluxus and fluxus.queue_on_teleport)
+    if not q then return false end
+    -- os.time() is evaluated on arrival, not now, so the queued copy busts the
+    -- CDN cache the same way the initial load does.
+    local ok = pcall(q, [[loadstring(game:HttpGet("]] .. RUT_URL
+        .. [[?t=" .. tostring(os.time())))()]])
+    return ok
 end
 
 -- Character parts, re-read every time rather than cached. Respawning replaces
@@ -834,7 +871,9 @@ srvSec:AddButton({
     Name = "Rejoin",
     Tooltip = "Teleports you back into this exact server.",
     Callback = function()
-        notify("Rejoin", "Teleporting...", 3)
+        local queued = queueSelf()
+        notify("Rejoin", queued and "Teleporting, RUT will reload..."
+            or "Teleporting (re-run RUT on arrival)", 3)
         pcall(function()
             TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
         end)
@@ -864,6 +903,7 @@ srvSec:AddButton({
                     return
                 end
                 local pick = candidates[math.random(1, #candidates)]
+                queueSelf()
                 TeleportService:TeleportToPlaceInstance(game.PlaceId, pick, LP)
             end)
             if not ok then
@@ -925,6 +965,16 @@ local function stopEverything()
     R.espOn, R.xrayOn, R.hiddenOn, R.fullbright = false, false, false, false
     notify("Panic", #names == 0 and "Nothing was running"
         or ("Stopped: " .. table.concat(names, ", ")), 5)
+end
+
+-- Published so the NEXT execution can shut this one down - see the guard at the
+-- top of the file. It has to undo more than the panic button does: panic leaves
+-- the window standing on purpose, whereas a reload wants the old GUI gone too,
+-- or you end up with two windows and no way to tell which one is live.
+ENV.RUT_UNLOAD = function()
+    pcall(stopEverything)
+    for name in pairs(R.conns) do unbind(name) end
+    pcall(function() Duvome:Destroy() end)
 end
 
 panicSec:AddButton({
