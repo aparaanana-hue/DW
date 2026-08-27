@@ -1077,6 +1077,9 @@ saveSec:AddParagraph("Selected-class dump",
     "your PlayerScripts/PlayerGui, keeps every instance whose class you ticked\n" ..
     "below, and writes them out as a text listing of class + full path (script\n" ..
     "source included when the executor can decompile).\n\n" ..
+    "The dropdown only lists twenty classes, so Select All still skips the rest\n" ..
+    "- Attachments, Welds, GuiObjects and the like. Turn on Save Everything to\n" ..
+    "keep every descendant regardless of class.\n\n" ..
     "The scan is uncapped and yields as it goes, so a big place takes a while -\n" ..
     "watch Status for progress. Discord rejects uploads over ~8 MB; the\n" ..
     "clipboard is the fallback either way.")
@@ -1211,6 +1214,17 @@ saveSec:AddDropdown({
     end,
 })
 
+-- The dropdown lists twenty classes; a place holds hundreds. Ticking Select All
+-- still drops every Attachment, Weld, Motor6D, GuiObject and ValueBase in the
+-- game, which is why a 60k-descendant scan kept only 20k. This ignores the
+-- filter entirely and writes down every descendant of the roots.
+R.saveAll = false
+
+saveSec:AddToggle({
+    Name = "Save Everything (ignore class filter)", Default = false,
+    Callback = function(on) R.saveAll = on end,
+})
+
 -- How many descendants to chew through before handing a frame back. Nothing is
 -- capped any more, so this yield is the only thing keeping a large place from
 -- freezing the client outright.
@@ -1275,9 +1289,13 @@ end
 -- `report` is the status setter, called as the scan runs. Without it a big
 -- place looks frozen for however long the walk takes.
 local function collectSelected(report)
+    local keepAll = R.saveAll and true or false
     local wanted, n = R.saveClasses or {}, 0
     for _ in pairs(wanted) do n = n + 1 end
-    if n == 0 then return nil, "Pick at least one class in the dropdown first." end
+    if n == 0 and not keepAll then
+        return nil, "Pick at least one class in the dropdown first, "
+            .. "or turn on Save Everything."
+    end
 
     report = report or function() end
 
@@ -1296,7 +1314,8 @@ local function collectSelected(report)
     -- Tallied per script so the header can say what actually happened, rather
     -- than leaving one generic failure line to be read as "decompile is broken".
     local tally = { source = 0, decompiled = 0, serverscript = 0, failed = 0 }
-    table.insert(out, "-- Selected-class save of " .. gameName())
+    table.insert(out, (keepAll and "-- Full save of " or "-- Selected-class save of ")
+        .. gameName())
     table.insert(out, "-- PlaceId " .. tostring(game.PlaceId)
         .. " - " .. os.date("%Y-%m-%d %H:%M:%S"))
     table.insert(out, "-- (count filled in below)")
@@ -1319,7 +1338,7 @@ local function collectSelected(report)
                     end
                     local cls
                     pcall(function() cls = d.ClassName end)
-                    if cls and wanted[cls] then
+                    if cls and (keepAll or wanted[cls]) then
                         count = count + 1
                         local path = cls
                         pcall(function() path = d:GetFullName() end)
