@@ -33,7 +33,7 @@ local Duvome = loadstring(game:HttpGet(
 -- Bumped on every push. If the About panel does not show the newest one, the
 -- CDN is still serving a cached copy - wait out the five minute TTL rather than
 -- chasing a bug that is not there.
-local RUT_BUILD = "Aug 27 15:30"
+local RUT_BUILD = "Aug 27 16:45"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -1650,6 +1650,117 @@ saveSec:AddButton({
             local copied, cmsg = copyToClipboard(data)
             set("Saved to " .. path .. "\n" .. cmsg)
             notify(copied and "Save Instance (clipboard)" or "Save Instance", cmsg, 8)
+        end)
+    end,
+})
+
+-- Class picker. A full saveinstance walks the entire DataModel, which is both
+-- what the anti-cheat watches for and what threw the DM Lock Violation earlier.
+-- Collecting only a few chosen classes from a handful of roots touches far less
+-- of the game - lighter, and it is a text dump rather than a place file.
+local INSTANCE_CLASSES = {
+    "RemoteEvent", "RemoteFunction", "UnreliableRemoteEvent",
+    "BindableEvent", "BindableFunction",
+    "ModuleScript", "LocalScript", "Script",
+    "Model", "MeshPart", "Part", "UnionOperation", "Folder",
+    "Sound", "Decal", "Texture", "Animation", "Tool", "ProximityPrompt",
+}
+
+R.saveClasses = {}
+
+saveSec:AddDropdown({
+    Name = "Classes To Save", Options = INSTANCE_CLASSES,
+    MultiSelect = true, SelectAll = true, Search = true, Default = {},
+    Callback = function(chosen)
+        R.saveClasses = {}
+        for _, c in ipairs(chosen) do R.saveClasses[c] = true end
+    end,
+})
+
+-- Walks a fixed set of roots rather than all of game: the services a full
+-- saveinstance reaches (nil instances, CoreGui, network internals) are exactly
+-- the ones that trip detection, and none of them hold what a class filter is
+-- after anyway. Scripts come out decompiled when the executor can; everything
+-- else is listed by class and full path.
+local function collectSelected()
+    local wanted, n = R.saveClasses or {}, 0
+    for _ in pairs(wanted) do n = n + 1 end
+    if n == 0 then return nil, "Pick at least one class in the dropdown first." end
+
+    local function svc(name)
+        local ok, s = pcall(function() return game:GetService(name) end)
+        return ok and s or nil
+    end
+    local roots = {
+        svc("ReplicatedStorage"), svc("ReplicatedFirst"), Lighting, workspace,
+        svc("StarterGui"), svc("StarterPack"), svc("StarterPlayer"),
+        LP:FindFirstChild("PlayerScripts"), LP:FindFirstChild("PlayerGui"),
+    }
+
+    local canDecompile = typeof(decompile) == "function"
+    local out, count = {}, 0
+    table.insert(out, "-- Selected-class save of " .. gameName())
+    table.insert(out, "-- PlaceId " .. tostring(game.PlaceId)
+        .. " - " .. os.date("%Y-%m-%d %H:%M:%S"))
+    table.insert(out, "-- (count filled in below)")
+    table.insert(out, "")
+
+    for _, root in ipairs(roots) do
+        if root and count < 3000 then
+            pcall(function()
+                for _, d in ipairs(root:GetDescendants()) do
+                    if wanted[d.ClassName] then
+                        count = count + 1
+                        table.insert(out,
+                            string.format("-- [%s] %s", d.ClassName, d:GetFullName()))
+                        if d:IsA("LuaSourceContainer") then
+                            if canDecompile then
+                                local ok, src = pcall(decompile, d)
+                                table.insert(out,
+                                    (ok and type(src) == "string" and src ~= "")
+                                    and src or "-- (decompile failed)")
+                            else
+                                table.insert(out, "-- (no decompile() on this executor)")
+                            end
+                        end
+                        table.insert(out, "")
+                        if count >= 3000 then break end
+                    end
+                end
+            end)
+        end
+    end
+
+    if count == 0 then
+        return nil, "No instances of the chosen classes found in the usual roots."
+    end
+    out[3] = "-- " .. count .. " instances" .. (count >= 3000 and " (capped)" or "")
+    return table.concat(out, "\n"), nil
+end
+
+saveSec:AddButton({
+    Name = "Save Selected Classes",
+    Tooltip = "Collects only the chosen classes, then webhook -> clipboard -> disk, same as above.",
+    Callback = function()
+        task.spawn(function()
+            local set = function(m) pcall(function() R.saveInfo:Set(m) end) end
+            set("Collecting selected classes...")
+            local src, why = collectSelected()
+            if not src then set(why); notify("Save Selected", why, 6); return end
+
+            local fname = safeName(gameName()) .. "_selected.txt"
+            local label = gameName() .. " - selected classes\n"
+                .. "PlaceId " .. tostring(game.PlaceId)
+            if typeof(writefile) == "function" then pcall(writefile, fname, src) end
+
+            local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
+            local sent, smsg = false, "No webhook set."
+            if url ~= "" then sent, smsg = sendToWebhook(url, fname, src, label) end
+            if sent then set(smsg); notify("Save Selected", smsg, 6); return end
+
+            local copied, cmsg = copyToClipboard(src, smsg)
+            set(cmsg)
+            notify(copied and "Save Selected (clipboard)" or "Save Selected", cmsg, 8)
         end)
     end,
 })
