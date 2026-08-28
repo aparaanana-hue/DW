@@ -40,8 +40,50 @@ if type(ENV.SAE_UNLOAD) == "function" then
     ENV.SAE_UNLOAD = nil
 end
 
-local Duvome = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
+-- ---------------------------------------------------------------------------
+-- Library loader
+-- ---------------------------------------------------------------------------
+-- The DW repo is private, and raw.githubusercontent answers an unauthenticated
+-- request for a private file with a 404 HTML page, not the library. HttpGet
+-- returns that page happily, loadstring cannot parse it, and the call blows up
+-- on this line with nothing explaining why - which is exactly the "Line 44"
+-- stack you get. So: local copy first, network second, and a real message
+-- instead of a nil call if neither works.
+local function loadLib(fileName, url)
+    if typeof(readfile) == "function" and typeof(isfile) == "function" then
+        local ok, has = pcall(isfile, fileName)
+        if ok and has then
+            local rok, body = pcall(readfile, fileName)
+            if rok and type(body) == "string" and #body > 1000 then
+                local chunk = loadstring(body)
+                if chunk then return chunk(), "local file " .. fileName end
+            end
+        end
+    end
+
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(body) ~= "string" then
+        error("Could not fetch " .. fileName .. ": " .. tostring(body), 0)
+    end
+    -- A private repo returns a short HTML 404. The length check catches it
+    -- before loadstring turns it into a confusing syntax error.
+    if #body < 1000 or body:sub(1, 1) == "<" or body:find("404: Not Found", 1, true) then
+        error(fileName .. " came back as a " .. #body .. "-byte error page, not Lua.\n"
+            .. "The DW repo is private, so raw.githubusercontent refuses an\n"
+            .. "unauthenticated read. Either make it public again, or drop\n"
+            .. fileName .. " into your executor's workspace folder - this\n"
+            .. "loader checks there first.", 0)
+    end
+
+    local chunk, err = loadstring(body)
+    if not chunk then
+        error("Fetched " .. fileName .. " but it will not compile: " .. tostring(err), 0)
+    end
+    return chunk(), url
+end
+
+local Duvome = loadLib("DL.lua",
+    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua")
 
 local SAE_BUILD = "Aug 27 - build 1, unrun"
 

@@ -27,8 +27,50 @@ end
 local RUT_URL = "https://raw.githubusercontent.com/aparaanana-hue/DW/"
     .. "refs/heads/main/RUT.lua"
 
-local Duvome = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua"))()
+-- ---------------------------------------------------------------------------
+-- Library loader
+-- ---------------------------------------------------------------------------
+-- The DW repo is private, and raw.githubusercontent answers an unauthenticated
+-- request for a private file with a 404 HTML page, not the library. HttpGet
+-- returns that page happily, loadstring cannot parse it, and the call blows up
+-- on this line with nothing explaining why - which is exactly the "Line 44"
+-- stack you get. So: local copy first, network second, and a real message
+-- instead of a nil call if neither works.
+local function loadLib(fileName, url)
+    if typeof(readfile) == "function" and typeof(isfile) == "function" then
+        local ok, has = pcall(isfile, fileName)
+        if ok and has then
+            local rok, body = pcall(readfile, fileName)
+            if rok and type(body) == "string" and #body > 1000 then
+                local chunk = loadstring(body)
+                if chunk then return chunk(), "local file " .. fileName end
+            end
+        end
+    end
+
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(body) ~= "string" then
+        error("Could not fetch " .. fileName .. ": " .. tostring(body), 0)
+    end
+    -- A private repo returns a short HTML 404. The length check catches it
+    -- before loadstring turns it into a confusing syntax error.
+    if #body < 1000 or body:sub(1, 1) == "<" or body:find("404: Not Found", 1, true) then
+        error(fileName .. " came back as a " .. #body .. "-byte error page, not Lua.\n"
+            .. "The DW repo is private, so raw.githubusercontent refuses an\n"
+            .. "unauthenticated read. Either make it public again, or drop\n"
+            .. fileName .. " into your executor's workspace folder - this\n"
+            .. "loader checks there first.", 0)
+    end
+
+    local chunk, err = loadstring(body)
+    if not chunk then
+        error("Fetched " .. fileName .. " but it will not compile: " .. tostring(err), 0)
+    end
+    return chunk(), url
+end
+
+local Duvome = loadLib("DL.lua",
+    "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua")
 
 -- Bumped on every push. If the About panel does not show the newest one, the
 -- CDN is still serving a cached copy - wait out the five minute TTL rather than
@@ -152,13 +194,21 @@ pcall(function() Duvome:SetGlass(0.38) end)
 -- Icon names come from the BuilderIcons font the library already loads. These
 -- are glyphs known to exist in it; swap them freely, an unknown name renders as
 -- its own text rather than an icon.
-local MoveTab  = Window:MakeTab({Name = "Movement",  Icon = "star",     Columns = true})
-local CharTab  = Window:MakeTab({Name = "Character", Icon = "backpack", Columns = true})
-local ViewTab  = Window:MakeTab({Name = "Visuals",   Icon = "tag",      Columns = true})
-local PlayTab  = Window:MakeTab({Name = "Players",   Icon = "house",    Columns = true})
-local ServTab  = Window:MakeTab({Name = "Server",    Icon = "code",     Columns = true})
-local DevTab   = Window:MakeTab({Name = "Dev",       Icon = "wrench",   Columns = true})
-local SetTab   = Window:MakeTab({Name = "Settings",  Icon = "gear",     Columns = true})
+-- Three tabs, not seven. Character, Visuals, Players, Server and Settings were
+-- five tabs holding two sections each - enough clicking to hide half the script
+-- from anyone who did not already know where things were. They are now
+-- collapsible sections on Home, which fits them in one view and lets you shut
+-- the ones you are not using. Movement stays its own tab because it is the tab
+-- people live in, and Dev stays its own because the class dump belongs nowhere
+-- near a panic button.
+local HomeTab  = Window:MakeTab({Name = "Home",     Icon = "house",  Columns = true})
+local MoveTab  = Window:MakeTab({Name = "Movement", Icon = "star",   Columns = true})
+local DevTab   = Window:MakeTab({Name = "Dev",      Icon = "wrench", Columns = true})
+
+-- Both Home columns, made once. Every section below claims one of these rather
+-- than a tab of its own, and the left/right split is chosen per section to keep
+-- the two columns roughly the same height.
+local HL, HR = HomeTab:AddLeft(), HomeTab:AddRight()
 
 -- ===========================================================================
 -- MOVEMENT
@@ -457,9 +507,9 @@ tpSec:AddButton({
 -- ===========================================================================
 -- CHARACTER
 -- ===========================================================================
-local CL, CR = CharTab:AddLeft(), CharTab:AddRight()
+local CL, CR = HL, HR
 
-local selfSec = CL:AddSection({Name = "Self"})
+local selfSec = CL:AddSection({Name = "Self", Collapsible = true})
 
 selfSec:AddToggle({
     Name = "Hide Character", Default = false,
@@ -517,7 +567,7 @@ selfSec:AddButton({
     end,
 })
 
-local antiSec = CR:AddSection({Name = "Safety"})
+local antiSec = CR:AddSection({Name = "Safety", Collapsible = true})
 
 antiSec:AddToggle({
     Name = "Anti Void", Default = false,
@@ -547,9 +597,9 @@ antiSec:AddToggle({
 -- ===========================================================================
 -- VISUALS
 -- ===========================================================================
-local VL, VR = ViewTab:AddLeft(), ViewTab:AddRight()
+local VL, VR = HL, HR
 
-local lightSec = VL:AddSection({Name = "Lighting"})
+local lightSec = VL:AddSection({Name = "Lighting", Collapsible = true})
 
 lightSec:AddToggle({
     Name = "Fullbright", Default = false,
@@ -630,7 +680,7 @@ lightSec:AddToggle({
     end,
 })
 
-local espSec = VR:AddSection({Name = "Player ESP"})
+local espSec = VR:AddSection({Name = "Player ESP", Collapsible = true})
 
 local function clearESP(plr)
     if plr then
@@ -740,9 +790,9 @@ espSec:AddToggle({
 -- ===========================================================================
 -- PLAYERS
 -- ===========================================================================
-local PL_, PR_ = PlayTab:AddLeft(), PlayTab:AddRight()
+local PL_, PR_ = HL, HR
 
-local plrSec = PL_:AddSection({Name = "Target"})
+local plrSec = PL_:AddSection({Name = "Target Player", Collapsible = true})
 
 local targetName = nil
 
@@ -803,7 +853,7 @@ plrSec:AddToggle({
     end,
 })
 
-local infoSec = PR_:AddSection({Name = "Info"})
+local infoSec = PR_:AddSection({Name = "Player Info", Collapsible = true})
 
 R.plrInfo = infoSec:AddParagraph("Selected Player", "Pick someone to see their details.")
 
@@ -846,9 +896,9 @@ infoSec:AddButton({
 -- ===========================================================================
 -- SERVER
 -- ===========================================================================
-local SL, SR = ServTab:AddLeft(), ServTab:AddRight()
+local SL, SR = HL, HR
 
-local srvSec = SL:AddSection({Name = "This Server"})
+local srvSec = SL:AddSection({Name = "This Server", Collapsible = true})
 
 R.srvInfo = srvSec:AddParagraph("Server", "Loading...")
 
@@ -909,7 +959,7 @@ srvSec:AddButton({
     end,
 })
 
-local afkSec = SR:AddSection({Name = "Session"})
+local afkSec = SR:AddSection({Name = "Session", Collapsible = true})
 
 afkSec:AddToggle({
     Name = "Anti AFK", Default = false,
@@ -935,14 +985,69 @@ afkSec:AddToggle({
 -- ===========================================================================
 -- SETTINGS
 -- ===========================================================================
-local GL, GR = SetTab:AddLeft(), SetTab:AddRight()
+local GL, GR = HL, HR
 
-local aboutSec = GL:AddSection({Name = "About"})
+-- ---------------------------------------------------------------------------
+-- Interface
+-- ---------------------------------------------------------------------------
+-- Duvome already carries themes, an accent override, glass, a click-through
+-- mode, a HUD watch and a config store. None of that was reachable from the UI
+-- before, so every one of those was either a constant in this file or unused.
+-- Exposing the library's own settings beats reimplementing worse versions.
+local uiSec = HL:AddSection({Name = "Interface", Collapsible = true})
+
+uiSec:AddDropdown({
+    Name = "Theme", Options = (function()
+        local ok, list = pcall(function() return Duvome:GetThemes() end)
+        return (ok and type(list) == "table" and #list > 0) and list or {"Default"}
+    end)(),
+    Default = "Default", Save = true, Flag = "theme",
+    Callback = function(name) pcall(function() Duvome:SetTheme(name) end) end,
+})
+
+uiSec:AddColorpicker({
+    Name = "Accent Colour", Default = Color3.fromRGB(120, 50, 200),
+    Save = true, Flag = "accent",
+    Callback = function(c) pcall(function() Duvome:SetAccent(c) end) end,
+})
+
+uiSec:AddSlider({
+    Name = "Glass", Min = 0, Max = 90, Default = 38,
+    Increment = 2, ValueName = "%", Save = true, Flag = "glass",
+    Callback = function(v) pcall(function() Duvome:SetGlass(v / 100) end) end,
+})
+
+uiSec:AddToggle({
+    Name = "HUD Watch", Default = false, Save = true, Flag = "watch",
+    -- The little always-on-screen readout of what is running. Off by default
+    -- because it is the sort of thing that belongs on screen only when asked.
+    Callback = function(v) pcall(function() Duvome:SetWatchVisible(v) end) end,
+})
+
+uiSec:AddToggle({
+    Name = "Click Through", Default = false, Flag = "clickthru",
+    Tooltip = "Lets clicks pass to the game while the window is open.",
+    Callback = function(v) pcall(function() Duvome:SetClickThrough(v) end) end,
+})
+
+-- No menu keybind here on purpose: Duvome already owns one (RightShift by
+-- default, rebindable from its own title bar), and a second binding fighting
+-- the first over the same window is worse than no binding at all.
+uiSec:AddButton({
+    Name = "Reload Saved Config",
+    Tooltip = "Re-reads the RUT config for this game. RightShift hides the menu.",
+    Callback = function() pcall(function() Duvome:Init() end) end,
+})
+
+local aboutSec = HR:AddSection({Name = "About", Collapsible = true})
 aboutSec:AddParagraph("RUT - Roblox Universal Troller",
     "Build: " .. RUT_BUILD ..
-    "\n\nEverything here acts on your own client - movement, camera and\nrendering. Nothing is sent at another player.")
+    "\n\nEverything here acts on your own client - movement, camera and\n"
+    .. "rendering. Nothing is sent at another player."
+    .. "\n\nSettings with a Save flag persist to the RUT config folder, so\n"
+    .. "theme, accent, glass and your speed values come back next run.")
 
-local panicSec = GL:AddSection({Name = "Panic"})
+local panicSec = GL:AddSection({Name = "Panic", Collapsible = true})
 
 local function stopEverything()
     local names = {}
@@ -982,7 +1087,7 @@ panicSec:AddButton({
     Callback = stopEverything,
 })
 
-local testSec = GR:AddSection({Name = "Diagnostics"})
+local testSec = GR:AddSection({Name = "Diagnostics", Collapsible = true})
 
 R.testOut = testSec:AddParagraph("Self Test", "Run it to check what this game allows.")
 
