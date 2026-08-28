@@ -85,7 +85,7 @@ end
 local Duvome = loadLib("DL.lua",
     "https://raw.githubusercontent.com/aparaanana-hue/DW/refs/heads/main/DL.lua")
 
-local SAE_BUILD = "Aug 27 - build 1, unrun"
+local SAE_BUILD = "Aug 27 - build 2, CarryAreaEgg prompt"
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -747,17 +747,119 @@ local function bestEgg()
     return best
 end
 
--- The pickup itself. The ProximityPrompt is tried first every time: if the egg
--- has one, firing it is the game's own code path and needs no guessed
--- signature, which makes it strictly better than the remote.
-local function grabEgg(e)
-    local prompt = e.model:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and F.fireprompt then
-        pcall(F.fireprompt, prompt)
-        return true, "prompt"
+-- ---------------------------------------------------------------------------
+-- Prompts
+-- ---------------------------------------------------------------------------
+-- The pickup prompt is NOT a child of the egg. Build 1 searched inside the egg
+-- model, found nothing, and fell through to the guessed remote every time -
+-- which is exactly why auto steal walked to eggs and then stood there.
+--
+-- The dump says what actually happens: fifty separate Parts, every one named
+-- SmartPromptPart, each a direct child of Workspace, each holding one
+-- ProximityPrompt named CarryAreaEgg. They sit at the eggs as siblings, not
+-- children. So the prompt is found by position, not by parentage.
+local CARRY_PROMPT = "CarryAreaEgg"
+
+local function allPrompts(named)
+    local out = {}
+    -- Children of Workspace only, not GetDescendants: SmartPromptParts are
+    -- top level, and a full descendant walk of this game is 58,000 instances
+    -- for something that runs on every pickup.
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("BasePart") or child:IsA("Model") then
+            for _, p in ipairs(child:GetChildren()) do
+                if p:IsA("ProximityPrompt") and (not named or p.Name == named) then
+                    table.insert(out, p)
+                end
+            end
+        end
     end
-    local ok, res = call("carry", e.id)
-    return ok, ok and ("remote " .. ser(res)) or res
+    return out
+end
+
+local function promptPos(prompt)
+    local parent = prompt.Parent
+    if parent and parent:IsA("BasePart") then return parent.Position end
+    local p = parent and partOf(parent)
+    return p and p.Position or nil
+end
+
+-- Nearest carry prompt to a point. Eggs and prompt parts are one to one, so
+-- "nearest to the egg" is that egg's prompt.
+local function carryPromptNear(pos, radius)
+    local best, bestD = nil, radius or 25
+    for _, p in ipairs(allPrompts(CARRY_PROMPT)) do
+        local pp = promptPos(p)
+        if pp then
+            local d = (pp - pos).Magnitude
+            if d <= bestD then best, bestD = p, d end
+        end
+    end
+    return best, bestD
+end
+
+-- Firing a prompt is not one call. A HoldDuration prompt ignores a bare
+-- trigger, line of sight is checked on the client, and MaxActivationDistance is
+-- a client property too - so all three are relaxed first, then the prompt is
+-- driven both ways: the executor's fireproximityprompt, and a real input hold
+-- for the executors where that function does nothing.
+local function firePrompt(prompt)
+    local hold = 0
+    pcall(function()
+        hold = prompt.HoldDuration or 0
+        prompt.RequiresLineOfSight = false
+        prompt.MaxActivationDistance = math.max(prompt.MaxActivationDistance or 10, 60)
+        prompt.Enabled = true
+    end)
+
+    if F.fireprompt then
+        -- Some builds take the hold duration as a second argument and ignore a
+        -- one-argument call on a hold prompt. Passing it costs nothing.
+        pcall(F.fireprompt, prompt, hold)
+        pcall(F.fireprompt, prompt)
+    end
+
+    pcall(function()
+        prompt:InputHoldBegin()
+        task.wait(math.clamp(hold, 0, 3) + 0.05)
+        prompt:InputHoldEnd()
+    end)
+end
+
+-- The pickup. Success is no longer whatever the remote returned - it is whether
+-- you are holding an egg afterwards, which is the only answer that cannot be
+-- wrong. Everything downstream (return home, place, the failure counter that
+-- stops the loop) depends on this being honest.
+local function grabEgg(e)
+    local root = hrp()
+    local target = (e.part and e.part.Position) or (root and root.Position)
+    if not target then return false, "no character" end
+
+    -- Wait for the prompt to exist and switch on: the game enables it as you
+    -- approach, so arriving and firing in the same frame finds nothing.
+    local prompt
+    for _ = 1, 12 do
+        prompt = carryPromptNear(target, 30)
+        if prompt then break end
+        task.wait(0.1)
+    end
+
+    if prompt then
+        firePrompt(prompt)
+    else
+        -- No prompt near the egg at all. Fall back to the guessed remote, but
+        -- report which path ran so a failure stays attributable.
+        local ok, res = call("carry", e.id)
+        if not ok then return false, "no prompt, remote failed: " .. tostring(res) end
+    end
+
+    -- Ground truth: a Tool named "<Name> (n kg)" in your character.
+    for _ = 1, 20 do
+        if myHeldEgg() then return true, prompt and "prompt" or "remote" end
+        task.wait(0.1)
+    end
+    return false, prompt and "prompt fired but nothing was picked up"
+        or "no CarryAreaEgg prompt near the egg"
 end
 
 -- ===========================================================================
@@ -792,16 +894,26 @@ local Window = Duvome:MakeWindow({
 
 pcall(function() Duvome:SetGlass(0.38) end)
 
-local StealTab = Window:MakeTab({Name = "Steal",     Icon = "star",     Columns = true})
-local EggTab   = Window:MakeTab({Name = "Eggs",      Icon = "backpack", Columns = true})
-local PetTab   = Window:MakeTab({Name = "Pets",      Icon = "tag",      Columns = true})
-local SakTab   = Window:MakeTab({Name = "Sakura",    Icon = "house",    Columns = true})
-local ProgTab  = Window:MakeTab({Name = "Progress",  Icon = "wrench",   Columns = true})
-local ServTab  = Window:MakeTab({Name = "Server",    Icon = "code",     Columns = true})
-local EspTab   = Window:MakeTab({Name = "ESP",       Icon = "tag",      Columns = true})
-local CharTab  = Window:MakeTab({Name = "Character", Icon = "backpack", Columns = true})
-local DashTab  = Window:MakeTab({Name = "Dashboard", Icon = "gear",     Columns = true})
-local DevTab   = Window:MakeTab({Name = "Dev",       Icon = "wrench",   Columns = true})
+-- Four tabs, not ten. Ten tabs of two sections each meant the thing you wanted
+-- was always two clicks away behind a name you had to remember. The sections
+-- themselves are unchanged - they are just collapsible now, so a tab shows you
+-- everything it holds and you shut what you are not using.
+--
+--   Steal  the loop and everything that aims it
+--   Farm   what to do with an egg once you have one: place, hatch, pets, sakura, upgrades
+--   World  things that are not the farm: ESP, your character, the server
+--   Dev    the spy, the bindings, stats, webhook, panic
+local StealTab = Window:MakeTab({Name = "Steal", Icon = "star",   Columns = true})
+local FarmTab  = Window:MakeTab({Name = "Farm",  Icon = "house",  Columns = true})
+local WorldTab = Window:MakeTab({Name = "World", Icon = "tag",    Columns = true})
+local DevTab   = Window:MakeTab({Name = "Dev",   Icon = "wrench", Columns = true})
+
+-- One pair of columns per tab, claimed once. Each section below takes the same
+-- side it had when it lived on its own tab, which keeps the two columns of each
+-- merged tab roughly the same height.
+local FL, FR = FarmTab:AddLeft(), FarmTab:AddRight()
+local WL, WR = WorldTab:AddLeft(), WorldTab:AddRight()
+local DVL, DVR = DevTab:AddLeft(), DevTab:AddRight()
 
 -- ===========================================================================
 -- STEAL
@@ -854,6 +966,40 @@ engineSec:AddButton({
     Callback = function() task.spawn(goHome) end,
 })
 
+-- Dropping the egg off. Placing is what banks it, and like the pickup it turns
+-- out to be a prompt job rather than a remote one: standing on your plot with
+-- an egg in hand puts a prompt in reach, so the nearest one is fired and the
+-- guessed remote is only the fallback. Success is checked the same honest way -
+-- the egg has left your hands.
+local function dropOff()
+    local root = hrp()
+    if not root then return false, "no character" end
+
+    local prompt = carryPromptNear(root.Position, 35)
+    if not prompt then
+        -- Any prompt in reach, not just a carry one: the plot-side prompt has a
+        -- different name and the dump only had three of them to go on.
+        local best, bestD = nil, 35
+        for _, p in ipairs(allPrompts(nil)) do
+            local pp = promptPos(p)
+            if pp then
+                local d = (pp - root.Position).Magnitude
+                if d <= bestD then best, bestD = p, d end
+            end
+        end
+        prompt = best
+    end
+
+    if prompt then firePrompt(prompt) end
+    if not prompt then call("place") end
+
+    for _ = 1, 20 do
+        if not myHeldEgg() then return true, prompt and "prompt" or "remote" end
+        task.wait(0.1)
+    end
+    return false, "still holding it after the drop-off"
+end
+
 -- One steal, shared by the button and the loop so they cannot drift.
 local function stealOnce()
     local e = bestEgg()
@@ -870,11 +1016,11 @@ local function stealOnce()
     if S.returnBase then
         task.wait(0.2)
         goHome()
-        -- Placing is what banks it. If the binding is wrong this is where the
-        -- run quietly stops paying, so the outcome is reported either way.
-        local pok, perr = call("place", e.id)
-        if not pok then return true, "carried, but place failed: " .. tostring(perr) end
+        task.wait(0.4)
+        local pok, phow = dropOff()
+        if not pok then return true, "carried home, but drop-off failed: " .. tostring(phow) end
         event("Placed", e.id:sub(1, 8))
+        return true, how .. " -> banked (" .. phow .. ")"
     end
     return true, how
 end
@@ -1070,9 +1216,9 @@ pursueSec:AddToggle({
 -- ===========================================================================
 -- EGGS
 -- ===========================================================================
-local EL, ER = EggTab:AddLeft(), EggTab:AddRight()
+local EL, ER = FL, FR
 
-local placeSec = EL:AddSection({Name = "Place & Hatch"})
+local placeSec = EL:AddSection({Name = "Place & Hatch", Collapsible = true})
 
 placeSec:AddParagraph("Bindings",
     "AskPlaceEgg, AskHatch and AskFinishHatch, each taking an egg id. All\n" ..
@@ -1164,7 +1310,7 @@ placeSec:AddToggle({
     end,
 })
 
-local eggSellSec = ER:AddSection({Name = "Sell & Favourite"})
+local eggSellSec = ER:AddSection({Name = "Sell & Favourite", Collapsible = true})
 
 eggSellSec:AddDropdown({
     Name = "Egg Rarities To Sell", Options = RARITIES, MultiSelect = true,
@@ -1256,9 +1402,9 @@ eggSellSec:AddToggle({
 -- ===========================================================================
 -- PETS
 -- ===========================================================================
-local PL, PR = PetTab:AddLeft(), PetTab:AddRight()
+local PL, PR = FL, FR
 
-local equipSec = PL:AddSection({Name = "Equip"})
+local equipSec = PL:AddSection({Name = "Equip", Collapsible = true})
 
 local petInfo = equipSec:AddParagraph("Status", "Idle.")
 local function setPet(m) pcall(function() petInfo:Set(m) end) end
@@ -1299,7 +1445,7 @@ equipSec:AddButton({
     end,
 })
 
-local petSellSec = PR:AddSection({Name = "Sell"})
+local petSellSec = PR:AddSection({Name = "Sell", Collapsible = true})
 
 petSellSec:AddDropdown({
     Name = "Pet Rarities To Sell", Options = RARITIES, MultiSelect = true,
@@ -1398,7 +1544,7 @@ petSellSec:AddToggle({
     end,
 })
 
-local fuseSec = PL:AddSection({Name = "Fuse (beta)"})
+local fuseSec = PL:AddSection({Name = "Fuse (beta)", Collapsible = true})
 
 fuseSec:AddParagraph("Fusery",
     "LoadPet, BeginFuse, FinishReveal - a four-call sequence inferred entirely\n" ..
@@ -1480,9 +1626,9 @@ fuseSec:AddToggle({
 -- ===========================================================================
 -- SAKURA / BLOOMERY
 -- ===========================================================================
-local KL, KR = SakTab:AddLeft(), SakTab:AddRight()
+local KL, KR = FL, FR
 
-local sakSec = KL:AddSection({Name = "Bloomery Event"})
+local sakSec = KL:AddSection({Name = "Bloomery Event", Collapsible = true})
 
 sakSec:AddParagraph("What the dump showed",
     "Workspace.SakuraBloomTrees, Workspace.SakuraCrystals and an\n" ..
@@ -1621,7 +1767,7 @@ sakSec:AddButton({
     end,
 })
 
-local rollSec = KR:AddSection({Name = "Incubator & Mutation"})
+local rollSec = KR:AddSection({Name = "Incubator & Mutation", Collapsible = true})
 
 -- The whole sequence, kept in one function so the toggle and the button cannot
 -- drift, and so the order is written down once where it can be corrected.
@@ -1708,9 +1854,9 @@ rollSec:AddToggle({
 -- ===========================================================================
 -- PROGRESS
 -- ===========================================================================
-local GL, GR = ProgTab:AddLeft(), ProgTab:AddRight()
+local GL, GR = FL, FR
 
-local claimSec = GL:AddSection({Name = "Claims"})
+local claimSec = GL:AddSection({Name = "Claims", Collapsible = true})
 local progInfo = claimSec:AddParagraph("Status", "Idle.")
 local function setProg(m) pcall(function() progInfo:Set(m) end) end
 
@@ -1757,7 +1903,7 @@ claimSec:AddToggle({
     end,
 })
 
-local upSec = GR:AddSection({Name = "Upgrades"})
+local upSec = GR:AddSection({Name = "Upgrades", Collapsible = true})
 
 upSec:AddSlider({
     Name = "Upgrade Interval", Min = 30, Max = 900, Default = 120,
@@ -1800,7 +1946,7 @@ upSec:AddToggle({
     end,
 })
 
-local millSec = GL:AddSection({Name = "Treadmill & Gear"})
+local millSec = GL:AddSection({Name = "Treadmill & Gear", Collapsible = true})
 
 millSec:AddButton({
     Name = "Walk To Treadmill",
@@ -1864,9 +2010,9 @@ millSec:AddButton({
 -- ===========================================================================
 -- SERVER
 -- ===========================================================================
-local VL, VR = ServTab:AddLeft(), ServTab:AddRight()
+local VL, VR = WL, WR
 
-local hopSec = VL:AddSection({Name = "Server Hop"})
+local hopSec = VL:AddSection({Name = "Server Hop", Collapsible = true})
 local hopInfo = hopSec:AddParagraph("Status", "Idle.")
 local function setHop(m) pcall(function() hopInfo:Set(m) end) end
 
@@ -1975,7 +2121,7 @@ hopSec:AddToggle({
     end,
 })
 
-local evSec = VR:AddSection({Name = "Events & Cycle"})
+local evSec = VR:AddSection({Name = "Events & Cycle", Collapsible = true})
 
 evSec:AddParagraph("Where prediction comes from",
     "There is no weather table in the dump. What there is: FetchRunning,\n" ..
@@ -2015,7 +2161,7 @@ if NET then
     end
 end
 
-local infoSec = VR:AddSection({Name = "Server Info"})
+local infoSec = VR:AddSection({Name = "Server Info", Collapsible = true})
 local srvInfo = infoSec:AddParagraph("This server", "-")
 
 infoSec:AddButton({
@@ -2029,9 +2175,9 @@ infoSec:AddButton({
 -- ===========================================================================
 -- ESP
 -- ===========================================================================
-local XL, XR = EspTab:AddLeft(), EspTab:AddRight()
+local XL, XR = WL, WR
 
-local espSec = XL:AddSection({Name = "Highlights"})
+local espSec = XL:AddSection({Name = "Highlights", Collapsible = true})
 
 espSec:AddParagraph("Free information",
     "None of this touches the server. Field egg ids, placed-egg owners and\n" ..
@@ -2185,15 +2331,15 @@ espSec:AddToggle({
 
 espSec:AddButton({ Name = "Clear Highlights", Callback = clearEsp })
 
-local listSec = XR:AddSection({Name = "Live Read"})
+local listSec = XR:AddSection({Name = "Live Read", Collapsible = true})
 local worldInfo = listSec:AddParagraph("World", "Waiting...")
 
 -- ===========================================================================
 -- CHARACTER
 -- ===========================================================================
-local CL, CR = CharTab:AddLeft(), CharTab:AddRight()
+local CL, CR = WL, WR
 
-local moveSec = CL:AddSection({Name = "Movement"})
+local moveSec = CL:AddSection({Name = "Movement", Collapsible = true})
 
 moveSec:AddSlider({
     Name = "Walk Speed", Min = 16, Max = 300, Default = 16,
@@ -2256,7 +2402,7 @@ moveSec:AddToggle({
     end,
 })
 
-local flySec = CR:AddSection({Name = "Fly"})
+local flySec = CR:AddSection({Name = "Fly", Collapsible = true})
 
 flySec:AddSlider({
     Name = "Fly Speed", Min = 10, Max = 400, Default = 60,
@@ -2337,9 +2483,9 @@ end)
 -- ===========================================================================
 -- DASHBOARD
 -- ===========================================================================
-local DL_, DR_ = DashTab:AddLeft(), DashTab:AddRight()
+local DL_, DR_ = DVL, DVR
 
-local statSec = DL_:AddSection({Name = "Live Stats"})
+local statSec = DL_:AddSection({Name = "Live Stats", Collapsible = true})
 local statInfo = statSec:AddParagraph("Session", "Starting...")
 
 statSec:AddButton({
@@ -2356,7 +2502,7 @@ statSec:AddButton({
     end,
 })
 
-local hookSec = DR_:AddSection({Name = "Webhook"})
+local hookSec = DR_:AddSection({Name = "Webhook", Collapsible = true})
 
 hookSec:AddToggle({
     Name = "Webhook Enabled", Default = false, Save = true, Flag = "hookon",
@@ -2387,7 +2533,7 @@ hookSec:AddButton({
     end,
 })
 
-local sysSec = DL_:AddSection({Name = "Session"})
+local sysSec = DL_:AddSection({Name = "Session", Collapsible = true})
 
 sysSec:AddButton({
     Name = "Panic - Stop Everything",
@@ -2418,9 +2564,9 @@ sysSec:AddButton({
 -- ===========================================================================
 -- DEV
 -- ===========================================================================
-local VL2, VR2 = DevTab:AddLeft(), DevTab:AddRight()
+local VL2, VR2 = DVL, DVR
 
-local spySec = VL2:AddSection({Name = "Remote Spy"})
+local spySec = VL2:AddSection({Name = "Remote Spy", Collapsible = true})
 
 spySec:AddParagraph("Why this tab exists",
     "No script source was recovered, so every server call in this file is an\n" ..
@@ -2466,7 +2612,7 @@ spySec:AddButton({
     end,
 })
 
-local bindSec = VR2:AddSection({Name = "Rebind A Call"})
+local bindSec = VR2:AddSection({Name = "Rebind A Call", Collapsible = true})
 
 bindSec:AddParagraph("Live rebinding",
     "Type an action key from the list and the remote name it should use. The\n" ..
@@ -2522,7 +2668,7 @@ bindSec:AddButton({
     end,
 })
 
-local rawSec = VL2:AddSection({Name = "Fire Any Remote"})
+local rawSec = VL2:AddSection({Name = "Fire Any Remote", Collapsible = true})
 
 local rawName, rawArgs = "", ""
 
@@ -2589,6 +2735,39 @@ rawSec:AddButton({
                 end)
             end
         end)
+    end,
+})
+
+rawSec:AddButton({
+    Name = "Scan Prompts Near Me",
+    Tooltip = "Lists every ProximityPrompt within 120 studs, with name and distance.",
+    Callback = function()
+        local root = hrp()
+        if not root then notify("SAE", "No character.", 4) return end
+        local rows = {}
+        for _, p in ipairs(allPrompts(nil)) do
+            local pp = promptPos(p)
+            if pp then
+                local d = (pp - root.Position).Magnitude
+                if d <= 120 then
+                    table.insert(rows, {
+                        d = d,
+                        text = string.format("%-16s %-18s %5.0f studs  hold %.1f  %s",
+                            p.Name, tostring(p.Parent and p.Parent.Name or "?"),
+                            d, p.HoldDuration or 0,
+                            p.Enabled and "enabled" or "disabled"),
+                    })
+                end
+            end
+        end
+        table.sort(rows, function(a, b) return a.d < b.d end)
+        local lines = {}
+        for _, r in ipairs(rows) do table.insert(lines, r.text) end
+        local text = #lines == 0 and "No prompts within 120 studs."
+            or table.concat(lines, "\n")
+        pcall(function() rawInfo:Set(text:sub(1, 800)) end)
+        if F.clip then pcall(F.clip, text) end
+        notify("SAE", #rows .. " prompts nearby.", 5)
     end,
 })
 
