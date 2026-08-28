@@ -1169,13 +1169,17 @@ local DL, DR = DevTab:AddLeft(), DevTab:AddRight()
 -- left walks a fixed set of roots, keeps only the classes picked in the
 -- dropdown, and writes them out as a text dump.
 --
--- Default upload target, mirroring IAB's saveWebhook. It is no longer editable
--- from the UI - the send button uses this constant directly. This URL is
--- plaintext in a public repo - anyone reading the repo can see it, so rotate it
--- in Discord if it ever gets abused.
-local SAVE_WEBHOOK = "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE"
+-- No webhook is baked in any more. A URL committed to a repo is readable by
+-- anyone who can read the repo, and a Discord webhook URL is a bearer token -
+-- possession is permission to post. So the field starts empty and you paste
+-- your own; nothing is stored in the file, and with SaveConfig on it lives in
+-- the RUT config folder on your machine rather than in git.
 
 local saveSec = DL:AddSection({Name = "Save Instance"})
+
+-- Empty means "no webhook", not "use a default". There is no default to fall
+-- back to, which is the point.
+R.webhookUrl = ""
 
 saveSec:AddParagraph("Selected-class dump",
     "Walks ReplicatedStorage, workspace, Lighting, the Starter services and\n" ..
@@ -1498,7 +1502,17 @@ local function runSelected(useWebhook)
     if typeof(writefile) == "function" then pcall(writefile, fname, src) end
 
     if useWebhook then
-        local sent, smsg = sendToWebhook(SAVE_WEBHOOK, fname, src, label)
+        local url = tostring(R.webhookUrl or ""):gsub("%s+", "")
+        if url == "" then
+            -- Nothing to send to. The dump is already on disk and the clipboard
+            -- still works, so this is a missing setting, not a failure.
+            local copied, cmsg = copyToClipboard(src, "No webhook URL set -")
+            set(cmsg)
+            notify("Save Selected", "No webhook URL set. " ..
+                (copied and "Copied to clipboard instead." or cmsg), 8)
+            return
+        end
+        local sent, smsg = sendToWebhook(url, fname, src, label)
         if sent then set(smsg); notify("Save Selected", smsg, 6); return end
         -- Discord refused it - too big or a bad reply. Fall through to the
         -- clipboard so the dump is still recoverable by hand.
@@ -1524,6 +1538,25 @@ saveSec:AddButton({
     Tooltip = "Same collect, straight to the clipboard - no webhook involved.",
     Callback = function() task.spawn(function() runSelected(false) end) end,
 })
+
+-- Below the buttons rather than above them: the clipboard button needs no URL,
+-- so an empty field is a perfectly normal way to use this section.
+saveSec:AddTextbox({
+    Name = "Discord Webhook URL", Default = "", TextDisappear = false,
+    Callback = function(text)
+        R.webhookUrl = tostring(text or ""):gsub("%s+", "")
+        pcall(function()
+            R.saveInfo:Set(R.webhookUrl == "" and "No webhook set - clipboard only."
+                or "Webhook set.")
+        end)
+    end,
+})
+
+saveSec:AddParagraph("Webhook",
+    "Paste your own Discord webhook URL above. It is not stored in this\n" ..
+    "script - leave it empty and Save Selected Classes just copies to the\n" ..
+    "clipboard instead. Treat the URL as a password: anyone holding it can\n" ..
+    "post to that channel.")
 -- ===========================================================================
 -- LIFECYCLE
 -- ===========================================================================
