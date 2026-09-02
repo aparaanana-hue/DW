@@ -13,7 +13,6 @@ local PIHD_BUILD = "Aug 23 20:10"
 local TAB_ICONS = {
 	Home                 = "house",
 	["Price Tool"]       = "tag",
-	Automation           = "code",
 	Farming              = "backpack",
 	Settings             = "gear",
 	["Shop & Storage"]   = "shopping-cart",
@@ -806,7 +805,6 @@ _initFX()
 local HomeTab  = Window:MakeTab({Name = "Home",           Icon = TAB_ICONS.Home,               Columns = true})
 local ShopTab  = Window:MakeTab({Name = "Shop & Storage", Icon = TAB_ICONS["Shop & Storage"],  Columns = true})
 local PriceTab = Window:MakeTab({Name = "Price Tool",     Icon = TAB_ICONS["Price Tool"],      Columns = true})
-local AutoTab  = Window:MakeTab({Name = "Automation",     Icon = TAB_ICONS.Automation,         Columns = true})
 local FarmTab  = Window:MakeTab({Name = "Farming",        Icon = TAB_ICONS.Farming,            Columns = true})
 local SetTab   = Window:MakeTab({Name = "Settings",       Icon = TAB_ICONS.Settings,           Columns = true})
 
@@ -814,6 +812,38 @@ L, R = HomeTab:AddLeft(), HomeTab:AddRight()
 
 UI.about = L:AddSection({Name = "About"})
 UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVersion: 2.0 (Duvome native)\nBuild: " .. PIHD_BUILD .. "\n\nJoin Discord for updates & support:\ndiscord.gg/NuUzrrNaJz")
+
+-- A readout, not a control. Home's rule is that nothing on it touches the game,
+-- and counting what is already there does not - but it answers the question the
+-- old Home could not: is the hub actually seeing your island?
+UI.homeStatus = UI.about:AddParagraph("At A Glance", "Scanning...")
+task.spawn(function()
+ while true do
+  task.wait(3)
+  pcall(function()
+   local vendings = findVendings and findVendings() or {}
+   local coins, withCoins, stocked = 0, 0, 0
+   for _, v in ipairs(vendings) do
+    pcall(function()
+     if v:FindFirstChild("CoinBalance") and v.CoinBalance.Value > 0 then
+      coins = coins + v.CoinBalance.Value
+      withCoins = withCoins + 1
+     end
+     local sc = v:FindFirstChild("SellingContents")
+     if sc and #sc:GetChildren() > 0 then stocked = stocked + 1 end
+    end)
+   end
+   local bag = 0
+   local bp = LP:FindFirstChild("Backpack")
+   if bp then
+    for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then bag = bag + 1 end end
+   end
+   UI.homeStatus:Set(string.format(
+    "Vendings: %d   stocked %d   holding coins %d\nCoins in machines: %s\nItems in backpack: %d",
+    #vendings, stocked, withCoins, formatNumber(coins), bag))
+  end)
+ end
+end)
 
 -- ---------------------------------------------------------------------------
 -- Home is a guide. Nothing on it does anything to the game.
@@ -900,28 +930,30 @@ end
 
 -- Two a side. All three down the left left the right column empty and the
 -- page lopsided.
+-- Two a side. All three down the left left the right column empty and the
+-- page lopsided.
 local howSec = L:AddSection({Name = "How To Use"})
 TypingPanel(howSec, "Getting Started", {
- "Every tab is one job.\n\nShop & Storage is your shop and your chests -\nstock, prices, coins, the bank.\n\nSettings holds the occasional things: scanners,\nsaved vending groups, openables.",
- "Automation is what runs while you are away:\nauto-restock, the bank loop, the sniper.\n\nFarming waters, harvests, plants and demolishes.\n\nPrice Tool tells you what things are worth.",
+ "Four tabs, one job each.\n\nShop & Storage is the shop: chests, bank, coins,\nstock, prices, the sniper.\n\nPrice Tool is what things are worth.\nFarming is crops, travel and combat.\nSettings is everything occasional.",
+ "Shop & Storage runs top down.\n\nCoin Operations opens with Run Coins, which funds\nevery machine that is short and drains every one\nholding coins - at any distance.\n\nItem Management opens with Run Items, which flies\nthe list and stocks or drains each machine.",
  "Selection comes first.\n\nMost vending actions ask 'which vendings?'\nUse Selected Only in Vending Tools answers it:\nOFF means every vending you own,\nON means only the ones you ALT+Clicked.",
- "The gear on a row holds its settings.\n\nWhere the only setting is a key, the row shows\nthe key box directly instead of a gear.\n\nRefresh lives inside the dropdown it refreshes,\nnext to Select All.",
+ "The gear on a row holds its settings.\n\nRestock's gear holds its loop, its interval and\nthe random-item roller. Bank to Vendings holds\nits timer and amount. Auto Farm holds hover trim,\nattack rate and Auto Spawn.\n\nIf a row has a gear, look in it before deciding\nthe row cannot do the thing you want.",
 })
 
 local safeSec = R:AddSection({Name = "Before You Run Anything"})
 TypingPanel(safeSec, "Worth Knowing", {
  "Destructive actions record how to undo themselves.\n\nEmpty, demolish, coin and bank moves all leave an\nUndo button on their notification, and stay in\nSettings > Undo History until you use them.",
  "An undo is a second action, not a rewind.\n\nBlocks only go back if you still have them.\nItems only go back if they are still on you.\nIt tells you when it could not, instead of\nclaiming it worked.",
- "If a feature goes quiet after a game update,\nrun Settings > Self Test.\n\nIt checks every remote, folder and web source\nthe hub depends on and names what broke.",
+ "Loops stop themselves when they stop working.\n\nBank to Vendings quits when the bank runs dry\nrather than firing withdrawals at nothing.\n\nIf a feature goes quiet after a game update,\nrun Settings > Self Test - it checks every\nremote and folder the hub depends on.",
  "Panels take the left and right of the window.\n\nTwo at a time. Open a third and the one you\nopened first steps aside.",
 })
 
 local tipSec = R:AddSection({Name = "Tips"})
 TypingPanel(tipSec, "Things People Miss", {
+ "Price Tool saves your shop to a file.\n\nSources holds Save Prices, the delete, and a\nwebhook box - paste your own and every save is\nposted to your channel as JSON.\n\nNothing is sent unless you fill that box in.",
+ "Farming starts with Travel, at the top.\n\nPick the island, press Teleport. Combat is below\nit: Target Type switches the one Target list\nbetween mobs and bosses, so there is no second\ndropdown quietly overriding the first.",
  "Ctrl and drag the window edge to resize it.\n\nThe sidebar expands when you hover it, and the\ntab search at its top filters the tabs.",
- "Scanner output goes to a panel, not the tab.\n\nPick several modes at once - it runs each and\nappends them into one report.",
  "Configs are per profile, saved from the topbar.\n\nSet up a farming loadout once, a shop loadout\nonce, and swap between them.",
- "Transparency is a slider in Settings.\n\nClick Through, next to it, lets clicks reach the\ngame whenever the cursor is off the window.",
 })
 
 -- Home is information and nothing else. What used to be on it is split by what
@@ -2300,6 +2332,109 @@ local function doBankWithdraw() doBankTransfer("WITHDRAWAL", "Withdrew",  "Depos
 UI.vmBank:AddButton({Name = "Deposit", Loop = true, LoopEvery = 5, Tooltip = "Deposits the Bank Amount. Turn on Loop in the gear to repeat it.", Callback = doBankDeposit})
 UI.vmBank:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "Withdraws the Bank Amount. Turn on Loop in the gear to repeat it.", Callback = doBankWithdraw})
 
+-- What the Automation tab called "Bank to Vendings": withdraw from the bank,
+-- then push it straight back out into the machines. It belongs here, under the
+-- two halves it is made of, rather than on a tab of its own.
+local b2vOn, b2vEvery, b2vAmount, b2vFavOnly = false, 30, 1000000, false
+local b2vGen = 0
+
+local function bankToVendingsOnce()
+ if not checkNetwork() then return false, "no network" end
+ -- GetBankAccount answers in one of several shapes depending on the build, so
+ -- every one it has been seen to return is unwrapped rather than assuming.
+ local bal
+ pcall(function()
+  local res = Net:WaitForChild("GetBankAccount"):InvokeServer(
+   HttpService:GenerateGUID(false), {{accountType = "PERSONAL"}})
+  if type(res) == "number" then bal = res
+  elseif type(res) == "table" then
+   bal = res.balance or res.Balance or res.amount or res.Amount or res.coins or res.Coins
+   if type(bal) ~= "number" and type(res[1]) == "table" then
+    bal = res[1].balance or res[1].Balance or res[1].amount or res[1].Amount
+   end
+  end
+ end)
+ if type(bal) ~= "number" then bal = nil end
+ if bal and bal <= 0 then return false, "bank is empty" end
+
+ local amount = b2vAmount
+ if bal then amount = math.min(amount, bal) end
+ if amount <= 0 then return false, "nothing to move" end
+
+ pcall(function()
+  Net:WaitForChild("TransactionBankBalance"):FireServer(HttpService:GenerateGUID(false),
+   {{accountType = "PERSONAL", transferType = "WITHDRAWAL", amount = amount}})
+ end)
+ task.wait(0.5)
+
+ local vendings = (b2vFavOnly and #selectedFavorites > 0) and selectedFavorites or findVendings()
+ if #vendings == 0 then return false, "no vendings" end
+
+ -- Each machine caps at 5b coins, so the run tracks how much room is actually
+ -- left rather than firing the same amount at every one and letting the server
+ -- reject the overflow.
+ local VENDING_LIMIT = 5000000000
+ local remaining, used = amount, 0
+ for _, vending in ipairs(vendings) do
+  if remaining <= 0 then break end
+  local held = 0
+  pcall(function()
+   if vending:FindFirstChild("CoinBalance") then held = vending.CoinBalance.Value end
+  end)
+  local room = VENDING_LIMIT - held
+  if room > 0 then
+   local send = math.min(remaining, room)
+   task.spawn(function() depositCoinsToVending(vending, send) end)
+   remaining = remaining - send
+   used = used + 1
+   task.wait(0.1)
+  end
+ end
+ return true, formatNumber(amount - remaining) .. " to " .. used .. " vendings"
+end
+
+local function setBankToVendings(on)
+ b2vOn = on
+ if not on then return end
+ b2vGen = b2vGen + 1
+ local gen = b2vGen
+ task.spawn(function()
+  while b2vOn and gen == b2vGen do
+   local ok, msg = bankToVendingsOnce()
+   updateNotification("Bank to Vendings", tostring(msg), ok and 3 or 4)
+   if not ok and msg == "bank is empty" then
+    b2vOn = false
+    updateNotification("Bank to Vendings", "Bank empty - stopped", 4)
+    return
+   end
+   local waited = 0
+   while b2vOn and gen == b2vGen and waited < b2vEvery do
+    task.wait(1)
+    waited = waited + 1
+   end
+  end
+ end)
+end
+
+UI.vmBank:AddToggle({Name = "Bank to Vendings Loop", Default = false,
+ Tooltip = "Withdraws from the bank and deposits it across your vendings, on a timer. Stops itself when the bank runs dry.",
+ Flag = autoFlag("vend"),
+ Options = {
+  {Type = "slider", Name = "Every", Min = 5, Max = 600, Increment = 5, Default = 30, ValueName = "s",
+   Callback = function(v) b2vEvery = v end},
+  {Type = "slider", Name = "Amount (millions)", Min = 1, Max = 1000, Increment = 1, Default = 1, ValueName = "M",
+   Callback = function(v) b2vAmount = v * 1000000 end},
+  {Type = "toggle", Name = "\u{21AA} Favourites Only", Default = false,
+   Callback = function(v) b2vFavOnly = v end},
+  {Type = "keybind", Name = "Bind Key", OnPress = function()
+   task.spawn(function()
+    local ok, msg = bankToVendingsOnce()
+    updateNotification("Bank to Vendings", tostring(msg), ok and 3 or 4)
+   end)
+  end},
+ },
+ Callback = function(v) setBankToVendings(v) end})
+
 local STOCK_TARGET = 1000
 
 -- What the Mode value actually means, settled from getVendingHealth: mode 1 is
@@ -2409,6 +2544,21 @@ local function stockedTool(vending)
 end
 
 UI.vmCoin = L:AddSection({Name = "Coin Operations", Collapsible = true, LayoutOrder = 1})
+
+-- Run Coins and Run Items came off the Automation tab. They are the one-press
+-- versions of what the rest of these two sections does by hand, so they sit at
+-- the top of the section they summarise. The implementations are still defined
+-- further down where their helpers live; these are forward bindings, filled in
+-- when that code runs. Before then the button says so rather than doing
+-- nothing quietly.
+UI.vmCoin:AddButton({
+ Name = "Run Coins", Loop = true, LoopEvery = 30,
+ Tooltip = "Funds every BUY ITEM machine that is short and empties the coins out of every SELL ITEM machine holding any. Works at any distance - stand anywhere.",
+ Callback = function()
+  if UI.runCoinsImpl then UI.runCoinsImpl()
+  else updateNotification("Run Coins", "Not ready yet - reopen the hub", 3) end
+ end,
+})
 
 -- 0 means "work it out per machine". A fixed 10m was a number that suited no
 -- particular vending.
@@ -2575,6 +2725,23 @@ end})
 
 UI.vmItem = R:AddSection({Name = "Item Management", Collapsible = true, LayoutOrder = 2})
 
+UI.itemRunToggle = UI.vmItem:AddToggle({
+ Name = "Run Items (flies)", Default = false,
+ Tooltip = "Flies over the vendings that need something. SELL ITEM machines under 1000 get topped up from your inventory; BUY ITEM machines holding more than one get drained down to 1. Speed and reach are in the gear.",
+ Options = {
+  {Type = "slider", Name = "Fly Speed", Min = 10, Max = 40, Default = 30, ValueName = " st/s",
+   Callback = function(v) S.itemRunSpeed = v end},
+  {Type = "slider", Name = "Reach", Min = 5, Max = 33, Default = 33, ValueName = " st",
+   Callback = function(v) S.ITEM_REACH = v end},
+  {Type = "slider", Name = "Hover Height", Min = 0, Max = 30, Default = 8, ValueName = " st",
+   Callback = function(v) S.itemRunHover = v end},
+ },
+ Callback = function(value)
+  if UI.runItemsImpl then UI.runItemsImpl(value)
+  else updateNotification("Run Items", "Not ready yet - reopen the hub", 3) end
+ end,
+})
+
 local itemOptions = {}
 local function refreshItems()
  table.clear(itemOptions)
@@ -2595,7 +2762,7 @@ refreshItems()
 
 -- Only consulted for machines holding nothing; a stocked machine names its own
 -- item.
-UI.itemDropdown = UI.vmItem:AddDropdown({Name = "Item (empty vendings only)", Options = itemOptions, OnRefresh = refreshItems, Default = itemOptions[1], Search = true, Tooltip = "Which item to seed a vending that is holding nothing. Machines that already have stock get more of what they hold.", Flag = autoFlag("vend"), Callback = initGuard(function(value)
+UI.itemDropdown = UI.vmItem:AddDropdown({Name = "Item", Options = itemOptions, OnRefresh = refreshItems, Default = itemOptions[1], Search = true, Tooltip = "Which item to seed a vending that is holding nothing. Machines that already have stock get more of what they hold.", Flag = autoFlag("vend"), Callback = initGuard(function(value)
  selectedItemName = value
 end)})
 
@@ -2705,12 +2872,22 @@ local function doDepositItem()
  end)
 end
 
+-- Split mode divides what you are holding evenly across the machines that need
+-- it, instead of pouring the whole stack into the first one and leaving the
+-- rest empty. Declared up here because doRestockVending reads it.
+local restockSplit = false
+
 local function doRestockVending()
  local vendings = getTargetVendings()
  if not vendings then return end
  local list = itemTargets(vendings)
  task.spawn(function()
   local filled, pulled, skipped = 0, 0, 0
+  local sellCount = 0
+  for _, entry in ipairs(list) do
+   if entry.mode == S.MODE_SELL then sellCount = sellCount + 1 end
+  end
+  sellCount = math.max(sellCount, 1)
   -- One vending's restock is a sequence of open/edit/act/close with waits in
   -- it, so under Run Simultaneously each vending gets its own thread and they
   -- overlap, rather than the whole list being walked end to end.
@@ -2730,7 +2907,8 @@ local function doRestockVending()
      local btool = LP.Backpack:FindFirstChild(st.Name)
      if not btool then skipped = skipped + 1 return end
      local have = btool:FindFirstChild("Amount") and btool.Amount.Value or 1
-     local give = math.min(STOCK_TARGET - cur, have)
+     local budget = restockSplit and math.floor(have / sellCount) or have
+     local give = math.min(STOCK_TARGET - cur, budget)
      if give <= 0 then skipped = skipped + 1 return end
      openVending(vending)
      task.wait(0.1)
@@ -2778,7 +2956,77 @@ local function doRestockVending()
 end
 
 UI.vmItem:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doDepositItem}}, Callback = doDepositItem})
-UI.vmItem:AddButton({Name = "Restock", Tooltip = "Acts by vending mode: SELL ITEM machines get topped up to 1000 from your inventory. BUY ITEM machines get their collected stock pulled out, leaving exactly 1 behind. Use Vending Type above to pick which ones.", Options = {{Type = "keybind", Name = "Bind Key", OnPress = doRestockVending}}, Callback = doRestockVending})
+-- Restock absorbs what the Automation tab called Auto-Restock and Vending Auto
+-- Stocker. Both were the same button on a timer with one extra choice each, so
+-- they are the timer and those choices, on the button itself.
+local restockLoopOn, restockEvery = false, 15
+local restockRandomItem, restockRandomEvery = false, 0
+local restockGen = 0
+
+local function restockCycle()
+ -- Random item picks a fresh item from your backpack each pass. Without it the
+ -- loop keeps sending whatever the Item dropdown holds, which empties one stack
+ -- and then does nothing for the rest of the night.
+ if restockRandomItem then
+  refreshItems()
+  if #itemOptions > 0 and itemOptions[1] ~= "No items" then
+   local pick = itemOptions[math.random(1, #itemOptions)]
+   selectedItemName = pick
+   pcall(function() UI.itemDropdown:Set(pick) end)
+  end
+ end
+ doRestockVending()
+end
+
+local function setRestockLoop(on)
+ restockLoopOn = on
+ if not on then return end
+ restockGen = restockGen + 1
+ local gen = restockGen
+ task.spawn(function()
+  local since = 0
+  while restockLoopOn and gen == restockGen do
+   restockCycle()
+   -- Two independent clocks: the restock interval, and an optional slower one
+   -- that only rerolls the item. Rerolling every pass is a different feature
+   -- from restocking every pass, and tying them together was why the old Auto
+   -- Stocker could not do one without the other.
+   local waited = 0
+   while restockLoopOn and gen == restockGen and waited < restockEvery do
+    task.wait(1)
+    waited = waited + 1
+    since = since + 1
+    if restockRandomEvery > 0 and since >= restockRandomEvery then
+     since = 0
+     refreshItems()
+     if #itemOptions > 0 and itemOptions[1] ~= "No items" then
+      selectedItemName = itemOptions[math.random(1, #itemOptions)]
+      pcall(function() UI.itemDropdown:Set(selectedItemName) end)
+     end
+    end
+   end
+  end
+ end)
+end
+
+UI.vmItem:AddButton({Name = "Restock",
+ Tooltip = "Acts by vending mode: SELL ITEM machines get topped up to 1000 from your inventory. BUY ITEM machines get their collected stock pulled out, leaving exactly 1 behind. Use Vending Type above to pick which ones.",
+ Options = {
+  {Type = "keybind", Name = "Bind Key", OnPress = doRestockVending},
+  {Type = "toggle", Name = "Loop", Default = false,
+   Callback = function(v) setRestockLoop(v) end},
+  {Type = "slider", Name = "Loop Every", Min = 1, Max = 300, Increment = 1, Default = 15, ValueName = "s",
+   Callback = function(v) restockEvery = v end},
+  {Type = "toggle", Name = "\u{21AA} Random Item", Default = false,
+   Callback = function(v) restockRandomItem = v end},
+  {Type = "slider", Name = "\u{21AA} Reroll Every", Min = 0, Max = 600, Increment = 5, Default = 0, ValueName = "s",
+   Callback = function(v) restockRandomEvery = v end},
+  -- A toggle, not a dropdown: DL's gear renders sliders, keybinds and toggles,
+  -- and Deposit All vs Split is a two-state choice anyway.
+  {Type = "toggle", Name = "\u{21AA} Split Across Vendings", Default = false,
+   Callback = function(v) restockSplit = v end},
+ },
+ Callback = doRestockVending})
 
 UI.vmItem:AddButton({Name = "Empty", Loop = true, LoopEvery = 5, Tooltip = "Withdraws every item from the matching machines. Pick Leave 1 (BUY ITEM) as the Restriction to drain them down to one instead of to nothing.", Callback = function()
  local vendings = getTargetVendings()
@@ -3636,7 +3884,7 @@ local function BuildPriceTool()
 
  local PL = PriceTab:AddLeft()
  local PR = PriceTab:AddRight()
- local guideItemDropdown, guideResult, refreshGuideItemDropdown
+ local refreshGuideItemDropdown
 
  local SrcSec = PL:AddSection({Name = "Sources"})
  local sourceLabels = getSourceLabels()
@@ -3650,55 +3898,134 @@ local function BuildPriceTool()
   Callback = function(chosen) selectedSources = chosen or {} if refreshGuideItemDropdown then refreshGuideItemDropdown() end end,
  })
 
+ -- The webhook lives with Save Prices because that is the only thing it sends.
+ -- Empty means no webhook rather than a fallback to some baked-in URL: a
+ -- webhook URL is a bearer token, and one committed to this file would let
+ -- anyone reading the repo post to your channel.
+ local priceHook = ""
+
+ -- The saved shop as a Discord message. A shop is a few hundred items, well
+ -- past the 2000 character content limit, so it goes as a file attachment and
+ -- the message body is only the summary line.
+ local function sendShopToWebhook(fileBase)
+  if priceHook == "" then return false, "no webhook URL set" end
+  if not httpRequest then return false, "this executor exposes no request()" end
+  local path = SHOP_FOLDER .. "/" .. fileBase .. ".json"
+  local body
+  local ok = pcall(function() body = readfile(path) end)
+  if not ok or type(body) ~= "string" or #body == 0 then
+   return false, "could not read the file back"
+  end
+
+  local shopName, shopOwner = getIslandDetails()
+  local count = 0
+  pcall(function()
+   local decoded = HttpService:JSONDecode(body)
+   for _ in pairs(decoded.items or {}) do count = count + 1 end
+  end)
+
+  local label = string.format("**%s** by %s - %d items - %s",
+   tostring(shopName), tostring(shopOwner), count, os.date("%Y-%m-%d %H:%M"))
+
+  local boundary = "PIHD" .. tostring(math.random(1, 1e9))
+  local payload = HttpService:JSONEncode({ content = label })
+  local parts = table.concat({
+   "--" .. boundary,
+   'Content-Disposition: form-data; name="payload_json"',
+   "Content-Type: application/json",
+   "",
+   payload,
+   "--" .. boundary,
+   'Content-Disposition: form-data; name="files[0]"; filename="' .. fileBase .. '.json"',
+   "Content-Type: application/json",
+   "",
+   body,
+   "--" .. boundary .. "--",
+   "",
+  }, "\r\n")
+
+  local sent, resp = pcall(httpRequest, {
+   Url = priceHook, Method = "POST",
+   Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+   Body = parts,
+  })
+  if not sent then return false, "upload errored: " .. tostring(resp) end
+  local code = resp and (resp.StatusCode or resp.status_code or resp.Status) or 0
+  if type(code) == "number" and code >= 200 and code < 300 then
+   return true, count .. " items sent"
+  end
+  return false, "Discord replied " .. tostring(code)
+ end
+
+ local deleteDropdown
+
+ -- One refresh for both dropdowns. They list the same thing, so letting them
+ -- drift is how you end up deleting a shop that is still selected above.
+ local function refreshSourceDropdowns()
+  sourceLabels = getSourceLabels()
+  pcall(function() pickDropdown:Refresh(sourceLabels, true) end)
+  pcall(function() deleteDropdown:Refresh(sourceLabels, true) end)
+ end
+
  SrcSec:AddButton({Name = "Save Prices", Callback = function()
   local saved = saveShopFromCurrent()
-  if saved then
-   sourceLabels = getSourceLabels()
-   pcall(function() pickDropdown:Refresh(sourceLabels, true) end)
+  if not saved then return end
+  refreshSourceDropdowns()
+  if priceHook ~= "" then
+   task.spawn(function()
+    local ok, why = sendShopToWebhook(saved)
+    notify(ok and "Webhook" or "Webhook failed", why, ok and 4 or 6)
+   end)
   end
  end})
 
- local DelSec = PL:AddSection({Name = "Delete Shop"})
- local deleteDropdown
- deleteDropdown = DelSec:AddDropdown({Name = "Shop", Options = sourceLabels, Default = sourceLabels[1],
+ SrcSec:AddTextbox({Name = "Discord Webhook URL", Default = "", TextDisappear = false,
+  Tooltip = "Paste your own. Leave empty and Save Prices just writes the file locally.",
+  Callback = function(v) priceHook = tostring(v or ""):gsub("%s+", "") end})
+
+ SrcSec:AddButton({Name = "Send Saved Prices To Webhook",
+  Tooltip = "Saves the current shop and posts the JSON to the webhook above.",
+  Callback = function()
+   if priceHook == "" then notify("Webhook", "Paste a webhook URL first", 4) return end
+   task.spawn(function()
+    local saved = saveShopFromCurrent()
+    if not saved then return end
+    refreshSourceDropdowns()
+    local ok, why = sendShopToWebhook(saved)
+    notify(ok and "Webhook" or "Webhook failed", why, ok and 4 or 6)
+   end)
+  end})
+
+ -- Delete moved in here rather than owning a section of its own: it acts on the
+ -- same list the dropdown above shows, and a whole section for one button was
+ -- the reason this column needed scrolling.
+ deleteDropdown = SrcSec:AddDropdown({Name = "Shop To Delete", Options = sourceLabels, Default = sourceLabels[1],
   Search = true, Flag = "DeletePick", Callback = function(v) deletePick = v end})
- DelSec:AddButton({Name = "Delete", Callback = function()
+ SrcSec:AddButton({Name = "Delete Shop", Callback = function()
   if deletePick == AVERAGE_LABEL then notify("Error", "Can't delete the Average source", 3) return end
   local f = sourceLabelToFile[deletePick]
   if not f then notify("Error", "Could not resolve file", 3) return end
   if deleteSavedShopByFile(f) then
    notify("Deleted", "Removed " .. deletePick, 3)
-   sourceLabels = getSourceLabels()
    selectedSources = {}
-   pcall(function() pickDropdown:Refresh(sourceLabels, true) end)
-   pcall(function() deleteDropdown:Refresh(sourceLabels, true) end)
+   refreshSourceDropdowns()
   else notify("Error", "Could not delete shop", 3) end
- end})
-
- local ApplySec = PL:AddSection({Name = "Direct Apply"})
- ApplySec:AddParagraph("Direct Apply", "Merges all selected sources (averaged). Items not present are untouched.")
- ApplySec:AddDropdown({Name = "Pricing Mode", Options = {"All","Sell Only","Buy Only"}, Default = "All", Flag = "PricerMode",
-  Callback = function(v) pricerMode = v notify("Pricing Mode", v, 2) end})
- ApplySec:AddButton({Name = "Apply Selected", Callback = function()
-  local labels = selectedSources
-  if #labels == 0 then labels = { AVERAGE_LABEL } end
-  notify("Applying", "Merging " .. #labels .. " source(s)...", 2)
-  task.spawn(function()
-   local map = mergeSourceMaps(labels)
-   applyPriceMap(map)
-  end)
  end})
 
  local MarkSec = PR:AddSection({Name = "Markup Pricer"})
  MarkSec:AddParagraph("Markup Pricer", "Base = YOUR current shop price. newPrice = base x (1 + markup%).")
- MarkSec:AddDropdown({Name = "Base Price", Options = {"Sell Price","Buy Price"}, Default = "Sell Price", Flag = "MarkupBase",
-  Callback = function(v) markupBaseField = (v == "Buy Price") and "buy" or "sell" end})
+ -- Wording matched to the Vending Manager's dropdowns. "Sell Only" and "Buy
+ -- Only" described the price field; the game calls the machines SELL ITEM and
+ -- BUY ITEM, and having two vocabularies for one distinction was the thing that
+ -- made these dropdowns easy to set backwards.
+ MarkSec:AddDropdown({Name = "Base Price", Options = {"Sell (SELL ITEM)","Buy (BUY ITEM)"}, Default = "Sell (SELL ITEM)", Flag = "MarkupBase",
+  Callback = function(v) markupBaseField = (v == "Buy (BUY ITEM)") and "buy" or "sell" end})
  MarkSec:AddTextbox({Name = "Markup %", Default = "0", TextDisappear = false, Flag = "MarkupPct",
   Callback = function(v) local n = tonumber(v) if n then markupPct = n end end})
- MarkSec:AddDropdown({Name = "Apply To", Options = {"Sell Vendings","Buy Vendings","Offline Vendings"}, Default = "Buy Vendings", Flag = "MarkupTarget",
+ MarkSec:AddDropdown({Name = "Apply To", Options = {"Sell (SELL ITEM)","Buy (BUY ITEM)","Offline"}, Default = "Buy (BUY ITEM)", Flag = "MarkupTarget",
   Callback = function(v)
-   if v == "Sell Vendings" then markupTargetMode = 0
-   elseif v == "Buy Vendings" then markupTargetMode = 1
+   if v == "Sell (SELL ITEM)" then markupTargetMode = 0
+   elseif v == "Buy (BUY ITEM)" then markupTargetMode = 1
    else markupTargetMode = 2 end
   end})
  markupTargetMode = 1
@@ -3707,71 +4034,23 @@ local function BuildPriceTool()
   task.spawn(applyMarkup)
  end})
 
- refreshGuideItemDropdown = function()
-  loadGuideMaps()
-  if guideItemDropdown then pcall(function() guideItemDropdown:Refresh(guideItemList, true) end) end
- end
-
- local GLookSec = PR:AddSection({Name = "Price Guide Lookup"})
- GLookSec:AddParagraph("Lookup", "Uses your 'Price Sources' selection on the left. Pick sources there, then search an item below.")
- GLookSec:AddButton({Name = "Refresh Prices", Callback = function()
-  if refreshGuideItemDropdown then refreshGuideItemDropdown() end
-  notify("Lookup", "Refreshed from " .. #selectedSources .. " source(s)", 2)
- end})
- guideResult = GLookSec:AddParagraph("Prices", "Pick sources on the left, then choose an item")
-
- local function showGuideResult(item)
-  if not guideResult then return end
-  if not item or item == "(No items)" then guideResult:Set("No data") return end
-  local lines = { item }
-  local bs, bc, ss, sc = 0, 0, 0, 0
-  for _, lbl in ipairs(selectedSources) do
-   local m = guideMapsByLabel[lbl]
-   local e = m and m[item]
-   if e then
-    local b = e.buy  and fmtNum(e.buy)  or "N/A"
-    local s = e.sell and fmtNum(e.sell) or "N/A"
-    local shortLbl = lbl
-    if #shortLbl > 28 then shortLbl = shortLbl:sub(1,28) .. "..." end
-    table.insert(lines, shortLbl .. "  Buy:" .. b .. "  Sell:" .. s)
-    if e.buy  then bs = bs + e.buy;  bc = bc + 1 end
-    if e.sell then ss = ss + e.sell; sc = sc + 1 end
-   end
-  end
-  if #lines == 1 then table.insert(lines, "No selected source has this item") end
-  if bc > 0 or sc > 0 then
-   local avgB = bc > 0 and fmtNum(math.floor(bs/bc)) or "N/A"
-   local avgS = sc > 0 and fmtNum(math.floor(ss/sc)) or "N/A"
-   table.insert(lines, "---")
-   table.insert(lines, "AVERAGE  Buy:" .. avgB .. "  Sell:" .. avgS)
-  end
-  guideResult:Set(table.concat(lines, "\n"))
- end
-
- guideItemDropdown = GLookSec:AddDropdown({Name = "Select Item", Options = guideItemList, Default = guideItemList[1],
-  Search = true, Flag = "GuideItem", Callback = function(v) showGuideResult(v) end})
+ -- Price Guide Lookup removed: it read the same saved sources the Sources
+ -- dropdown already lists, and re-listing them as a searchable item table was
+ -- a second way to look at data the Markup Pricer acts on directly. The
+ -- loader stub stays so the source dropdown's OnRefresh keeps working.
+ refreshGuideItemDropdown = function() loadGuideMaps() end
 end
 BuildPriceTool()
 
-L, R = AutoTab:AddLeft(), AutoTab:AddRight()
-
 -- ---------------------------------------------------------------------------
--- ONE-BUTTON RUNS
---
--- The manual controls make you pick a mode, pick a restriction and press the
--- right button; these two just do all four jobs in the order that makes sense,
--- because the four are always the same four:
---
---   BUY ITEM  short of money   -> fund it up to a full 1000 purchases
---   SELL ITEM holding coins    -> take the coins out
---   SELL ITEM under 1000 items -> top its stock up
---   BUY ITEM  holding >1 item  -> pull the stock out, leave 1 behind
---
--- Coins split from items because they have different reach. A coin transaction
--- needs no proximity at all, so that one runs from wherever you are standing.
--- Item transactions do, so that one flies.
+-- SHOP UPKEEP
 -- ---------------------------------------------------------------------------
-UI.autoRun = L:AddSection({Name = "Shop Upkeep", LayoutOrder = 0})
+-- The Automation tab is gone. Everything on it had been rebuilt into Shop &
+-- Storage: Auto-Restock and Vending Auto Stocker are the Restock gear, Bank to
+-- Vendings is the toggle under Withdraw, and Run Coins / Run Items are the
+-- buttons at the top of Coin Operations and Item Management. What is left here
+-- is those last two implementations plus the helpers they share - no UI, just
+-- the code the controls up there are bound to.
 
 S.ITEM_REACH = 33   -- studs, square, matching what the game lets you reach
 
@@ -3780,10 +4059,8 @@ local function inSquare(a, b, half)
 end
 
 -- Coins. No movement, no reach limit: every vending on the island in one press.
-UI.autoRun:AddButton({
- Name = "Run Coins", Loop = true, LoopEvery = 30,
- Tooltip = "Funds every BUY ITEM machine that is short and empties the coins out of every SELL ITEM machine holding any. Works at any distance - stand anywhere.",
- Callback = function()
+UI.runCoinsImpl = (function()
+ return function()
   local vendings = findVendings()
   if #vendings == 0 then updateNotification("Run Coins", "No vendings found", 3) return end
   local funded, drained, moved = 0, 0, 0
@@ -3810,8 +4087,9 @@ UI.autoRun:AddButton({
   end
   updateNotification("Run Coins",
    "Funded " .. funded .. " buy machines (" .. formatNumber(moved) .. ")\nDrained " .. drained .. " sell machines", 5)
- end,
-})
+ end
+end)()
+
 
 -- Items. These need you within reach, so this one flies: it walks the vending
 -- list, hovers over each in turn and does whatever that machine needs, the same
@@ -3941,23 +4219,8 @@ function S.itemRunServe(done)
  end
  return acted
 end
-
-UI.itemRunToggle = UI.autoRun:AddToggle({
- Name = "Run Items (flies)",
- Default = false,
- Tooltip = "Flies over the vendings that need something. SELL ITEM machines under 1000 get topped up from your inventory; BUY ITEM machines holding more than one get drained down to 1. Speed and reach are in the gear.",
- -- Arrive Within and Give Up After are gone. Neither is a preference: one has
- -- a right answer given the reach, and the other only decides how long a
- -- machine you cannot get to wastes your time.
- Options = {
-  {Type = "slider", Name = "Fly Speed", Min = 10, Max = 40, Default = 30, ValueName = " st/s",
-   Callback = function(v) S.itemRunSpeed = v end},
-  {Type = "slider", Name = "Reach", Min = 5, Max = 33, Default = 33, ValueName = " st",
-   Callback = function(v) S.ITEM_REACH = v end},
-  {Type = "slider", Name = "Hover Height", Min = 0, Max = 30, Default = 8, ValueName = " st",
-   Callback = function(v) S.itemRunHover = v end},
- },
- Callback = function(value)
+UI.runItemsImpl = (function()
+ return function(value)
   S.itemRunOn = value
   if not value then itemRunStop() return end
   task.spawn(function()
@@ -4037,197 +4300,58 @@ UI.itemRunToggle = UI.autoRun:AddToggle({
     pcall(function() UI.itemRunToggle:Set(false) end)
    end
   end)
- end,
-})
-
-UI.autoRestock = L:AddSection({Name = "Auto-Restock", LayoutOrder = 1})
-
-local autoRestockEnabled = false
-local restockItem = "grassBlock"
-local restockAmount = 100
-local restockInterval = 30
-
-UI.autoRestock:AddTextbox({Name = "Item", Default = "", TextDisappear = false, Callback = function(text)
- if text and text ~= "" then
-  restockItem = text
-  updateNotification("Auto-Restock", "Item: " .. text, 2)
  end
-end})
-
-UI.autoRestock:AddTextbox({Name = "Amount", Default = "", TextDisappear = false, Callback = function(text)
- local num = parseAmount(text) or tonumber(text)
- if num then
-  restockAmount = num
-  updateNotification("Auto-Restock", "Amount: " .. formatNumber(num), 2)
- end
-end})
-
-UI.autoRestock:AddSlider({Name = "Interval (s)", Min = 10, Max = 300, Increment = 10, Default = 30, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value)
- restockInterval = value
-end})
-
-UI.autoRestock:AddToggle({Name = "Enabled", Default = false, Tooltip = "Automatically restocks the chosen item into target vendings every interval.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
- autoRestockEnabled = value
- if value then
-  updateNotification("Auto-Restock", "Enabled! Interval: " .. restockInterval .. "s", 3)
-  task.spawn(function()
-   while autoRestockEnabled do
-    wait(restockInterval)
-    pcall(function()
-     local vendings = #selectedFavorites > 0 and selectedFavorites or findVendings()
-     if #vendings == 0 then
-      updateNotification("Auto-Restock", "No vendings found!", 2)
-      return
-     end
-     local tool = LP.Backpack:FindFirstChild(restockItem) or (LP.Character and LP.Character:FindFirstChild(restockItem))
-     if not tool then
-      updateNotification("Auto-Restock", "Item not in inventory: " .. restockItem, 3)
-      return
-     end
-     local Net = RS:WaitForChild("rbxts_include"):WaitForChild("node_modules"):WaitForChild("@rbxts"):WaitForChild("net"):WaitForChild("out"):WaitForChild("_NetManaged")
-     local ItemRemote = Net:WaitForChild("deGzdggahhjo/yeuvbxxakbeqDdlofjxFiBwq")
-     local restockedCount = 0
-     for _, vending in ipairs(vendings) do
-      if not autoRestockEnabled then break end
-      pcall(function()
-       local sellingContents = vending:FindFirstChild("SellingContents")
-       local currentItem = sellingContents and sellingContents:FindFirstChild(restockItem)
-       if currentItem then
-        local currentAmount = currentItem:FindFirstChild("Amount") and currentItem.Amount.Value or 0
-        local guid = HttpService:GenerateGUID(false)
-        ItemRemote:FireServer(guid, {{player_tracking_category = "join_from_web", amount = restockAmount, vendingMachine = vending, tool = tool, action = "deposit"}})
-        restockedCount = restockedCount + 1
-       else
-        local guid = HttpService:GenerateGUID(false)
-        ItemRemote:FireServer(guid, {{player_tracking_category = "join_from_web", amount = restockAmount, vendingMachine = vending, tool = tool, action = "deposit"}})
-        restockedCount = restockedCount + 1
-       end
-       wait(0.1)
-      end)
-     end
-     updateNotification("Auto-Restock", "Restocked " .. restockedCount .. " vendings with +" .. formatNumber(restockAmount) .. "x " .. restockItem, 3)
-    end)
-   end
-  end)
- else
-  updateNotification("Auto-Restock", "Disabled", 2)
- end
-end)})
-
-UI.autoBank = R:AddSection({Name = "Bank to Vendings"})
-local bankAutoEnabled, bankAutoAmount, bankAutoTimer = false, 1500000000, 10
-UI.autoBank:AddSlider({Name = "Cycle Timer (s)", Min = 1, Max = 60, Increment = 1, Default = 10, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) bankAutoTimer = value end})
-UI.bankToggle = UI.autoBank:AddToggle({Name = "Enabled", Default = false, Tooltip = "Withdraws 1.5B from your bank each cycle and distributes it across vendings toward the 5B cap. Auto-stops when the bank runs out of money.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
- if value and bankAutoEnabled then
-  updateNotification("Error", "Already running!", 2)
-  return
- end
- bankAutoEnabled = value
- if value then
-  updateNotification("Bank Automation", "Enabled! Cycle: " .. bankAutoTimer .. "s", 3)
-  task.spawn(function()
-   while bankAutoEnabled do
-    pcall(function()
-     local netm = game:GetService("ReplicatedStorage"):WaitForChild("rbxts_include"):WaitForChild("node_modules"):WaitForChild("@rbxts"):WaitForChild("net"):WaitForChild("out"):WaitForChild("_NetManaged")
-
-     local bankBal = nil
-     pcall(function()
-      local res = netm:WaitForChild("GetBankAccount"):InvokeServer(HttpService:GenerateGUID(false), {{accountType = "PERSONAL"}})
-      if type(res) == "number" then bankBal = res
-      elseif type(res) == "table" then
-       bankBal = res.balance or res.Balance or res.amount or res.Amount or res.coins or res.Coins
-       if type(bankBal) ~= "number" and type(res[1]) == "table" then
-        bankBal = res[1].balance or res[1].Balance or res[1].amount or res[1].Amount
-       end
-      end
-     end)
-     if type(bankBal) == "number" and bankBal < bankAutoAmount then
-      bankAutoEnabled = false
-      pcall(function() UI.bankToggle:Set(false) end)
-      updateNotification("Bank Auto", "Bank out of money - stopped", 4)
-      return
-     end
-     netm:WaitForChild("TransactionBankBalance"):FireServer(HttpService:GenerateGUID(false), {{accountType = "PERSONAL", transferType = "WITHDRAWAL", amount = bankAutoAmount}})
-     wait(0.5)
-     local vendings
-     if #selectedFavorites > 0 then
-      vendings = selectedFavorites
-     else
-      vendings = findVendings()
-     end
-     if #vendings > 0 then
-      local remainingAmount = bankAutoAmount
-      local vendingsUsed = 0
-      local VENDING_LIMIT = 5000000000
-      for _, vending in ipairs(vendings) do
-       if remainingAmount <= 0 then break end
-       local currentBalance = 0
-       pcall(function()
-        if vending:FindFirstChild("CoinBalance") then
-         currentBalance = vending.CoinBalance.Value
-        end
-       end)
-       local availableSpace = VENDING_LIMIT - currentBalance
-       if availableSpace > 0 then
-        local depositAmount = math.min(remainingAmount, availableSpace)
-        task.spawn(function()
-         depositCoinsToVending(vending, depositAmount)
-        end)
-        remainingAmount = remainingAmount - depositAmount
-        vendingsUsed = vendingsUsed + 1
-        task.wait(0.1)
-       end
-      end
-      updateNotification("Bank Auto", "Deposited " .. formatNumber(bankAutoAmount - remainingAmount) .. " to " .. vendingsUsed .. " vendings", 3)
-     end
-    end)
-    if not bankAutoEnabled then break end
-    wait(bankAutoTimer)
-   end
-  end)
- else
-  updateNotification("Bank Automation", "Disabled", 2)
- end
-end)})
-
-UI.autoStock = L:AddSection({Name = "Vending Auto Stocker"})
-local stockerEnabled, stockerAmount, stockerTimer, stockerMode = false, 5, 15, "Deposit All"
-UI.autoStock:AddTextbox({Name = "Amount", Default = "", TextDisappear = false, Callback = function(text) local num = tonumber(text) if num then stockerAmount = num end end})
-UI.autoStock:AddSlider({Name = "Cycle Timer (s)", Min = 1, Max = 120, Increment = 1, Default = 15, ValueName = "s", Flag = autoFlag("auto"), Callback = function(value) stockerTimer = value end})
-UI.autoStock:AddDropdown({Name = "Deposit Mode", Options = {"Deposit All", "Split"}, Default = "Deposit All", Flag = autoFlag("auto"), Callback = function(value) stockerMode = value end})
-UI.autoStock:AddToggle({Name = "Enabled", Default = false, Tooltip = "Picks a random item from your backpack and deposits it to vendings each cycle. Choose Deposit All or Split mode.", Flag = autoFlag("auto"), Callback = initGuard(function(value)
- stockerEnabled = value
- if value then
-  updateNotification("Auto Stocker", "Enabled! Cycle: " .. stockerTimer .. "s", 3)
-  task.spawn(function()
-   while stockerEnabled do
-    refreshItems()
-    if #itemOptions > 0 and itemOptions[1] ~= "No items" then
-     local randomItem = itemOptions[math.random(1, #itemOptions)]
-     selectedItemName = randomItem
-     local vendings = findVendings()
-     if #vendings > 0 then
-      if stockerMode == "Deposit All" then
-       for _, vending in ipairs(vendings) do task.spawn(function() depositItemToVending(vending, randomItem, stockerAmount) end) end
-       updateNotification("Auto Stocker", "Deposited " .. stockerAmount .. "x " .. randomItem .. " to " .. #vendings, 2)
-      else
-       local perVending = math.floor(stockerAmount / #vendings)
-       for _, vending in ipairs(vendings) do task.spawn(function() depositItemToVending(vending, randomItem, perVending) end) end
-       updateNotification("Auto Stocker", "Split " .. stockerAmount .. "x " .. randomItem .. " to " .. #vendings, 2)
-      end
-     end
-    end
-    wait(stockerTimer)
-   end
-  end)
- else
-  updateNotification("Auto Stocker", "Disabled", 2)
- end
-end)})
+end)()
 
 L, R = FarmTab:AddLeft(), FarmTab:AddRight()
 UI.farmL, UI.farmR = L, R
 local CollectionService = game:GetService("CollectionService")
+
+-- Travel sits at the very top of the tab, above everything and outside any
+-- collapsible section. It was buried inside Combat, which meant getting to the
+-- island you wanted to farm required opening the section about fighting on it.
+-- It is also the first thing you do on this tab and the only thing here that
+-- has nothing to do with what you do once you arrive.
+do
+ local travelSec = L:AddSection({Name = "Travel"})
+ local dest = "Slime Island"
+ -- Place ids for the ones that are separate games; the rest are remotes on the
+ -- current place, which is why this is two mechanisms behind one button.
+ local PLACES = {
+  ["Hub"] = 5899156129, ["Slime Island"] = 9501318975,
+  ["Underworld"] = 7456800858, ["Void Isles"] = 10529772199,
+ }
+ local REMOTES = {
+  ["Maple Island"] = "TravelMapleIsland",
+  ["Fhanhorn Boss"] = "TravelDeerBossIsland",
+  ["Pirate Island"] = "TravelPirateIsland",
+ }
+ travelSec:AddDropdown({Name = "Destination",
+  Options = {"Hub", "Slime Island", "Underworld", "Void Isles", "Maple Island", "Fhanhorn Boss", "Pirate Island"},
+  Default = "Slime Island", Flag = autoFlag("farm"), Callback = function(v) dest = v end})
+ travelSec:AddButton({Name = "Teleport", Tooltip = "Travels to the selected island.", Callback = function()
+  pcall(function()
+   local place = PLACES[dest]
+   if place then
+    game:GetService("TeleportService"):Teleport(place, LP)
+    return
+   end
+   -- Resolved here rather than captured: this section is built before the
+   -- file's PNet local exists, so reaching for it at load time would find a nil
+   -- global instead of the net folder.
+   local net = RS:FindFirstChild("rbxts_include")
+   net = net and net:FindFirstChild("node_modules")
+   net = net and net:FindFirstChild("@rbxts")
+   net = net and net:FindFirstChild("net")
+   net = net and net:FindFirstChild("out")
+   net = net and net:FindFirstChild("_NetManaged")
+   local rn = REMOTES[dest]
+   local r = rn and net and net:FindFirstChild(rn)
+   if r then r:FireServer()
+   else updateNotification("Travel", "No route to " .. dest, 3) end
+  end)
+ end})
+end
 
 UI.farmCrop = L:AddSection({Name = "Crop Farming"})
 
@@ -4259,6 +4383,11 @@ function CropHandler:Get(Crop)
 end
 
 local selectedCrops = {}
+-- Declared out here rather than inside BuildFarm because setAutoWalkCrops is
+-- defined further up the file than BuildFarm's locals are, and a setting the
+-- Farm Panel writes has to be visible to the loop that reads it.
+local farmWalkSpeed, farmWalkNoclip = 32, true
+local harvestRadius = 45
 local farmCropsEnabled = false
 local replaceCropsEnabled = false
 local NeverExecutedBefore = false
@@ -4341,7 +4470,10 @@ local function setAutoWalkCrops(value)
                     local humanoid = LP.Character:FindFirstChild("Humanoid")
                     local hrp = LP.Character:FindFirstChild("HumanoidRootPart")
                     if not humanoid or not hrp then return end
-                    for _, part in pairs(LP.Character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
+                    if farmWalkNoclip then
+                        for _, part in pairs(LP.Character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
+                    end
+                    if humanoid.WalkSpeed ~= farmWalkSpeed then humanoid.WalkSpeed = farmWalkSpeed end
                     local readyCrops = {} for _, cid in ipairs(selectedCrops) do for _, rc in ipairs(GetCrops:Get(cid)) do table.insert(readyCrops, rc) end end
                     if not readyCrops or #readyCrops == 0 then
                         local ct = tick()
@@ -5359,14 +5491,93 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   local WeaponPriority = {"reaperScythe", "cursedHammer", "divineDao", "captainsRapier", "iceHammer", "swordRuby", "spikeCactus", "cutlass"}
   local WeaponAnims = {reaperScythe = {"rbxassetid://5328169716", "rbxassetid://5328168543"}, cursedHammer = {"rbxassetid://5065710449", "rbxassetid://5085834028"}, divineDao = {"rbxassetid://5328169716", "rbxassetid://5328168543"}, captainsRapier = {"rbxassetid://5328169716", "rbxassetid://5328168543"}, iceHammer = {"rbxassetid://5065710449", "rbxassetid://5085834028"}, swordRuby = {"rbxassetid://5328169716", "rbxassetid://5328168543"}, spikeCactus = {"rbxassetid://4947108314", "rbxassetid://4947108314"}, cutlass = {"rbxassetid://5328169716", "rbxassetid://5328168543"}}
   local DefaultAnims = {"rbxassetid://5065710449", "rbxassetid://5085834028"}
-  local WeaponDisplay = {["Best"] = "Best", ["Reaper Scythe"] = "reaperScythe", ["Cursed Hammer"] = "cursedHammer", ["Divine Dao"] = "divineDao", ["Captain's Rapier"] = "captainsRapier", ["Cactus Spike"] = "spikeCactus", ["Frost Hammer"] = "iceHammer", ["Ruby Sword"] = "swordRuby", ["Cutlass"] = "cutlass"}
+  -- Display name to internal id. The eight originals are confirmed ids; the
+  -- rest are the Light and Heavy Melee lists from the Islands wiki, and their
+  -- ids are inferred from the pattern the confirmed ones establish
+  -- (swordRuby, spikeCactus). That pattern is not reliable - iceHammer is
+  -- "Frost Hammer" and follows no rule at all - so resolveWeapon below falls
+  -- back to matching the name against what is actually in your inventory. An
+  -- id guessed wrong still equips the right tool as long as you own it.
+  local WeaponDisplay = {
+   ["Best"] = "Best",
+   -- confirmed
+   ["Reaper Scythe"] = "reaperScythe", ["Cursed Hammer"] = "cursedHammer",
+   ["Divine Dao"] = "divineDao", ["Captain's Rapier"] = "captainsRapier",
+   ["Cactus Spike"] = "spikeCactus", ["Frost Hammer"] = "iceHammer",
+   ["Ruby Sword"] = "swordRuby", ["Cutlass"] = "cutlass",
+   -- light melee, from the wiki
+   ["Wooden Sword"] = "swordWood", ["Stone Sword"] = "swordStone",
+   ["Iron Sword"] = "swordIron", ["Aquamarine Sword"] = "swordAquamarine",
+   ["Diamond Great Sword"] = "swordDiamondGreat", ["Frost Sword"] = "swordFrost",
+   ["Rageblade"] = "rageblade", ["Serpent's Hook"] = "serpentsHook",
+   ["Jolly Dagger"] = "jollyDagger", ["Noxious Stinger"] = "noxiousStinger",
+   -- heavy melee, from the wiki
+   ["Wooden Mallet"] = "malletWood", ["Granite Hammer"] = "hammerGranite",
+   ["Iron War Axe"] = "axeWarIron", ["Gilded Steel Hammer"] = "hammerGildedSteel",
+   ["Diamond War Hammer"] = "hammerWarDiamond", ["Obsidian Greatsword"] = "swordObsidian",
+   ["Kong's Axe"] = "kongsAxe", ["The Dragonslayer"] = "dragonslayer",
+   ["Pumpkin Hammer"] = "hammerPumpkin", ["Antler Hammer"] = "hammerAntler",
+   ["Infernal Hammer"] = "hammerInfernal", ["Trout's Fury"] = "troutsFury",
+   ["Serpent's Bane"] = "serpentsBane",
+  }
+
+  local WeaponOptions = {"Best"}
+  for name in pairs(WeaponDisplay) do
+   if name ~= "Best" then table.insert(WeaponOptions, name) end
+  end
+  table.sort(WeaponOptions, function(a, b)
+   if a == "Best" then return true end
+   if b == "Best" then return false end
+   return a < b
+  end)
+
+  -- Exact id first, then a loosened match on the display name: lowercased with
+  -- every separator and apostrophe stripped, compared both ways so "The
+  -- Dragonslayer" finds a tool called "dragonSlayer" or "TheDragonslayer".
+  local function normaliseName(s)
+   return (tostring(s):lower():gsub("[^%a]", ""))
+  end
+
+  local function resolveWeapon(id, display)
+   local char = LP.Character
+   local backpack = LP:FindFirstChild("Backpack")
+   local function look(name)
+    if not name then return nil end
+    if char and char:FindFirstChild(name) then return name end
+    if backpack and backpack:FindFirstChild(name) then return name end
+    return nil
+   end
+
+   local hit = look(id)
+   if hit then return hit end
+
+   local wantId, wantName = normaliseName(id), normaliseName(display or "")
+   for _, holder in ipairs({char, backpack}) do
+    if holder then
+     for _, t in ipairs(holder:GetChildren()) do
+      if t:IsA("Tool") then
+       local n = normaliseName(t.Name)
+       if n == wantId or (wantName ~= "" and n == wantName) then return t.Name end
+      end
+     end
+    end
+   end
+   return nil
+  end
 
   local selMob, selBoss, selWeapon = "None", "None", "Best"
+  local selWeaponLabel = "Best"
+  -- hoverTrim adjusts the per-target hover offsets below rather than replacing
+  -- them: the old slider wrote to a variable nothing read, so Hover Height did
+  -- nothing at all, while the real offsets stayed hardcoded per boss. Those
+  -- values are tuned (slimeQueen sits lower than golem), so they are kept as
+  -- the base and this shifts all of them together.
+  local hoverTrim = 0
+  local attackRate = 2
   local farmOn, spawnOn = false, false
   local farmGen, spawnGen = 0, 0
   local noclipConns, noclipParts = {}, {}
   local animTracks, animObjs = {}, {}
-  local selTeleport = "Slime Island"
 
   local function stopNoclip()
    for _, c in ipairs(noclipConns) do pcall(function() c:Disconnect() end) end
@@ -5392,28 +5603,6 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   end
 
   local cmb = col:AddSection({Name = "Combat", Collapsible = true})
-  local sec = cmb
-  sec:AddDropdown({Name = "Destination", Options = {"Hub", "Slime Island", "Underworld", "Void Isles", "Maple Island", "Fhanhorn Boss", "Pirate Island"}, Default = "Slime Island", Flag = autoFlag("farm"), Callback = function(v)
-   selTeleport = v
-  end})
-  sec:AddButton({Name = "Teleport", Tooltip = "Travels to the selected island.", Callback = function()
-   pcall(function()
-    if selTeleport == "Hub" then
-     TeleportService:Teleport(5899156129, LP)
-    elseif selTeleport == "Slime Island" then
-     TeleportService:Teleport(9501318975, LP)
-    elseif selTeleport == "Underworld" then
-     TeleportService:Teleport(7456800858, LP)
-    elseif selTeleport == "Void Isles" then
-     TeleportService:Teleport(10529772199, LP)
-    else
-     local names = {["Maple Island"] = "TravelMapleIsland", ["Fhanhorn Boss"] = "TravelDeerBossIsland", ["Pirate Island"] = "TravelPirateIsland"}
-     local rn = names[selTeleport]
-     local r = rn and PNet:FindFirstChild(rn)
-     if r then r:FireServer() end
-    end
-   end)
-  end})
 
   local mobNames, mobMap = {}, {}
   for _, m in ipairs({"slime", "skeletonPirate", "crab", "buffalkor", "rockMimic", "wizardLizard", "skorp", "magmaBlob", "magmaGolem", "voidDog"}) do
@@ -5432,17 +5621,44 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    bossMap[d] = b
   end
 
-  cmb:AddDropdown({Name = "Select Mob", Options = mobNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
-   selMob = mobMap[v] or "None"
-  end})
-  cmb:AddDropdown({Name = "Select Boss", Options = bossNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
-   selBoss = bossMap[v] or "None"
-  end})
-  cmb:AddDropdown({Name = "Select Weapon", Options = {"Best", "Reaper Scythe", "Cursed Hammer", "Divine Dao", "Captain's Rapier", "Frost Hammer", "Ruby Sword", "Cactus Spike", "Cutlass"}, Default = "Best", Flag = autoFlag("farm"), Callback = function(v)
-   selWeapon = WeaponDisplay[v] or "Best"
+  -- One target list, not two. Two dropdowns meant two ways to say "None" and a
+  -- silent rule that boss wins over mob, so picking a boss while a mob was
+  -- still set in the other box did something you could not see. Target Type
+  -- switches which list the single dropdown holds, and switching it clears the
+  -- other kind, which is what having one selection actually means.
+  local targetType = "Mob"
+  local targetDropdown
+
+  local function targetOptions()
+   return targetType == "Boss" and bossNames or mobNames
+  end
+
+  cmb:AddDropdown({Name = "Target Type", Options = {"Mob", "Boss"}, Default = "Mob", Flag = autoFlag("farm"), Callback = function(v)
+   targetType = v
+   selMob, selBoss = "None", "None"
+   pcall(function() targetDropdown:Refresh(targetOptions(), true) end)
   end})
 
-  cmb:AddToggle({Name = "Auto Spawn", Default = false, Tooltip = "Walks to the selected boss's spawn altar and fires the prompt when that boss isn't alive.", Flag = autoFlag("farm"), Callback = function(value)
+  targetDropdown = cmb:AddDropdown({Name = "Target", Options = mobNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
+   if targetType == "Boss" then
+    selBoss = bossMap[v] or "None"
+    selMob = "None"
+   else
+    selMob = mobMap[v] or "None"
+    selBoss = "None"
+   end
+  end})
+
+  cmb:AddDropdown({Name = "Select Weapon", Options = WeaponOptions, Default = "Best", Search = true, Flag = autoFlag("farm"), Callback = function(v)
+   selWeapon = WeaponDisplay[v] or "Best"
+   selWeaponLabel = v
+  end})
+
+  -- Auto Spawn is not a feature you run on its own - it exists to keep a boss
+  -- alive for Auto Farm to hit. So it stopped being a top-level toggle and
+  -- became a setting inside Auto Farm's gear, which is also where it can be
+  -- read alongside the target it depends on.
+  local function setAutoSpawn(value)
    spawnOn = value
    if not value then return end
    spawnGen = spawnGen + 1
@@ -5494,9 +5710,21 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
      task.wait(0.15)
     end
    end)
-  end})
+  end
 
-  cmb:AddToggle({Name = "Auto Farm", Default = false, Tooltip = "Equips your best weapon, flies under the selected mob or boss and attacks it continuously. Enables noclip while running.", Flag = autoFlag("farm"), Callback = function(value)
+  -- Hover Height was a loose slider sitting below the toggle it belongs to, so
+  -- it read as a separate feature. It is a setting of Auto Farm and nothing
+  -- else, so it lives in Auto Farm's gear now - same pattern as Run Items.
+  cmb:AddToggle({Name = "Auto Farm", Default = false, Tooltip = "Equips your best weapon, flies under the selected mob or boss and attacks it continuously. Enables noclip while running.", Flag = autoFlag("farm"),
+   Options = {
+    {Type = "slider", Name = "Hover Trim", Min = -20, Max = 20, Increment = 1, Default = 0, ValueName = " st",
+     Callback = function(v) hoverTrim = v end},
+    {Type = "slider", Name = "Attacks / sec", Min = 1, Max = 10, Increment = 1, Default = 2, ValueName = "/s",
+     Callback = function(v) attackRate = math.max(v, 1) end},
+    {Type = "toggle", Name = "Auto Spawn Boss", Default = false,
+     Callback = function(v) setAutoSpawn(v) end},
+   },
+   Callback = function(value)
    farmOn = value
    if not value then
     stopNoclip()
@@ -5544,7 +5772,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
       local backpack = LP:FindFirstChild("Backpack")
       local bestWeapon
       if selWeapon ~= "Best" then
-       if (char and char:FindFirstChild(selWeapon)) or (backpack and backpack:FindFirstChild(selWeapon)) then bestWeapon = selWeapon end
+       bestWeapon = resolveWeapon(selWeapon, selWeaponLabel)
       end
       if not bestWeapon then
        for _, n in ipairs(WeaponPriority) do
@@ -5602,8 +5830,8 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
       if target and target:FindFirstChild("HumanoidRootPart") then
        local tp = target.HumanoidRootPart
        local yo = (targetName == "slimeQueen" and -14) or (targetName == "slimeKing" and -13.5) or (targetName == "golem" and -15) or (targetName == "magmaGolem" and -9) or (targetName == "magmaBlob" and -7) or -11
-       flyTo(hrp, tp.Position + Vector3.new(0, yo, 0))
-       if tick() - lastAttack > 0.6 and R_Combat then
+       flyTo(hrp, tp.Position + Vector3.new(0, yo + hoverTrim, 0))
+       if tick() - lastAttack > (1 / attackRate) and R_Combat then
         lastAttack = tick()
         task.spawn(function()
          pcall(function()
@@ -5624,9 +5852,6 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    end)
   end})
 
-  cmb:AddSlider({Name = "Hover Height", Min = -30, Max = 15, Increment = 1, Default = -11, ValueName = "studs", Tooltip = "How far above (positive) or below (negative) the target you hover while auto farming.", Flag = autoFlag("farm"), Callback = function(v)
-   hoverOffset = v
-  end})
  end
 
  local function BuildFarm(col)
@@ -5699,7 +5924,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
      pcall(function()
       local hrp = myRoot()
       if not (hrp and R_Harvest) then return end
-      local radSq = (plantRadius * 3) ^ 2
+      local radSq = harvestRadius ^ 2
       local isAll = (#selectedCrops == 0)
       local want = {}
       for _, id in ipairs(selectedCrops) do want[id] = true end
@@ -5815,7 +6040,26 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   UI.farmActions = UI.farmCrop:AddDropdown({Name = "Farm Actions", Options = FARM_ACTIONS, Default = {}, MultiSelect = true, Search = true, SelectAll = true, Tooltip = "Pick which farming actions to run, then flip Perform Farm Actions.", Flag = autoFlag("farm"), Callback = function(chosen)
    selectedFarmActions = chosen or {}
   end})
-  UI.farmPerform = UI.farmCrop:AddToggle({Name = "Farm Actions", Default = false, Tooltip = "Runs every action picked above. Turn off to stop them all.", Flag = autoFlag("farm"), Callback = function(value)
+  -- The Farm Panel. Every knob these five actions actually read was scattered
+  -- across the tab as a loose slider, or worse, was a hardcoded constant with
+  -- no control at all - the harvest radius was plantRadius x 3, which meant the
+  -- Plant Radius slider silently moved the harvest range too. They are gathered
+  -- here, on the toggle that runs them, with the one that was doing double duty
+  -- split into its two jobs.
+  UI.farmPerform = UI.farmCrop:AddToggle({Name = "Farm Actions", Default = false, Tooltip = "Runs every action picked above. Turn off to stop them all.", Flag = autoFlag("farm"),
+   Options = {
+    {Type = "slider", Name = "Harvest Radius", Min = 5, Max = 150, Increment = 5, Default = 45, ValueName = " st",
+     Callback = function(v) harvestRadius = v end},
+    {Type = "slider", Name = "Plant Radius", Min = 5, Max = 60, Increment = 1, Default = 15, ValueName = " st",
+     Callback = function(v) plantRadius = v end},
+    {Type = "slider", Name = "Plow Radius", Min = 5, Max = 60, Increment = 1, Default = 10, ValueName = " st",
+     Callback = function(v) plowRadius = v end},
+    {Type = "slider", Name = "Walk Speed", Min = 16, Max = 120, Increment = 4, Default = 32, ValueName = " st/s",
+     Callback = function(v) farmWalkSpeed = v end},
+    {Type = "toggle", Name = "Noclip While Walking", Default = true,
+     Callback = function(v) farmWalkNoclip = v end},
+   },
+   Callback = function(value)
    if not value then
     stopAllFarmActions()
     updateNotification("Farming", "Stopped", 2)
@@ -6264,8 +6508,8 @@ pcall(function()
  Duvome:AddWatch("Sniper", function() return sniperEnabled end)
  Duvome:AddWatch("Openables", function() return S.cauldronEnabled end)
  Duvome:AddWatch("Auto-Restock", function() return autoRestockEnabled end)
- Duvome:AddWatch("Bank Auto", function() return bankAutoEnabled end)
- Duvome:AddWatch("Auto Stocker", function() return stockerEnabled end)
+ Duvome:AddWatch("Bank to Vendings", function() return b2vOn end)
+ Duvome:AddWatch("Restock Loop", function() return restockLoopOn end)
  Duvome:AddWatch("Radius", function() return useRadiusLimit and (vendingRadius .. " studs") or false end)
  Duvome:AddWatch("Selected", function() local n = #selectedFavorites return n > 0 and (n .. " vendings") or false end)
 end)
