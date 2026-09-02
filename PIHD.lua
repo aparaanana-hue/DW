@@ -2432,7 +2432,7 @@ UI.vmBank:AddToggle({Name = "Bank to Vendings Loop", Default = false,
    Callback = function(v) S.b2vEvery = v end},
   {Type = "slider", Name = "Amount (millions)", Min = 1, Max = 1000, Increment = 1, Default = 1, ValueName = "M",
    Callback = function(v) S.b2vAmount = v * 1000000 end},
-  {Type = "toggle", Name = "> Favourites Only", Default = false,
+  {Type = "toggle", Name = "↳ Favourites Only", Default = false,
    Callback = function(v) S.b2vFavOnly = v end},
   {Type = "keybind", Name = "Bind Key", OnPress = function()
    task.spawn(function()
@@ -2743,7 +2743,7 @@ UI.itemRunToggle = UI.vmItem:AddToggle({
    Callback = function(v) S.ITEM_REACH = v end},
   {Type = "slider", Name = "Hover Height", Min = 0, Max = 30, Default = 8, ValueName = " st",
    Callback = function(v) S.itemRunHover = v end},
-  {Type = "toggle", Name = "> One At A Time", Default = false,
+  {Type = "toggle", Name = "↳ One At A Time", Default = false,
    Callback = function(v) S.itemRunOneByOne = v end},
  },
  Callback = function(value)
@@ -3023,13 +3023,13 @@ UI.vmItem:AddButton({Name = "Restock",
    Callback = function(v) S.setRestockLoop(v) end},
   {Type = "slider", Name = "Loop Every", Min = 1, Max = 300, Increment = 1, Default = 15, ValueName = "s",
    Callback = function(v) S.restockEvery = v end},
-  {Type = "toggle", Name = "> Random Item", Default = false,
+  {Type = "toggle", Name = "↳ Random Item", Default = false,
    Callback = function(v) S.restockRandomItem = v end},
-  {Type = "slider", Name = "> Reroll Every", Min = 0, Max = 600, Increment = 5, Default = 0, ValueName = "s",
+  {Type = "slider", Name = "↳ Reroll Every", Min = 0, Max = 600, Increment = 5, Default = 0, ValueName = "s",
    Callback = function(v) S.restockRandomEvery = v end},
   -- A toggle, not a dropdown: DL's gear renders sliders, keybinds and toggles,
   -- and Deposit All vs Split is a two-state choice anyway.
-  {Type = "toggle", Name = "> Split Across Vendings", Default = false,
+  {Type = "toggle", Name = "↳ Split Across Vendings", Default = false,
    Callback = function(v) S.restockSplit = v end},
  },
  Callback = doRestockVending})
@@ -3896,9 +3896,17 @@ local function BuildPriceTool()
  local sourceLabels = getSourceLabels()
  local pickDropdown
 
+ -- Delete sits in the dropdown's own action row, next to Refresh, because it
+ -- acts on what is ticked in this list. A section-level button for it meant a
+ -- row of chrome for something that only ever means "these ones".
+ local deleteSelectedSources
+
  pickDropdown = SrcSec:AddDropdown({
   Name = "Sources", Options = sourceLabels, Default = {},
   OnRefresh = function() sourceLabels = getSourceLabels() selectedSources = {} return sourceLabels end,
+  Actions = {
+   {Text = "Delete", OnClick = function() if deleteSelectedSources then deleteSelectedSources() end end},
+  },
   MultiSelect = true, Search = true, SelectAll = true, Flag = "PricerSources",
   Callback = function(chosen) selectedSources = chosen or {} if refreshGuideItemDropdown then refreshGuideItemDropdown() end end,
  })
@@ -4018,12 +4026,9 @@ local function BuildPriceTool()
    end)
   end})
 
- -- Delete acts on the Sources tick list rather than a second dropdown naming
- -- the same shops. One list, one selection: what you have ticked is what gets
- -- applied, and it is what gets deleted.
- SrcSec:AddButton({Name = "Delete Selected Source(s)",
-  Tooltip = "Deletes the saved shop files ticked in Sources above. The Average is computed, not a file, so it is skipped.",
-  Callback = function()
+ -- Bound to the Delete action declared on the dropdown above. The Average is
+ -- computed rather than stored, so it is never a delete candidate.
+ deleteSelectedSources = function()
    local labels = {}
    for _, lbl in ipairs(selectedSources) do
     if lbl ~= AVERAGE_LABEL then table.insert(labels, lbl) end
@@ -4042,7 +4047,7 @@ local function BuildPriceTool()
     refreshSourceDropdowns()
     notify("Deleted", gone .. " removed" .. (failed > 0 and (", " .. failed .. " failed") or ""), 4)
    end)
-  end})
+ end
 
  local MarkSec = PR:AddSection({Name = "Markup Pricer"})
  MarkSec:AddParagraph("Markup Pricer", "Base = YOUR current shop price. newPrice = base x (1 + markup%).")
