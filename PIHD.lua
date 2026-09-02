@@ -60,6 +60,7 @@ S.farmWalkSpeed, S.farmWalkNoclip, S.harvestRadius = 32, true, 45
 S.restockSplit, S.restockLoopOn, S.restockEvery = false, false, 15
 S.restockRandomItem, S.restockRandomEvery, S.restockGen = false, 0, 0
 S.b2vOn, S.b2vEvery, S.b2vAmount, S.b2vFavOnly, S.b2vGen = false, 30, 1000000, false, 0
+S.itemRunOneByOne = false
 local L, R
 
 local _flagN = 0
@@ -2431,7 +2432,7 @@ UI.vmBank:AddToggle({Name = "Bank to Vendings Loop", Default = false,
    Callback = function(v) S.b2vEvery = v end},
   {Type = "slider", Name = "Amount (millions)", Min = 1, Max = 1000, Increment = 1, Default = 1, ValueName = "M",
    Callback = function(v) S.b2vAmount = v * 1000000 end},
-  {Type = "toggle", Name = "↪ Favourites Only", Default = false,
+  {Type = "toggle", Name = "> Favourites Only", Default = false,
    Callback = function(v) S.b2vFavOnly = v end},
   {Type = "keybind", Name = "Bind Key", OnPress = function()
    task.spawn(function()
@@ -2742,6 +2743,8 @@ UI.itemRunToggle = UI.vmItem:AddToggle({
    Callback = function(v) S.ITEM_REACH = v end},
   {Type = "slider", Name = "Hover Height", Min = 0, Max = 30, Default = 8, ValueName = " st",
    Callback = function(v) S.itemRunHover = v end},
+  {Type = "toggle", Name = "> One At A Time", Default = false,
+   Callback = function(v) S.itemRunOneByOne = v end},
  },
  Callback = function(value)
   if UI.runItemsImpl then UI.runItemsImpl(value)
@@ -3020,13 +3023,13 @@ UI.vmItem:AddButton({Name = "Restock",
    Callback = function(v) S.setRestockLoop(v) end},
   {Type = "slider", Name = "Loop Every", Min = 1, Max = 300, Increment = 1, Default = 15, ValueName = "s",
    Callback = function(v) S.restockEvery = v end},
-  {Type = "toggle", Name = "↪ Random Item", Default = false,
+  {Type = "toggle", Name = "> Random Item", Default = false,
    Callback = function(v) S.restockRandomItem = v end},
-  {Type = "slider", Name = "↪ Reroll Every", Min = 0, Max = 600, Increment = 5, Default = 0, ValueName = "s",
+  {Type = "slider", Name = "> Reroll Every", Min = 0, Max = 600, Increment = 5, Default = 0, ValueName = "s",
    Callback = function(v) S.restockRandomEvery = v end},
   -- A toggle, not a dropdown: DL's gear renders sliders, keybinds and toggles,
   -- and Deposit All vs Split is a two-state choice anyway.
-  {Type = "toggle", Name = "↪ Split Across Vendings", Default = false,
+  {Type = "toggle", Name = "> Split Across Vendings", Default = false,
    Callback = function(v) S.restockSplit = v end},
  },
  Callback = doRestockVending})
@@ -3816,8 +3819,8 @@ local function BuildPriceTool()
      if vending:FindFirstChild("Mode") then modeVal = vending.Mode.Value end
     end)
     if not itemName or modeVal == nil then skipped = skipped + 1 return end
-    if pricerMode == "Sell Only" and modeVal ~= 0 then skipped = skipped + 1 return end
-    if pricerMode == "Buy Only"  and modeVal ~= 1 then skipped = skipped + 1 return end
+    if pricerMode == "Sell (SELL ITEM)" and modeVal ~= 0 then skipped = skipped + 1 return end
+    if pricerMode == "Buy (BUY ITEM)"   and modeVal ~= 1 then skipped = skipped + 1 return end
     local entry = priceMap[itemName]
     if not entry then skipped = skipped + 1 return end
     local newPrice = nil
@@ -3892,7 +3895,6 @@ local function BuildPriceTool()
  local SrcSec = PL:AddSection({Name = "Sources"})
  local sourceLabels = getSourceLabels()
  local pickDropdown
- local deletePick = AVERAGE_LABEL
 
  pickDropdown = SrcSec:AddDropdown({
   Name = "Sources", Options = sourceLabels, Default = {},
@@ -3960,14 +3962,11 @@ local function BuildPriceTool()
   return false, "Discord replied " .. tostring(code)
  end
 
- local deleteDropdown
-
  -- One refresh for both dropdowns. They list the same thing, so letting them
  -- drift is how you end up deleting a shop that is still selected above.
  local function refreshSourceDropdowns()
   sourceLabels = getSourceLabels()
   pcall(function() pickDropdown:Refresh(sourceLabels, true) end)
-  pcall(function() deleteDropdown:Refresh(sourceLabels, true) end)
  end
 
  SrcSec:AddButton({Name = "Save Prices", Callback = function()
@@ -3999,21 +3998,51 @@ local function BuildPriceTool()
    end)
   end})
 
- -- Delete moved in here rather than owning a section of its own: it acts on the
- -- same list the dropdown above shows, and a whole section for one button was
- -- the reason this column needed scrolling.
- deleteDropdown = SrcSec:AddDropdown({Name = "Shop To Delete", Options = sourceLabels, Default = sourceLabels[1],
-  Search = true, Flag = "DeletePick", Callback = function(v) deletePick = v end})
- SrcSec:AddButton({Name = "Delete Shop", Callback = function()
-  if deletePick == AVERAGE_LABEL then notify("Error", "Can't delete the Average source", 3) return end
-  local f = sourceLabelToFile[deletePick]
-  if not f then notify("Error", "Could not resolve file", 3) return end
-  if deleteSavedShopByFile(f) then
-   notify("Deleted", "Removed " .. deletePick, 3)
-   selectedSources = {}
-   refreshSourceDropdowns()
-  else notify("Error", "Could not delete shop", 3) end
- end})
+ -- Applying a saved shop's prices to your own is the whole point of this tab.
+ -- Pick sources above, pick which side of the machines to touch, press Apply.
+ -- Several sources selected are averaged together per item, and an item no
+ -- source has a price for is left exactly as it is.
+ SrcSec:AddDropdown({Name = "Apply To", Options = {"All", "Sell (SELL ITEM)", "Buy (BUY ITEM)"},
+  Default = "All", Flag = "PricerMode",
+  Callback = function(v) pricerMode = v end})
+
+ SrcSec:AddButton({Name = "Apply Prices",
+  Tooltip = "Copies the prices from every source ticked above onto your own vendings. Nothing is written for items your sources have no price for.",
+  Callback = function()
+   local labels = selectedSources
+   if #labels == 0 then labels = { AVERAGE_LABEL } end
+   notify("Applying", "Merging " .. #labels .. " source(s)...", 2)
+   task.spawn(function()
+    local map = mergeSourceMaps(labels)
+    applyPriceMap(map)
+   end)
+  end})
+
+ -- Delete acts on the Sources tick list rather than a second dropdown naming
+ -- the same shops. One list, one selection: what you have ticked is what gets
+ -- applied, and it is what gets deleted.
+ SrcSec:AddButton({Name = "Delete Selected Source(s)",
+  Tooltip = "Deletes the saved shop files ticked in Sources above. The Average is computed, not a file, so it is skipped.",
+  Callback = function()
+   local labels = {}
+   for _, lbl in ipairs(selectedSources) do
+    if lbl ~= AVERAGE_LABEL then table.insert(labels, lbl) end
+   end
+   if #labels == 0 then
+    notify("Delete", "Tick a saved shop in Sources first", 3)
+    return
+   end
+   confirm("Delete Saved Shops", "Delete " .. #labels .. " saved shop file(s)?", function()
+    local gone, failed = 0, 0
+    for _, lbl in ipairs(labels) do
+     local f = sourceLabelToFile[lbl]
+     if f and deleteSavedShopByFile(f) then gone = gone + 1 else failed = failed + 1 end
+    end
+    selectedSources = {}
+    refreshSourceDropdowns()
+    notify("Deleted", gone .. " removed" .. (failed > 0 and (", " .. failed .. " failed") or ""), 4)
+   end)
+  end})
 
  local MarkSec = PR:AddSection({Name = "Markup Pricer"})
  MarkSec:AddParagraph("Markup Pricer", "Base = YOUR current shop price. newPrice = base x (1 + markup%).")
@@ -4198,29 +4227,57 @@ function S.itemRunCentre(v)
 end
 
 -- Serve everything within reach of where we are standing, not just the machine
--- we flew to.
+-- we flew to - and serve them together rather than one after another. Each
+-- machine is an open/edit/act/close sequence with waits in it, so running eight
+-- of them in turn costs eight times as long as running them at once while you
+-- hover in the same spot. One At A Time is still available in the gear for when
+-- the server does not like the volume.
 function S.itemRunServe(done)
  local char = LP.Character
  local hrp = char and char:FindFirstChild("HumanoidRootPart")
  if not hrp then return 0 end
- local acted = 0
+
+ -- Selection first, actions second. The need is re-read here rather than
+ -- trusted from the pre-flight scan, because a machine can be bought out on
+ -- the way over.
+ local jobs = {}
  for v, pos in pairs(S.itemRunPending) do
   if not done[v] and v.Parent and inSquare(pos, hrp.Position, S.ITEM_REACH) then
-   -- re-read on arrival: the list was measured before the flight, and a
-   -- machine can be sold out from under us on the way over
    local need = S.itemRunNeeds(v)
-   if need then
-    if need.kind == "stock" then
-     depositItemToVending(v, need.tool, need.amount)
-    else
-     withdrawFromVending(v, need.amount)
-    end
-    acted = acted + 1
-   end
+   if need then table.insert(jobs, {v = v, need = need}) end
    done[v] = true
   end
  end
- return acted
+ if #jobs == 0 then return 0 end
+
+ local function serve(job)
+  if job.need.kind == "stock" then
+   depositItemToVending(job.v, job.need.tool, job.need.amount)
+  else
+   withdrawFromVending(job.v, job.need.amount)
+  end
+ end
+
+ if S.itemRunOneByOne then
+  for _, job in ipairs(jobs) do serve(job) end
+  return #jobs
+ end
+
+ local pending = #jobs
+ for _, job in ipairs(jobs) do
+  task.spawn(function()
+   pcall(serve, job)
+   pending = pending - 1
+  end)
+ end
+ -- Bounded rather than a bare wait: one machine that never answers should cost
+ -- the run a few seconds, not park it there for good.
+ local waited = 0
+ while pending > 0 and waited < 10 do
+  task.wait(0.1)
+  waited = waited + 0.1
+ end
+ return #jobs
 end
 UI.runItemsImpl = (function()
  return function(value)
@@ -4356,7 +4413,7 @@ do
  end})
 end
 
-UI.farmCrop = L:AddSection({Name = "Crop Farming"})
+UI.farmCrop = L:AddSection({Name = "Crop Farming", Collapsible = true})
 
 local CropHandler = {}
 CropHandler.__index = CropHandler
@@ -5630,8 +5687,16 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   local targetType = "Mob"
   local targetDropdown
 
+  -- A fresh table every call, never mobNames or bossNames themselves.
+  -- Dropdown:Refresh(opts, true) does table.clear(Dropdown.Options) before it
+  -- assigns Dropdown.Options = opts - so handing it the same table the dropdown
+  -- was built with clears that table and then assigns the empty result. That is
+  -- why picking Mob showed nothing: mobNames had been emptied in place.
   local function targetOptions()
-   return targetType == "Boss" and bossNames or mobNames
+   local src = (targetType == "Boss") and bossNames or mobNames
+   local out = {}
+   for i, v in ipairs(src) do out[i] = v end
+   return out
   end
 
   cmb:AddDropdown({Name = "Target Type", Options = {"Mob", "Boss"}, Default = "Mob", Flag = autoFlag("farm"), Callback = function(v)
@@ -5640,7 +5705,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    pcall(function() targetDropdown:Refresh(targetOptions(), true) end)
   end})
 
-  targetDropdown = cmb:AddDropdown({Name = "Target", Options = mobNames, Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
+  targetDropdown = cmb:AddDropdown({Name = "Target", Options = targetOptions(), Default = "None", Search = true, Flag = autoFlag("farm"), Callback = function(v)
    if targetType == "Boss" then
     selBoss = bossMap[v] or "None"
     selMob = "None"
@@ -6097,7 +6162,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
    eatDelay = v
   end})
 
-  local fl = col:AddSection({Name = "Flowers", Collapsible = true})
+  local fl = col:AddSection({Name = "Flowers & Trees", Collapsible = true})
   local selectedFlowers = {}
   local function flowerNames()
    local names, seen = {}, {}
@@ -6176,7 +6241,10 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   end
 
 
-  local tr = col:AddSection({Name = "Trees", Collapsible = true})
+  -- Trees share the Flowers section. Both are the same shape - pick a type,
+  -- turn on an aura - and splitting them meant two collapsibles each holding
+  -- two rows.
+  local tr = fl
   tr:AddDropdown({Name = "Tree Type", Options = {"All", "Oak", "Birch", "Pine", "Maple", "Hickory", "Spirit", "Cherry Blossom", "Apple", "Orange", "Lemon", "Plum", "Avocado", "Coconut"}, Default = {"All"}, MultiSelect = true, Search = true, SelectAll = true, Flag = autoFlag("farm"), Callback = function(v)
    treeTypes = v or {"All"}
   end})
