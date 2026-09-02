@@ -3407,7 +3407,6 @@ BuildSniper(UI.vmSnipe)
 
 local function BuildPriceTool()
 
- local WEBHOOK_URL   = "https://discord.com/api/webhooks/1522807260022181979/ZZmrwJjBwBq8pI5LofvO5_Ey13TRucxnvE4xxAaX_RezWtjtadhdEWamWSluPtRxF4qp"
  -- The average price list. This pointed at the key paste, so every fetch
  -- came back with a licence key, parsed to nothing, and Apply reported no
  -- prices - the two links had been crossed.
@@ -3606,23 +3605,29 @@ local function BuildPriceTool()
   return items
  end
 
- local function buildAndSend(vendings)
-  local items = scanCurrentPrices(vendings)
-  local shopName, shopOwner, ownerId = getIslandDetails()
-  local ownerCode = getOwnerCode(ownerId)
-
-  local lines, sortedItems = {}, {}
-  for name in pairs(items) do table.insert(sortedItems, name) end
-  table.sort(sortedItems)
-  for _, name in ipairs(sortedItems) do
+ -- The shop as a plain text price list: item name, buy, sell, blank line,
+ -- alphabetical. This is the format the file has always been in, and it is now
+ -- also a format the Sources list can read back - drop a .txt someone sends you
+ -- into the shops folder and it becomes something Apply Prices can use.
+ local function buildPriceText(items)
+  local lines, sorted = {}, {}
+  for name in pairs(items) do table.insert(sorted, name) end
+  table.sort(sorted)
+  for _, name in ipairs(sorted) do
    local d = items[name]
    table.insert(lines, name)
    table.insert(lines, "Buy Price: "  .. (d.buy  and fmtNum(d.buy)  or "N/A"))
    table.insert(lines, "Sell Price: " .. (d.sell and fmtNum(d.sell) or "N/A"))
    table.insert(lines, "")
   end
+  return table.concat(lines, "\n"), #sorted
+ end
+ local function buildAndSend(vendings, url)
+  local items = scanCurrentPrices(vendings)
+  local shopName, shopOwner, ownerId = getIslandDetails()
+  local ownerCode = getOwnerCode(ownerId)
 
-  local content  = table.concat(lines, "\n")
+  local content, itemCount = buildPriceText(items)
   local boundary = "----PrizBoundary" .. tostring(tick()):gsub("%.", "")
   local discordText = "**Shop Name:** `" .. shopName .. "`" ..
                       "\n**Owner:** `" .. shopOwner .. "`" ..
@@ -3640,13 +3645,17 @@ local function BuildPriceTool()
 
   local ok = pcall(function()
    return httpRequest({
-    Url = WEBHOOK_URL, Method = "POST",
+    Url = url, Method = "POST",
     Headers = {["Content-Type"] = "multipart/form-data; boundary=" .. boundary},
     Body = body
    })
   end)
-  return ok, #sortedItems, shopName
+  return ok, itemCount, shopName
  end
+
+ -- Forward declared: the price-text parser is defined further down, next to the
+ -- average fetcher that shares it, but loadSavedShopByFile above needs it.
+ local parsePriceText
 
  local sourceLabelToFile = {}
 
@@ -3654,8 +3663,23 @@ local function BuildPriceTool()
   sourceLabelToFile = {}
   local displayList = { AVERAGE_LABEL }
   pcall(function()
+   local seen = {}
    for _, path in ipairs(listfiles(SHOP_FOLDER)) do
-    if path:lower():sub(-5) == ".json" then
+    local lower = path:lower()
+    -- A .txt with a .json of the same name is the readable copy of a shop
+    -- already listed, so it is skipped. A .txt on its own is someone else's
+    -- price list, dropped in by hand, and it gets listed on its own terms.
+    if lower:sub(-4) == ".txt" then
+     local file = path:match("[^/\\]+$")
+     local fileName = file:gsub("%.txt$", "")
+     if not isfile(SHOP_FOLDER .. "/" .. fileName .. ".json") then
+      local label = fileName:gsub("_prices$", "") .. " | text list"
+      if sourceLabelToFile[label] then label = label .. " (" .. fileName .. ")" end
+      sourceLabelToFile[label] = fileName .. ".txt"
+      table.insert(displayList, label)
+     end
+    end
+    if lower:sub(-5) == ".json" then
      local file = path:match("[^/\\]+$")
      local fileName = file:gsub("%.json$", "")
      local label = fileName
@@ -3686,12 +3710,32 @@ local function BuildPriceTool()
   local fileBase = safeFileName(shopName) .. "_" .. safeFileName(shopOwner) .. "_" .. safeFileName(ownerCode)
   local path = SHOP_FOLDER .. "/" .. fileBase .. ".json"
   local ok = pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
+  -- The readable copy, same content that goes to Discord. Written alongside
+  -- rather than instead of the JSON: the JSON keeps the shop name, owner and
+  -- code, which the text format has nowhere to put.
+  pcall(function()
+   writefile(SHOP_FOLDER .. "/" .. fileBase .. ".txt", (buildPriceText(items)))
+  end)
   if ok then notify("Saved", "Saved: " .. shopName .. " (" .. shopOwner .. ")", 4) return fileBase
   else notify("Error", "Failed to save shop file", 3) return nil end
  end
 
  local function loadSavedShopByFile(fileName)
   if not fileName or fileName == "" then return nil end
+  -- A source recorded with its extension is a text price list; anything else is
+  -- one of our own JSON saves.
+  if fileName:lower():sub(-4) == ".txt" then
+   local tpath = SHOP_FOLDER .. "/" .. fileName
+   if not isfile(tpath) then return nil end
+   local body
+   local okr = pcall(function() body = readfile(tpath) end)
+   if not okr or type(body) ~= "string" then return nil end
+   return {
+    shopName = fileName:gsub("%.txt$", ""):gsub("_prices$", ""),
+    owner = "text list", code = "-",
+    items = parsePriceText(body),
+   }
+  end
   local path = SHOP_FOLDER .. "/" .. fileName .. ".json"
   if not isfile(path) then return nil end
   local data = nil
@@ -3702,12 +3746,18 @@ local function BuildPriceTool()
 
  local function deleteSavedShopByFile(fileName)
   if not fileName or fileName == "" then return false end
+  if fileName:lower():sub(-4) == ".txt" then
+   local ok = pcall(function() delfile(SHOP_FOLDER .. "/" .. fileName) end)
+   return ok
+  end
+  -- Our own saves are a pair, so both halves go.
+  pcall(function() delfile(SHOP_FOLDER .. "/" .. fileName .. ".txt") end)
   local path = SHOP_FOLDER .. "/" .. fileName .. ".json"
   if not isfile(path) then return false end
   return (pcall(function() delfile(path) end))
  end
 
- local function parsePriceText(rawBody)
+ parsePriceText = function(rawBody)
   local body = rawBody:gsub("\r\n", "\n"):gsub("\r", "\n")
   local priceMap, currentItem = {}, nil
   for line in (body .. "\n"):gmatch("([^\n]*)\n") do
@@ -3917,57 +3967,19 @@ local function BuildPriceTool()
  -- anyone reading the repo post to your channel.
  local priceHook = ""
 
- -- The saved shop as a Discord message. A shop is a few hundred items, well
- -- past the 2000 character content limit, so it goes as a file attachment and
- -- the message body is only the summary line.
- local function sendShopToWebhook(fileBase)
+ -- Sending is buildAndSend, which was already in this file and already produced
+ -- exactly the right thing - the readable .txt and a message naming the shop,
+ -- owner and code. It was orphaned and pointed at a hardcoded webhook. It takes
+ -- yours now, and that constant is gone: a webhook URL is a bearer token and
+ -- this repo is public.
+ local function sendShopToWebhook()
   if priceHook == "" then return false, "no webhook URL set" end
   if not httpRequest then return false, "this executor exposes no request()" end
-  local path = SHOP_FOLDER .. "/" .. fileBase .. ".json"
-  local body
-  local ok = pcall(function() body = readfile(path) end)
-  if not ok or type(body) ~= "string" or #body == 0 then
-   return false, "could not read the file back"
-  end
-
-  local shopName, shopOwner = getIslandDetails()
-  local count = 0
-  pcall(function()
-   local decoded = HttpService:JSONDecode(body)
-   for _ in pairs(decoded.items or {}) do count = count + 1 end
-  end)
-
-  local label = string.format("**%s** by %s - %d items - %s",
-   tostring(shopName), tostring(shopOwner), count, os.date("%Y-%m-%d %H:%M"))
-
-  local boundary = "PIHD" .. tostring(math.random(1, 1e9))
-  local payload = HttpService:JSONEncode({ content = label })
-  local parts = table.concat({
-   "--" .. boundary,
-   'Content-Disposition: form-data; name="payload_json"',
-   "Content-Type: application/json",
-   "",
-   payload,
-   "--" .. boundary,
-   'Content-Disposition: form-data; name="files[0]"; filename="' .. fileBase .. '.json"',
-   "Content-Type: application/json",
-   "",
-   body,
-   "--" .. boundary .. "--",
-   "",
-  }, "\r\n")
-
-  local sent, resp = pcall(httpRequest, {
-   Url = priceHook, Method = "POST",
-   Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
-   Body = parts,
-  })
-  if not sent then return false, "upload errored: " .. tostring(resp) end
-  local code = resp and (resp.StatusCode or resp.status_code or resp.Status) or 0
-  if type(code) == "number" and code >= 200 and code < 300 then
-   return true, count .. " items sent"
-  end
-  return false, "Discord replied " .. tostring(code)
+  local vendings = findAllVendings()
+  if #vendings == 0 then return false, "no vendings found" end
+  local ok, count, shopName = buildAndSend(vendings, priceHook)
+  if not ok then return false, "Discord refused the upload" end
+  return true, count .. " items sent from " .. tostring(shopName)
  end
 
  -- One refresh for both dropdowns. They list the same thing, so letting them
@@ -3983,25 +3995,25 @@ local function BuildPriceTool()
   refreshSourceDropdowns()
   if priceHook ~= "" then
    task.spawn(function()
-    local ok, why = sendShopToWebhook(saved)
+    local ok, why = sendShopToWebhook()
     notify(ok and "Webhook" or "Webhook failed", why, ok and 4 or 6)
    end)
   end
  end})
 
  SrcSec:AddTextbox({Name = "Discord Webhook URL", Default = "", TextDisappear = false,
-  Tooltip = "Paste your own. Leave empty and Save Prices just writes the file locally.",
+  Tooltip = "Paste your own. Leave empty and Save Prices just writes the files locally, nothing is sent.",
   Callback = function(v) priceHook = tostring(v or ""):gsub("%s+", "") end})
 
  SrcSec:AddButton({Name = "Send Saved Prices To Webhook",
-  Tooltip = "Saves the current shop and posts the JSON to the webhook above.",
+  Tooltip = "Saves the current shop and posts the price list to the webhook above.",
   Callback = function()
    if priceHook == "" then notify("Webhook", "Paste a webhook URL first", 4) return end
    task.spawn(function()
     local saved = saveShopFromCurrent()
     if not saved then return end
     refreshSourceDropdowns()
-    local ok, why = sendShopToWebhook(saved)
+    local ok, why = sendShopToWebhook()
     notify(ok and "Webhook" or "Webhook failed", why, ok and 4 or 6)
    end)
   end})
