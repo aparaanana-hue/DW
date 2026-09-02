@@ -51,6 +51,15 @@ pcall(function() Duvome:SetGlass(0.38) end)
 
 local UI = {}
 local S = {}
+-- Feature state lives here, not in file-scope locals. Luau allows a function
+-- 200 local registers and this chunk is a single function - it has hit that
+-- ceiling before, and the failure mode is silent: the whole file refuses to
+-- compile, loadstring hands back nil, and the caller reports an error on its
+-- own line 1 with no message attached.
+S.farmWalkSpeed, S.farmWalkNoclip, S.harvestRadius = 32, true, 45
+S.restockSplit, S.restockLoopOn, S.restockEvery = false, false, 15
+S.restockRandomItem, S.restockRandomEvery, S.restockGen = false, 0, 0
+S.b2vOn, S.b2vEvery, S.b2vAmount, S.b2vFavOnly, S.b2vGen = false, 30, 1000000, false, 0
 local L, R
 
 local _flagN = 0
@@ -2335,10 +2344,8 @@ UI.vmBank:AddButton({Name = "Withdraw", Loop = true, LoopEvery = 5, Tooltip = "W
 -- What the Automation tab called "Bank to Vendings": withdraw from the bank,
 -- then push it straight back out into the machines. It belongs here, under the
 -- two halves it is made of, rather than on a tab of its own.
-local b2vOn, b2vEvery, b2vAmount, b2vFavOnly = false, 30, 1000000, false
-local b2vGen = 0
 
-local function bankToVendingsOnce()
+S.bankToVendingsOnce = function()
  if not checkNetwork() then return false, "no network" end
  -- GetBankAccount answers in one of several shapes depending on the build, so
  -- every one it has been seen to return is unwrapped rather than assuming.
@@ -2357,7 +2364,7 @@ local function bankToVendingsOnce()
  if type(bal) ~= "number" then bal = nil end
  if bal and bal <= 0 then return false, "bank is empty" end
 
- local amount = b2vAmount
+ local amount = S.b2vAmount
  if bal then amount = math.min(amount, bal) end
  if amount <= 0 then return false, "nothing to move" end
 
@@ -2367,7 +2374,7 @@ local function bankToVendingsOnce()
  end)
  task.wait(0.5)
 
- local vendings = (b2vFavOnly and #selectedFavorites > 0) and selectedFavorites or findVendings()
+ local vendings = (S.b2vFavOnly and #selectedFavorites > 0) and selectedFavorites or findVendings()
  if #vendings == 0 then return false, "no vendings" end
 
  -- Each machine caps at 5b coins, so the run tracks how much room is actually
@@ -2393,22 +2400,22 @@ local function bankToVendingsOnce()
  return true, formatNumber(amount - remaining) .. " to " .. used .. " vendings"
 end
 
-local function setBankToVendings(on)
- b2vOn = on
+S.setBankToVendings = function(on)
+ S.b2vOn = on
  if not on then return end
- b2vGen = b2vGen + 1
- local gen = b2vGen
+ S.b2vGen = S.b2vGen + 1
+ local gen = S.b2vGen
  task.spawn(function()
-  while b2vOn and gen == b2vGen do
-   local ok, msg = bankToVendingsOnce()
+  while S.b2vOn and gen == S.b2vGen do
+   local ok, msg = S.bankToVendingsOnce()
    updateNotification("Bank to Vendings", tostring(msg), ok and 3 or 4)
    if not ok and msg == "bank is empty" then
-    b2vOn = false
+    S.b2vOn = false
     updateNotification("Bank to Vendings", "Bank empty - stopped", 4)
     return
    end
    local waited = 0
-   while b2vOn and gen == b2vGen and waited < b2vEvery do
+   while S.b2vOn and gen == S.b2vGen and waited < S.b2vEvery do
     task.wait(1)
     waited = waited + 1
    end
@@ -2421,19 +2428,19 @@ UI.vmBank:AddToggle({Name = "Bank to Vendings Loop", Default = false,
  Flag = autoFlag("vend"),
  Options = {
   {Type = "slider", Name = "Every", Min = 5, Max = 600, Increment = 5, Default = 30, ValueName = "s",
-   Callback = function(v) b2vEvery = v end},
+   Callback = function(v) S.b2vEvery = v end},
   {Type = "slider", Name = "Amount (millions)", Min = 1, Max = 1000, Increment = 1, Default = 1, ValueName = "M",
-   Callback = function(v) b2vAmount = v * 1000000 end},
+   Callback = function(v) S.b2vAmount = v * 1000000 end},
   {Type = "toggle", Name = "↪ Favourites Only", Default = false,
-   Callback = function(v) b2vFavOnly = v end},
+   Callback = function(v) S.b2vFavOnly = v end},
   {Type = "keybind", Name = "Bind Key", OnPress = function()
    task.spawn(function()
-    local ok, msg = bankToVendingsOnce()
+    local ok, msg = S.bankToVendingsOnce()
     updateNotification("Bank to Vendings", tostring(msg), ok and 3 or 4)
    end)
   end},
  },
- Callback = function(v) setBankToVendings(v) end})
+ Callback = function(v) S.setBankToVendings(v) end})
 
 local STOCK_TARGET = 1000
 
@@ -2875,7 +2882,6 @@ end
 -- Split mode divides what you are holding evenly across the machines that need
 -- it, instead of pouring the whole stack into the first one and leaving the
 -- rest empty. Declared up here because doRestockVending reads it.
-local restockSplit = false
 
 local function doRestockVending()
  local vendings = getTargetVendings()
@@ -2907,7 +2913,7 @@ local function doRestockVending()
      local btool = LP.Backpack:FindFirstChild(st.Name)
      if not btool then skipped = skipped + 1 return end
      local have = btool:FindFirstChild("Amount") and btool.Amount.Value or 1
-     local budget = restockSplit and math.floor(have / sellCount) or have
+     local budget = S.restockSplit and math.floor(have / sellCount) or have
      local give = math.min(STOCK_TARGET - cur, budget)
      if give <= 0 then skipped = skipped + 1 return end
      openVending(vending)
@@ -2959,15 +2965,12 @@ UI.vmItem:AddButton({Name = "Deposit", Options = {{Type = "keybind", Name = "Bin
 -- Restock absorbs what the Automation tab called Auto-Restock and Vending Auto
 -- Stocker. Both were the same button on a timer with one extra choice each, so
 -- they are the timer and those choices, on the button itself.
-local restockLoopOn, restockEvery = false, 15
-local restockRandomItem, restockRandomEvery = false, 0
-local restockGen = 0
 
-local function restockCycle()
+S.restockCycle = function()
  -- Random item picks a fresh item from your backpack each pass. Without it the
  -- loop keeps sending whatever the Item dropdown holds, which empties one stack
  -- and then does nothing for the rest of the night.
- if restockRandomItem then
+ if S.restockRandomItem then
   refreshItems()
   if #itemOptions > 0 and itemOptions[1] ~= "No items" then
    local pick = itemOptions[math.random(1, #itemOptions)]
@@ -2978,25 +2981,25 @@ local function restockCycle()
  doRestockVending()
 end
 
-local function setRestockLoop(on)
- restockLoopOn = on
+S.setRestockLoop = function(on)
+ S.restockLoopOn = on
  if not on then return end
- restockGen = restockGen + 1
- local gen = restockGen
+ S.restockGen = S.restockGen + 1
+ local gen = S.restockGen
  task.spawn(function()
   local since = 0
-  while restockLoopOn and gen == restockGen do
-   restockCycle()
+  while S.restockLoopOn and gen == S.restockGen do
+   S.restockCycle()
    -- Two independent clocks: the restock interval, and an optional slower one
    -- that only rerolls the item. Rerolling every pass is a different feature
    -- from restocking every pass, and tying them together was why the old Auto
    -- Stocker could not do one without the other.
    local waited = 0
-   while restockLoopOn and gen == restockGen and waited < restockEvery do
+   while S.restockLoopOn and gen == S.restockGen and waited < S.restockEvery do
     task.wait(1)
     waited = waited + 1
     since = since + 1
-    if restockRandomEvery > 0 and since >= restockRandomEvery then
+    if S.restockRandomEvery > 0 and since >= S.restockRandomEvery then
      since = 0
      refreshItems()
      if #itemOptions > 0 and itemOptions[1] ~= "No items" then
@@ -3014,17 +3017,17 @@ UI.vmItem:AddButton({Name = "Restock",
  Options = {
   {Type = "keybind", Name = "Bind Key", OnPress = doRestockVending},
   {Type = "toggle", Name = "Loop", Default = false,
-   Callback = function(v) setRestockLoop(v) end},
+   Callback = function(v) S.setRestockLoop(v) end},
   {Type = "slider", Name = "Loop Every", Min = 1, Max = 300, Increment = 1, Default = 15, ValueName = "s",
-   Callback = function(v) restockEvery = v end},
+   Callback = function(v) S.restockEvery = v end},
   {Type = "toggle", Name = "↪ Random Item", Default = false,
-   Callback = function(v) restockRandomItem = v end},
+   Callback = function(v) S.restockRandomItem = v end},
   {Type = "slider", Name = "↪ Reroll Every", Min = 0, Max = 600, Increment = 5, Default = 0, ValueName = "s",
-   Callback = function(v) restockRandomEvery = v end},
+   Callback = function(v) S.restockRandomEvery = v end},
   -- A toggle, not a dropdown: DL's gear renders sliders, keybinds and toggles,
   -- and Deposit All vs Split is a two-state choice anyway.
   {Type = "toggle", Name = "↪ Split Across Vendings", Default = false,
-   Callback = function(v) restockSplit = v end},
+   Callback = function(v) S.restockSplit = v end},
  },
  Callback = doRestockVending})
 
@@ -4386,8 +4389,6 @@ local selectedCrops = {}
 -- Declared out here rather than inside BuildFarm because setAutoWalkCrops is
 -- defined further up the file than BuildFarm's locals are, and a setting the
 -- Farm Panel writes has to be visible to the loop that reads it.
-local farmWalkSpeed, farmWalkNoclip = 32, true
-local harvestRadius = 45
 local farmCropsEnabled = false
 local replaceCropsEnabled = false
 local NeverExecutedBefore = false
@@ -4470,10 +4471,10 @@ local function setAutoWalkCrops(value)
                     local humanoid = LP.Character:FindFirstChild("Humanoid")
                     local hrp = LP.Character:FindFirstChild("HumanoidRootPart")
                     if not humanoid or not hrp then return end
-                    if farmWalkNoclip then
+                    if S.farmWalkNoclip then
                         for _, part in pairs(LP.Character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
                     end
-                    if humanoid.WalkSpeed ~= farmWalkSpeed then humanoid.WalkSpeed = farmWalkSpeed end
+                    if humanoid.WalkSpeed ~= S.farmWalkSpeed then humanoid.WalkSpeed = S.farmWalkSpeed end
                     local readyCrops = {} for _, cid in ipairs(selectedCrops) do for _, rc in ipairs(GetCrops:Get(cid)) do table.insert(readyCrops, rc) end end
                     if not readyCrops or #readyCrops == 0 then
                         local ct = tick()
@@ -5924,7 +5925,7 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
      pcall(function()
       local hrp = myRoot()
       if not (hrp and R_Harvest) then return end
-      local radSq = harvestRadius ^ 2
+      local radSq = S.harvestRadius ^ 2
       local isAll = (#selectedCrops == 0)
       local want = {}
       for _, id in ipairs(selectedCrops) do want[id] = true end
@@ -6049,15 +6050,15 @@ local function BuildPookiePort(farmL, farmR, setL, setR)
   UI.farmPerform = UI.farmCrop:AddToggle({Name = "Farm Actions", Default = false, Tooltip = "Runs every action picked above. Turn off to stop them all.", Flag = autoFlag("farm"),
    Options = {
     {Type = "slider", Name = "Harvest Radius", Min = 5, Max = 150, Increment = 5, Default = 45, ValueName = " st",
-     Callback = function(v) harvestRadius = v end},
+     Callback = function(v) S.harvestRadius = v end},
     {Type = "slider", Name = "Plant Radius", Min = 5, Max = 60, Increment = 1, Default = 15, ValueName = " st",
      Callback = function(v) plantRadius = v end},
     {Type = "slider", Name = "Plow Radius", Min = 5, Max = 60, Increment = 1, Default = 10, ValueName = " st",
      Callback = function(v) plowRadius = v end},
     {Type = "slider", Name = "Walk Speed", Min = 16, Max = 120, Increment = 4, Default = 32, ValueName = " st/s",
-     Callback = function(v) farmWalkSpeed = v end},
+     Callback = function(v) S.farmWalkSpeed = v end},
     {Type = "toggle", Name = "Noclip While Walking", Default = true,
-     Callback = function(v) farmWalkNoclip = v end},
+     Callback = function(v) S.farmWalkNoclip = v end},
    },
    Callback = function(value)
    if not value then
@@ -6508,8 +6509,8 @@ pcall(function()
  Duvome:AddWatch("Sniper", function() return sniperEnabled end)
  Duvome:AddWatch("Openables", function() return S.cauldronEnabled end)
  Duvome:AddWatch("Auto-Restock", function() return autoRestockEnabled end)
- Duvome:AddWatch("Bank to Vendings", function() return b2vOn end)
- Duvome:AddWatch("Restock Loop", function() return restockLoopOn end)
+ Duvome:AddWatch("Bank to Vendings", function() return S.b2vOn end)
+ Duvome:AddWatch("Restock Loop", function() return S.restockLoopOn end)
  Duvome:AddWatch("Radius", function() return useRadiusLimit and (vendingRadius .. " studs") or false end)
  Duvome:AddWatch("Selected", function() local n = #selectedFavorites return n > 0 and (n .. " vendings") or false end)
 end)
