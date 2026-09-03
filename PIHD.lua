@@ -823,148 +823,133 @@ L, R = HomeTab:AddLeft(), HomeTab:AddRight()
 UI.about = L:AddSection({Name = "About"})
 UI.about:AddParagraph("Welcome to Priz's Islands Hub", "Developed by: Priz\nVersion: 2.0 (Duvome native)\nBuild: " .. PIHD_BUILD .. "\n\nJoin Discord for updates & support:\ndiscord.gg/NuUzrrNaJz")
 
--- A readout, not a control. Home's rule is that nothing on it touches the game,
--- and counting what is already there does not - but it answers the question the
--- old Home could not: is the hub actually seeing your island?
-UI.homeStatus = UI.about:AddParagraph("At A Glance", "Scanning...")
+
+-- ---------------------------------------------------------------------------
+-- Home reads; it never acts.
+--
+-- Nothing on this tab touches the game. It counts what is already in front of
+-- you and says what each tab is for. The guide panels that used to be here
+-- typed themselves out a character at a time, which looked good once and was
+-- in the way every time after - and half of what they described had moved.
+-- ---------------------------------------------------------------------------
+UI.homeScan = L:AddSection({Name = "Live Scan"})
+UI.homeScanOut = UI.homeScan:AddParagraph("Your Island", "Scanning...")
+UI.homePlayerOut = UI.homeScan:AddParagraph("Player", "-")
+
+-- Cached because naming the island costs a web call, and the readout ticks
+-- every few seconds. It only changes when you change server.
+local homeIslandLine = nil
+
 task.spawn(function()
  while true do
-  task.wait(3)
   pcall(function()
-   local vendings = findVendings and findVendings() or {}
-   local coins, withCoins, stocked = 0, 0, 0
+   local vendings = findVendings()
+
+   -- One pass, every counter. Walking the list five times to answer five
+   -- questions is how a readout starts costing more than the features do.
+   local coins, withCoins = 0, 0
+   local items, withItems = 0, 0
+   local buyMode, sellMode, offMode = 0, 0, 0
+   local itemKinds = {}
+
    for _, v in ipairs(vendings) do
     pcall(function()
-     if v:FindFirstChild("CoinBalance") and v.CoinBalance.Value > 0 then
-      coins = coins + v.CoinBalance.Value
+     local cb = v:FindFirstChild("CoinBalance")
+     if cb and cb.Value > 0 then
+      coins = coins + cb.Value
       withCoins = withCoins + 1
      end
+
      local sc = v:FindFirstChild("SellingContents")
-     if sc and #sc:GetChildren() > 0 then stocked = stocked + 1 end
+     local tool = sc and sc:GetChildren()[1]
+     if tool then
+      local amt = tool:FindFirstChild("Amount") and tool.Amount.Value or 1
+      items = items + amt
+      withItems = withItems + 1
+      itemKinds[tool.Name] = (itemKinds[tool.Name] or 0) + amt
+     end
+
+     -- Offline is a machine that is neither buying nor selling, which is why
+     -- it is counted by what it is not rather than by a mode of its own.
+     local m = v:FindFirstChild("Mode") and v.Mode.Value
+     if m == 1 then buyMode = buyMode + 1
+     elseif m == 0 then sellMode = sellMode + 1
+     else offMode = offMode + 1 end
     end)
    end
-   local bag = 0
+
+   local kinds = 0
+   for _ in pairs(itemKinds) do kinds = kinds + 1 end
+
+   if not homeIslandLine and S.getIslandDetails then
+    pcall(function()
+     local shopName, shopOwner, ownerId = S.getIslandDetails()
+     local code = S.getOwnerCode and S.getOwnerCode(ownerId) or "-"
+     homeIslandLine = string.format("%s\nOwner: %s\nIsland Code: %s",
+      tostring(shopName), tostring(shopOwner), tostring(code))
+    end)
+   end
+
+   UI.homeScanOut:Set(string.format(
+    "%s\n\nVendings: %d\n  buying %d   selling %d   offline %d\n\n" ..
+    "Coins scanned: %s  (in %d machines)\n" ..
+    "Items scanned: %s  (%d kinds, in %d machines)",
+    homeIslandLine or "Island: reading...",
+    #vendings, buyMode, sellMode, offMode,
+    formatNumber(coins), withCoins,
+    formatNumber(items), kinds, withItems))
+
+   local bag, stacks = 0, 0
    local bp = LP:FindFirstChild("Backpack")
    if bp then
-    for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then bag = bag + 1 end end
-   end
-   UI.homeStatus:Set(string.format(
-    "Vendings: %d   stocked %d   holding coins %d\nCoins in machines: %s\nItems in backpack: %d",
-    #vendings, stocked, withCoins, formatNumber(coins), bag))
-  end)
- end
-end)
-
--- ---------------------------------------------------------------------------
--- Home is a guide. Nothing on it does anything to the game.
---
--- The panels type themselves out, hold, then erase and move to the next page.
--- The About paragraph above is deliberately left static: it carries the build
--- number, which is the one thing on this tab you might need to read at a moment
--- that is not of the animation's choosing.
--- ---------------------------------------------------------------------------
-local function TypingPanel(sec, title, pages)
- local para = sec:AddParagraph(title, "")
-
- -- Every page is padded to the height of the tallest one. A paragraph resizes
- -- itself from its text, so without this the section would grow and shrink on
- -- every keystroke and shove the whole column up and down while you read it.
- local tallest = 0
- for _, page in ipairs(pages) do
-  local n = 1
-  for _ in page:gmatch("\n") do n = n + 1 end
-  if n > tallest then tallest = n end
- end
- local function pad(text)
-  local n = 1
-  for _ in text:gmatch("\n") do n = n + 1 end
-  return text .. string.rep("\n", math.max(0, tallest - n))
- end
-
- -- Split each page into its lines up front, so typing can run a line at a
- -- time rather than treating the page as one long string. A page arriving all
- -- at once reads as a block of text appearing; a page arriving line by line
- -- reads as someone writing it.
- local split = {}
- for _, page in ipairs(pages) do
-  local lines = {}
-  for line in (page .. "\n"):gmatch("([^\n]*)\n") do table.insert(lines, line) end
-  table.insert(split, lines)
- end
-
- task.spawn(function()
-  -- Staggered, so the panels are not all typing on the same frame.
-  task.wait(math.random(0, 200) / 100)
-  local i = 1
-  while true do
-   local lines = split[i]
-   local done = {}
-   for _, line in ipairs(lines) do
-    if line == "" then
-     -- a blank line is a beat, not something to type
-     table.insert(done, "")
-     pcall(function() para:Set(pad(table.concat(done, "\n"))) end)
-     task.wait(0.18)
-    else
-     -- three characters a tick: one at a time turns a short paragraph into
-     -- most of a minute before it can be read
-     for c = 1, #line, 3 do
-      local partial = table.concat(done, "\n")
-      if #done > 0 then partial = partial .. "\n" end
-      pcall(function() para:Set(pad(partial .. line:sub(1, c))) end)
-      task.wait(0.02)
+    for _, t in ipairs(bp:GetChildren()) do
+     if t:IsA("Tool") then
+      stacks = stacks + 1
+      bag = bag + ((t:FindFirstChild("Amount") and t.Amount.Value) or 1)
      end
-     table.insert(done, line)
-     pcall(function() para:Set(pad(table.concat(done, "\n"))) end)
-     task.wait(0.12)
     end
    end
 
-   task.wait(5)
+   UI.homePlayerOut:Set(string.format(
+    "%s  (%d)\nServer: %d / %d players\n\nBackpack: %s in %d stacks\nBuild: %s",
+    LP.Name, LP.UserId,
+    #Players:GetPlayers(), Players.MaxPlayers,
+    formatNumber(bag), stacks, PIHD_BUILD))
+  end)
+  task.wait(4)
+ end
+end)
 
-   -- Erasing runs faster than typing, and takes whole lines off the bottom,
-   -- the way anyone clearing something does it.
-   for n = #done, 0, -1 do
-    local kept = {}
-    for k = 1, n do kept[k] = done[k] end
-    pcall(function() para:Set(pad(table.concat(kept, "\n"))) end)
-    task.wait(0.06)
-   end
-   task.wait(0.4)
-   i = i + 1
-   if i > #pages then i = 1 end
-  end
- end)
- return para
-end
+-- What each tab is for, in one line each. A paragraph rather than four, because
+-- the point is to be read once and skimmed after.
+local guideSec = R:AddSection({Name = "The Tabs"})
+guideSec:AddParagraph("What Is Where",
+ "SHOP & STORAGE\n" ..
+ "Your shop. Chests, the bank, coins, stock, prices,\n" ..
+ "vending config and the sniper. Coin Operations and\n" ..
+ "Item Management each open with a one-press Run that\n" ..
+ "does the whole island.\n\n" ..
+ "PRICE TOOL\n" ..
+ "Save your shop's prices to a file, send them to your\n" ..
+ "own webhook, and copy another shop's prices onto\n" ..
+ "yours with Apply Prices.\n\n" ..
+ "FARMING\n" ..
+ "Travel is at the top. Below it: crops, flowers and\n" ..
+ "trees, demolition, and combat with auto farm.\n\n" ..
+ "SETTINGS\n" ..
+ "The occasional things - scanners, saved vending\n" ..
+ "groups, openables, movement and visuals, undo\n" ..
+ "history and the self test.")
 
--- Two a side. All three down the left left the right column empty and the
--- page lopsided.
--- Two a side. All three down the left left the right column empty and the
--- page lopsided.
-local howSec = L:AddSection({Name = "How To Use"})
-TypingPanel(howSec, "Getting Started", {
- "Four tabs, one job each.\n\nShop & Storage is the shop: chests, bank, coins,\nstock, prices, the sniper.\n\nPrice Tool is what things are worth.\nFarming is crops, travel and combat.\nSettings is everything occasional.",
- "Shop & Storage runs top down.\n\nCoin Operations opens with Run Coins, which funds\nevery machine that is short and drains every one\nholding coins - at any distance.\n\nItem Management opens with Run Items, which flies\nthe list and stocks or drains each machine.",
- "Selection comes first.\n\nMost vending actions ask 'which vendings?'\nUse Selected Only in Vending Tools answers it:\nOFF means every vending you own,\nON means only the ones you ALT+Clicked.",
- "The gear on a row holds its settings.\n\nRestock's gear holds its loop, its interval and\nthe random-item roller. Bank to Vendings holds\nits timer and amount. Auto Farm holds hover trim,\nattack rate and Auto Spawn.\n\nIf a row has a gear, look in it before deciding\nthe row cannot do the thing you want.",
-})
-
-local safeSec = R:AddSection({Name = "Before You Run Anything"})
-TypingPanel(safeSec, "Worth Knowing", {
- "Destructive actions record how to undo themselves.\n\nEmpty, demolish, coin and bank moves all leave an\nUndo button on their notification, and stay in\nSettings > Undo History until you use them.",
- "An undo is a second action, not a rewind.\n\nBlocks only go back if you still have them.\nItems only go back if they are still on you.\nIt tells you when it could not, instead of\nclaiming it worked.",
- "Loops stop themselves when they stop working.\n\nBank to Vendings quits when the bank runs dry\nrather than firing withdrawals at nothing.\n\nIf a feature goes quiet after a game update,\nrun Settings > Self Test - it checks every\nremote and folder the hub depends on.",
- "Panels take the left and right of the window.\n\nTwo at a time. Open a third and the one you\nopened first steps aside.",
-})
-
-local tipSec = R:AddSection({Name = "Tips"})
-TypingPanel(tipSec, "Things People Miss", {
- "Price Tool saves your shop to a file.\n\nSources holds Save Prices, the delete, and a\nwebhook box - paste your own and every save is\nposted to your channel as JSON.\n\nNothing is sent unless you fill that box in.",
- "Farming starts with Travel, at the top.\n\nPick the island, press Teleport. Combat is below\nit: Target Type switches the one Target list\nbetween mobs and bosses, so there is no second\ndropdown quietly overriding the first.",
- "Ctrl and drag the window edge to resize it.\n\nThe sidebar expands when you hover it, and the\ntab search at its top filters the tabs.",
- "Configs are per profile, saved from the topbar.\n\nSet up a farming loadout once, a shop loadout\nonce, and swap between them.",
-})
+guideSec:AddParagraph("Two Habits Worth Having",
+ "Selection comes first. Most vending actions ask\n" ..
+ "which vendings, and Use Selected Only in Vending\n" ..
+ "Tools answers it: off means all of them, on means\n" ..
+ "only the ones you ALT+Clicked.\n\n" ..
+ "Look in the gear. Loops, intervals, radii and\n" ..
+ "keybinds live on the row they belong to, not in a\n" ..
+ "settings tab - if a row has a gear, open it before\n" ..
+ "deciding the row cannot do what you want.")
 
 -- Home is information and nothing else. What used to be on it is split by what
 -- it does: the scanner, favourites and openables are occasional things, so they
@@ -3699,6 +3684,11 @@ local function BuildPriceTool()
   end)
   return displayList
  end
+
+ -- Published so the Home readout can name the island and its code without a
+ -- second copy of this logic living up there.
+ S.getIslandDetails = getIslandDetails
+ S.getOwnerCode = getOwnerCode
 
  local function saveShopFromCurrent()
   local vendings = findAllVendings()
