@@ -99,37 +99,54 @@ task.spawn(function()
 	repeat task.wait() until LP.Character
 end)
 
-task.spawn(function()
-	pcall(function()
-		local req = (syn and syn.request) or (http and http.request) or http_request or request
-		if not req then return end
-		local joinCode = "Unknown"
-		pcall(function() if LP:FindFirstChild("JoinCode") then joinCode = LP.JoinCode.Value end end)
-		local executor = "Unknown"
-		pcall(function() if identifyexecutor then executor = tostring(identifyexecutor()) end end)
-		local body = game:GetService("HttpService"):JSONEncode({
-			username = "Priz Hub Logger",
-			embeds = {{
-				title = "Hub Launched",
-				color = 9109759,
-				fields = {
-					{name = "User", value = LP.Name .. " (" .. LP.DisplayName .. ")", inline = true},
-					{name = "UserId", value = tostring(LP.UserId), inline = true},
-					{name = "Account Age", value = LP.AccountAge .. " days", inline = true},
-					{name = "Island Code", value = tostring(joinCode), inline = true},
-					{name = "Executor", value = executor, inline = true},
-					{name = "PlaceId", value = tostring(game.PlaceId), inline = true},
-				},
-			}},
-		})
-		req({
-			Url = "https://discord.com/api/webhooks/1524587579121336530/zvAqcAq0lWIfc4fxz4jTOPUq0t5p78EGVtRCFSXL3Qe_1DM78noBQska63CawmnYf1tM",
-			Method = "POST",
-			Headers = {["Content-Type"] = "application/json"},
-			Body = body,
-		})
+-- ── Launch notice ───────────────────────────────────────────────────────────
+-- This used to fire on load, unconditionally, to a webhook written into the
+-- file: your name, user id, account age, island code and executor, to a channel
+-- you did not pick and could not see. That URL was also readable by anyone who
+-- cloned this repo.
+--
+-- It is now off unless you paste your own webhook in Settings, and it reports
+-- to you. sendLaunchNotice is called from there rather than at load, because
+-- nothing can be sent before there is somewhere to send it to.
+S.launchHook = ""
+S.launchNoticeSent = false
+
+local function sendLaunchNotice()
+	if S.launchHook == "" or S.launchNoticeSent then return end
+	task.spawn(function()
+		pcall(function()
+			local req = (syn and syn.request) or (http and http.request) or http_request or request
+			if not req then return end
+			local joinCode = "Unknown"
+			pcall(function() if LP:FindFirstChild("JoinCode") then joinCode = LP.JoinCode.Value end end)
+			local executor = "Unknown"
+			pcall(function() if identifyexecutor then executor = tostring(identifyexecutor()) end end)
+			local body = game:GetService("HttpService"):JSONEncode({
+				username = "Priz Hub Logger",
+				embeds = {{
+					title = "Hub Launched",
+					color = 9109759,
+					fields = {
+						{name = "User", value = LP.Name .. " (" .. LP.DisplayName .. ")", inline = true},
+						{name = "UserId", value = tostring(LP.UserId), inline = true},
+						{name = "Account Age", value = LP.AccountAge .. " days", inline = true},
+						{name = "Island Code", value = tostring(joinCode), inline = true},
+						{name = "Executor", value = executor, inline = true},
+						{name = "PlaceId", value = tostring(game.PlaceId), inline = true},
+					},
+				}},
+			})
+			req({
+				Url = S.launchHook,
+				Method = "POST",
+				Headers = {["Content-Type"] = "application/json"},
+				Body = body,
+			})
+			S.launchNoticeSent = true
+		end)
 	end)
-end)
+end
+S.sendLaunchNotice = sendLaunchNotice
 
 local selectedVending, selectedItemName, allAtOnceMode, vendingRadius, useRadiusLimit, radiusRingPart, itemNameMap = nil, nil, true, 100, false, nil, {}
 local radiusShape = "Circle"
@@ -6444,6 +6461,21 @@ BuildPookiePort(UI.farmL, UI.farmR, UI.setL, UI.setR)
 -- come out of the enclosing chunk's 200 registers, and this file is at the cap.
 -- ---------------------------------------------------------------------------
 ;(function()
+ -- ── Launch notice ──────────────────────────────────────────────────────────
+ -- Off unless you fill this in, and it goes wherever you point it. Nothing is
+ -- sent at load any more; the notice fires when a URL is entered and once per
+ -- session after that.
+ local LN = UI.setR:AddSection({Name = "Launch Notice", Collapsible = true})
+ LN:AddParagraph("Optional",
+  "Posts one message when the hub loads: your name, user id, account\n" ..
+  "age, island code and executor. Empty means nothing is sent, which\n" ..
+  "is the default - there is no built-in webhook any more.")
+ LN:AddTextbox({Name = "Discord Webhook URL", Default = "", TextDisappear = false,
+  Callback = function(t)
+   S.launchHook = tostring(t or ""):gsub("%s+", "")
+   if S.launchHook ~= "" and S.sendLaunchNotice then S.sendLaunchNotice() end
+  end})
+
  local IF = UI.setR:AddSection({Name = "Undo & Diagnostics"})
 
  -- Undo history. The toast offers the last action; this is everything still

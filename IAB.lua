@@ -437,10 +437,15 @@ local function notifyErr(title, content, duration)
 end
 
 -- ── Save webhook ─────────────────────────────────────────────────────────────
--- Every build saved to autoBuilder is mirrored to this Discord webhook: the
+-- Every build saved to autoBuilder can be mirrored to a Discord webhook: the
 -- file itself as an attachment when it fits, metadata only when it is too big.
--- Built into the script and always on - no UI, nothing to set.
-BuilderAPI.saveWebhook = "https://discord.com/api/webhooks/1533862471264243956/OvLaYZjrmRSd8O9N6HZIafz_h0uGhIJTzYnQ2IixnQeHxlowabqEcwD3A-Pa-wMDlKeE"
+--
+-- Empty by default, and set from the box in the Save section. There is no
+-- built-in URL to fall back to. A Discord webhook URL is a bearer token -
+-- holding it is permission to post - so one written into a script in a public
+-- repo is readable by anyone who clones it, and every user of the script would
+-- be posting to a channel they did not choose.
+BuilderAPI.saveWebhook = ""
 -- Discord rejects webhook uploads over 8 MB; stay under with headroom.
 local WEBHOOK_MAX_BYTES = 7 * 1024 * 1024
 
@@ -4701,6 +4706,17 @@ saveTab:CreateInput({
         if text and text ~= "" then
             saveFileName = text
         end
+    end
+})
+
+-- Paste your own. Every save still writes to autoBuilder either way; this only
+-- decides whether a copy is also posted somewhere.
+saveTab:CreateInput({
+    Name = "Discord Webhook URL",
+    PlaceholderText = "leave empty to save locally only",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        BuilderAPI.saveWebhook = tostring(text or ""):gsub("%s+", "")
     end
 })
 
