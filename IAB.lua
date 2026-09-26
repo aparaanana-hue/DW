@@ -376,43 +376,9 @@ noInterior = false
 -- The functions using this state need arrayToCFrame and effectiveType,
 -- so they are defined further down, just after those.
 
--- Quarter turns to add to every stair, about Y, applied when a build is used
--- rather than when it is converted.
---
--- Which way an Islands stair model faces relative to Minecraft's has been
--- settled by trial three times - blockmap.py's FACING_OFFSET comment records
--- two wrong answers before the one it ships, and rotate_stairs.py exists
--- purely to bring older files into step after each change. That is the shape
--- of a value that should never have been a constant.
---
--- Doing it here, at use time, also fixes files this script did not convert:
--- anything already on disk from an older offline run is turned on the way
--- past, without rewriting it.
-stairTurns = 2
-
--- (x, y, z) turned a quarter anticlockwise about Y, matching quarter_left in
--- rotate_stairs.py so the two agree on what a turn means.
-local function quarterLeft(x, y, z)
-    return z, y, -x
-end
-
-local function turnStairCFrame(cf, times)
-    times = times % 4
-    if times == 0 then return cf end
-    -- Position is untouched: the stair spins on the spot. Only the right and
-    -- up vectors turn, which is what the 9-number cframe stores after xyz.
-    local out = { cf[1], cf[2], cf[3], cf[4], cf[5], cf[6], cf[7], cf[8], cf[9] }
-    for _ = 1, times do
-        out[4], out[5], out[6] = quarterLeft(out[4], out[5], out[6])
-        out[7], out[8], out[9] = quarterLeft(out[7], out[8], out[9])
-    end
-    return out
-end
-
--- A build's blocks with the excluded shapes stripped out and stairs turned.
+-- A build's blocks with the excluded shapes stripped out.
 function filterShapes(blocks)
-    local turning = (stairTurns % 4) ~= 0
-    if includeStairs and includeSlabs and not turning then return blocks end
+    if includeStairs and includeSlabs then return blocks end
     local out = {}
     for _, b in ipairs(blocks) do
         local t = tostring(b.blockType)
@@ -420,14 +386,6 @@ function filterShapes(blocks)
         local isSlab = (not isStair) and t:find("[Ss]lab") ~= nil
         if (isStair and not includeStairs) or (isSlab and not includeSlabs) then
             -- skipped
-        elseif isStair and turning and type(b.cframe) == "table" and #b.cframe >= 9 then
-            -- A copy, not an edit in place: the caller's list is reused for
-            -- the preview and the build both, and turning it twice would
-            -- leave the build a half turn out from what was previewed.
-            local c = {}
-            for k, v in pairs(b) do c[k] = v end
-            c.cframe = turnStairCFrame(b.cframe, stairTurns)
-            out[#out + 1] = c
         else
             out[#out + 1] = b
         end
@@ -1266,14 +1224,13 @@ local function placeBlockList(blockList, delayTime)
             if moveToBuildPosition then
                 local _, _, hrp = getCharacterParts()
                 if not hrp then return end
-                -- True distance, including height. This used to substitute the
-                -- character's own Y into the target before measuring, which
-                -- made every vertical gap read as zero: a section straight
-                -- overhead was "already in reach", so the builder never flew
-                -- up to it. Every placement up there then failed for being out
-                -- of range, the missing count stopped falling, and the outer
-                -- pass loop gave up - a build that raced up from the ground
-                -- floor and then stopped dead partway.
+                -- True distance, height included. This used to substitute the
+                -- character's own Y into the target before measuring, so every
+                -- vertical gap read as zero and a section straight overhead
+                -- counted as already in reach. The builder never flew up to
+                -- it, placements there failed for being out of range, and the
+                -- outer pass loop hit its "no progress" break - a build that
+                -- climbed off the ground floor and then stopped dead.
                 if (pos - hrp.Position).Magnitude > placeReach then
                     pcall(function() flyTo(Vector3.new(pos.X, pos.Y + buildStandoff, pos.Z), 5, moveTimeout) end)
                 end
@@ -2169,84 +2126,6 @@ local function ghostifyClone(inst, transparency)
     end
 end
 
--- Defined here, below slabHalves and ghostifyClone, and not above them.
--- Both are locals; calling them from a function declared earlier in the
--- file resolves them as globals instead, which are nil at runtime. That
--- threw on the first slab of a preview and took the whole draw loop with
--- it - the preview stopped partway through with no error on screen.
-
--- A slab clone showing one real half.
---
--- The previous approach hid the unwanted half by setting Transparency = 1 and
--- untagging it, which left it in the model - and anything that walked the
--- descendants and repainted (the pulse, the transparency slider) could bring
--- it back as a full-height block. This deletes it instead. A destroyed half
--- cannot be repainted, so the slab stays a slab for the life of the preview.
---
--- What is left is the game's own MeshPart with its own texture, which is the
--- point: a flat coloured box is the right shape but it never looks like the
--- block you are placing.
---
--- Returns nil when the template is not shaped like a placed slab, and the
--- caller falls back to the coloured stand-in.
-function cloneSlabHalf(blockType, cellCF, upper, alpha)
-    local template = getTemplate(blockType)
-    if not template then return nil end
-
-    local src = template
-    if not (template:IsA("BasePart") or template:IsA("Model")) then
-        src = template:FindFirstChild("Root")
-            or template:FindFirstChildWhichIsA("Model")
-            or template:FindFirstChildWhichIsA("BasePart")
-        if not src then return nil end
-    end
-
-    local ok, clone = pcall(function() return src:Clone() end)
-    if not ok or not clone then return nil end
-
-    -- Seat the whole block on its cell first. Both halves are positioned
-    -- relative to the block, so moving the block puts them where they belong;
-    -- moving a half on its own would have to re-derive that offset.
-    local placed
-    if clone:IsA("BasePart") then
-        clone.CFrame = cellCF
-        placed = true
-    else
-        placed = pcall(function() clone:PivotTo(cellCF) end)
-    end
-    if not placed then
-        pcall(function() clone:Destroy() end)
-        return nil
-    end
-
-    local top, bottom = slabHalves(clone)
-    if not (top and bottom) then
-        pcall(function() clone:Destroy() end)
-        return nil
-    end
-
-    local keep, drop = bottom, top
-    if upper then keep, drop = top, bottom end
-    pcall(function() drop:Destroy() end)
-
-    -- Ghostify after the delete, so the half that is gone is never tagged and
-    -- the half that stays is the only thing the repaint loops can see.
-    ghostifyClone(clone, alpha)
-    pcall(function() keep.Transparency = alpha end)
-
-    -- The template may hand back a half that was hidden in the source. It is
-    -- the one being shown now, so its size has to be real geometry rather than
-    -- a collapsed placeholder.
-    local okSize, fine = pcall(function() return keep.Size.Y > 0.01 end)
-    if not okSize or not fine then
-        pcall(function() clone:Destroy() end)
-        return nil
-    end
-
-    return clone
-end
-
-
 -- Stamp a rendered ghost with the file position it came from, so deleting it
 -- can take the matching entry out of the build. `queryable` decides whether the
 -- brush's raycast can see it at all - ghosts ignore rays the rest of the time.
@@ -2393,8 +2272,7 @@ local function previewBuild(blocks)
     notify("Preview", "Rendering " .. #blocks .. " blocks...", 4)
 
     local work = 0
-    local slabReal, slabStandIn = 0, 0
-    local drawErrors, drawErrSample = 0, nil
+    local slabSwapped, slabFellBack, slabStandIn = 0, 0, 0
     -- Two ghosts in one cell z-fight, which reads as a flickering block with
     -- something grey behind it. Count them rather than guess.
     local occupied, clashes, clashSample = {}, 0, nil
@@ -2510,42 +2388,47 @@ local function previewBuild(blocks)
         -- camera moved. A half-height box in the correct half of the cell is
         -- what a slab actually looks like, and it is the same answer every
         -- time.
-        if not skip then
-            if previewRealModels and not previewMinimized and isModelType(blockType) then
-                -- Slabs take their own route: the whole-block clone would put
-                -- full-height geometry in a half-height cell. cloneSlabHalf
-                -- deletes the half that is not wanted rather than hiding it,
-                -- so what lands is the game's own mesh at the right height
-                -- with the right texture.
-                -- Wrapped, because one bad block must not end the draw.
-                -- Everything here touches game templates, whose shape this
-                -- code does not control; an error escaping the loop leaves a
-                -- preview that stopped partway with nothing on screen saying
-                -- why. A nil clone just falls through to the stand-in below,
-                -- which is the same path a template that cannot be cloned
-                -- already takes.
-                local clone
-                local okDraw, errDraw = pcall(function()
-                    if isSlab then
-                        clone = cloneSlabHalf(blockType, cellCF, upper, previewTransparency)
-                        if clone then slabReal = slabReal + 1 end
-                    else
-                        clone = cloneBlockModel(blockType, targetCF)
-                        if clone then ghostifyClone(clone, previewTransparency) end
-                    end
-                end)
-                if not okDraw then
-                    clone = nil
-                    drawErrors = drawErrors + 1
-                    drawErrSample = drawErrSample or tostring(errDraw)
-                end
+        local forceStandIn = isSlab
 
-                if clone then
-                    clone.Name = blockType
-                    tagGhost(clone, blockSrcKey(block), brushPreview)
-                    clone.Parent = model
-                    rendered = true
-                    work = work + 8
+        if not skip then
+            if not forceStandIn and previewRealModels and not previewMinimized
+                and isModelType(blockType) then
+                local clone = cloneBlockModel(blockType, targetCF)
+                do
+                    if clone then
+                        ghostifyClone(clone, previewTransparency)
+                        clone.Name = blockType
+                        -- A slab block is one 3x3x3 part holding both halves as
+                        -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
+                        -- half you see is whichever is not transparent. The
+                        -- template shows its bottom, so a clone is always a bottom
+                        -- slab however the block was flagged - which is why every
+                        -- previewed slab looked low. Swap the halves instead of
+                        -- moving the part: the geometry is already in the right
+                        -- place, it is just the wrong half showing.
+                        local slabOk = true
+                        if isSlab then
+                            local ok2, res = pcall(function()
+                                return showSlabHalf(clone, upper, previewTransparency)
+                            end)
+                            slabOk = ok2 and res == true
+                            if slabOk then
+                                slabSwapped = slabSwapped + 1
+                            else
+                                slabFellBack = slabFellBack + 1
+                            end
+                        end
+                        if not slabOk then
+                            -- the template is not shaped like a placed block, so
+                            -- it cannot show one half; the stand-in below can
+                            pcall(function() clone:Destroy() end)
+                        else
+                            tagGhost(clone, blockSrcKey(block), brushPreview)
+                            clone.Parent = model
+                            rendered = true
+                            work = work + 8
+                        end
+                    end
                 end
             end
 
@@ -2586,20 +2469,7 @@ local function previewBuild(blocks)
                                             previewBlockSize - SHRINK)
                     part.CFrame = cellCF
                 end
-                -- A slab that has no measured colour of its own borrows its
-                -- base block's - oakSlab falls back to oak. Without this the
-                -- stand-in lands on the hash colour, which is stable but has
-                -- nothing to do with what the block looks like.
-                local col = measuredColour(blockType)
-                if not col and isSlab then
-                    local base = blockType:gsub("[Ss]lab$", "")
-                    if base ~= "" and base ~= blockType then
-                        col = measuredColour(base)
-                            or measuredColour(base .. "Block")
-                            or measuredColour(base .. "Plank")
-                    end
-                end
-                part.Color = col or colorForBlockType(blockType)
+                part.Color = measuredColour(blockType) or colorForBlockType(blockType)
                 part:SetAttribute("GhostPreview", true)
                 tagGhost(part, blockSrcKey(block), brushPreview)
                 part.Parent = model
@@ -2629,20 +2499,12 @@ local function previewBuild(blocks)
     end
 
     if isPreviewing then
+        -- Slabs all take one path now, so there is nothing to attribute -
+        -- just say how many there were. The old line reported "0 real, N
+        -- stand-ins", which read as a failure when it is the intended route.
         local msg = "Turn on Move Handles, then drag it into place."
-        local slabTotal = slabReal + slabStandIn
-        if slabTotal > 0 then
-            -- Stand-ins are only named when there are some, because a run with
-            -- none is the normal case and does not need reporting.
-            msg = ("%d slabs%s."):format(slabTotal,
-                slabStandIn > 0
-                    and (" - " .. slabReal .. " real, " .. slabStandIn .. " plain boxes")
-                    or "")
-        end
-        -- Say it out loud rather than leaving a short preview to be noticed.
-        if drawErrors > 0 then
-            msg = msg .. ("\n%d blocks failed to draw and fell back: %s")
-                :format(drawErrors, tostring(drawErrSample):sub(1, 90))
+        if slabStandIn > 0 then
+            msg = ("%d slabs drawn as half-height blocks."):format(slabStandIn)
         end
         if clashes > 0 then
             msg = msg .. ("\n%d blocks share a cell with another - that is the"
@@ -4336,15 +4198,6 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
           Callback = function(v) includeStairs = v end },
         { Type = "toggle", Name = "Include Slabs", Default = true,
           Callback = function(v) includeSlabs = v end },
-        -- Quarter turns, so all four orientations are reachable without
-        -- another code change. 180 is the default because that is the error
-        -- the shipped converter actually produces in game.
-        { Type = "slider", Name = "Turn Stairs", Min = 0, Max = 3, Increment = 1,
-          Default = 2, ValueName = " x90",
-          Callback = function(v)
-            stairTurns = v
-            notify("Turn Stairs", (v * 90) .. " degrees - turn the preview off and on to redraw", 4, "info")
-          end },
         { Type = "toggle", Name = "No Interior", Default = false,
           Callback = function(v)
             noInterior = v
