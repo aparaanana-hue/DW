@@ -2194,7 +2194,37 @@ local function cloneSlabHalf(blockType, cellCF, upper, alpha)
     -- Ghostify last, so the deleted half is never tagged and the kept half is
     -- the only thing the repaint loops can find.
     ghostifyClone(clone, alpha)
-    pcall(function() keep.Transparency = alpha end)
+
+    -- Hide everything that is not the kept half.
+    --
+    -- A slab is a 3x3x3 container BasePart with the two halves as children,
+    -- and that container carries geometry of its own. Deleting the unwanted
+    -- half leaves it behind, and ghostifyClone above has just made every part
+    -- it can see visible - so the half slab came out wrapped in a full-height
+    -- grey box. That box is the overlap.
+    --
+    -- Untagged as well as hidden: the pulse loop and the transparency slider
+    -- repaint anything still carrying GhostPreview, and either would bring the
+    -- box straight back.
+    pcall(function()
+        if clone:IsA("BasePart") and clone ~= keep then
+            clone.Transparency = 1
+            clone:SetAttribute("GhostPreview", nil)
+        end
+        for _, d in ipairs(clone:GetDescendants()) do
+            if d:IsA("BasePart") and d ~= keep then
+                d.Transparency = 1
+                d:SetAttribute("GhostPreview", nil)
+            elseif (d:IsA("Decal") or d:IsA("Texture")) and d.Parent ~= keep then
+                d.Transparency = 1
+            end
+        end
+    end)
+
+    pcall(function()
+        keep.Transparency = alpha
+        keep:SetAttribute("GhostPreview", true)
+    end)
     return clone
 end
 
