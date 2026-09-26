@@ -2064,17 +2064,34 @@ end
 -- template may wrap the block in a Model, and casing is not guaranteed. So
 -- search the whole clone case-insensitively rather than assuming the shape.
 local function slabHalves(inst)
+    -- Each half exists twice in a slab template: an invisible plain Part and
+    -- the textured MeshPart, both named 'top' or 'bottom'. Taking the first
+    -- name match landed on the plain Part, so callers that then made "the
+    -- half" visible were showing an untextured grey marker.
+    --
+    -- A MeshPart beats a plain Part, and something already showing beats
+    -- something already hidden. Ties keep whichever was found first.
     local top, bottom = nil, nil
-    if inst:IsA("BasePart") then
-        local n = string.lower(inst.Name)
-        if n == "top" then top = inst elseif n == "bottom" then bottom = inst end
+    local function better(candidate, current)
+        if not current then return true end
+        local c = candidate:IsA("MeshPart") and 2 or 0
+        local u = current:IsA("MeshPart") and 2 or 0
+        if candidate.Transparency < 1 then c = c + 1 end
+        if current.Transparency < 1 then u = u + 1 end
+        return c > u
     end
-    for _, d in ipairs(inst:GetDescendants()) do
-        if d:IsA("BasePart") then
-            local n = string.lower(d.Name)
-            if n == "top" and not top then top = d
-            elseif n == "bottom" and not bottom then bottom = d end
+    local function consider(d)
+        if not d:IsA("BasePart") then return end
+        local n = string.lower(d.Name)
+        if n == "top" then
+            if better(d, top) then top = d end
+        elseif n == "bottom" then
+            if better(d, bottom) then bottom = d end
         end
+    end
+    consider(inst)
+    for _, d in ipairs(inst:GetDescendants()) do
+        pcall(consider, d)
     end
     return top, bottom
 end
@@ -2157,9 +2174,8 @@ local function cloneSlabHalf(blockType, cellCF, upper, alpha)
     local ok, clone = pcall(function() return src:Clone() end)
     if not ok or not clone then return nil end
 
-    -- Seat the whole block on its cell first. Both halves are placed relative
-    -- to the block, so moving the block puts them where they belong; moving a
-    -- half on its own would have to re-derive that offset.
+    -- Seat the whole block on its cell first. Both halves are positioned
+    -- relative to the block, so moving the block puts them where they belong.
     local placed
     if clone:IsA("BasePart") then
         clone.CFrame = cellCF
@@ -2172,78 +2188,37 @@ local function cloneSlabHalf(blockType, cellCF, upper, alpha)
         return nil
     end
 
-    local top, bottom = slabHalves(clone)
-    if not (top and bottom) then
-        pcall(function() clone:Destroy() end)
-        return nil
+    -- Delete every part belonging to the half we do not want - by name, and
+    -- ALL of them, not the first one found.
+    --
+    -- An oakSlab template is a Model holding five parts: Part bottom, Part
+    -- top, Part Root, MeshPart bottom, MeshPart top. Each half exists twice,
+    -- once as an invisible plain Part and once as the textured MeshPart, and
+    -- a search that stops at the first name match lands on the plain Part
+    -- every time. Forcing that one visible is what drew a grey slab, while
+    -- both real MeshParts stayed on behind it.
+    local dropName = upper and "bottom" or "top"
+    local doomed = {}
+    if clone:IsA("BasePart") and string.lower(clone.Name) == dropName then
+        doomed[#doomed + 1] = clone
+    end
+    for _, d in ipairs(clone:GetDescendants()) do
+        if d:IsA("BasePart") and string.lower(d.Name) == dropName then
+            doomed[#doomed + 1] = d
+        end
+    end
+    -- Collected first: destroying inside the walk skips siblings.
+    for _, d in ipairs(doomed) do
+        pcall(function() d:Destroy() end)
     end
 
-    local keep, drop = bottom, top
-    if upper then keep, drop = top, bottom end
-
-    -- The kept half has to be real geometry. A template can ship the hidden
-    -- half collapsed, and showing a zero-height mesh is an invisible slab.
-    local okSize, fine = pcall(function() return keep.Size.Y > 0.01 end)
-    if not okSize or not fine then
-        pcall(function() clone:Destroy() end)
-        return nil
-    end
-
-    pcall(function() drop:Destroy() end)
-
+    -- Nothing is forced visible here, which is the whole trick. ghostifyClone
+    -- only repaints parts that were already showing in the template, so the
+    -- textured MeshPart of the kept half comes through and the invisible
+    -- markers and the full-height Root shell stay exactly as they were - at
+    -- transparency 1, drawing nothing, overlapping nothing.
     ghostifyClone(clone, alpha)
 
-    -- Hide the full-height leftovers, but only if a half-height one survives.
-    --
-    -- Which part carries the texture is not fixed. In some templates it is a
-    -- half-height 'top'/'bottom' MeshPart and the 3x3x3 container is a plain
-    -- grey shell; in others the container is the textured block and the two
-    -- halves are bare markers. Assuming the first shape left the shell drawn
-    -- over the slab; assuming the second hid the texture and left the marker,
-    -- which is the grey slab.
-    --
-    -- So nothing is hidden on faith. Anything close to a full cell tall is a
-    -- candidate, and it is only actually hidden when something shorter is
-    -- still visible to take its place. If the tall part is all there is, it
-    -- stays - a slab drawn a bit too tall still looks like the block, which a
-    -- grey box never does.
-    local FULL = previewBlockSize * 0.8
-
-    local shortVisible = false
-    pcall(function()
-        for _, d in ipairs(clone:GetDescendants()) do
-            if d:IsA("BasePart") and d.Transparency < 1 and d.Size.Y < FULL then
-                shortVisible = true
-                break
-            end
-        end
-        if not shortVisible and clone:IsA("BasePart")
-            and clone.Transparency < 1 and clone.Size.Y < FULL then
-            shortVisible = true
-        end
-    end)
-
-    if shortVisible then
-        -- Untagged as well as hidden: the pulse loop and the transparency
-        -- slider repaint anything still carrying GhostPreview, so a merely
-        -- transparent shell comes straight back the first time either runs.
-        local function hideTall(d)
-            if d:IsA("BasePart") and d.Size.Y >= FULL then
-                d.Transparency = 1
-                d:SetAttribute("GhostPreview", nil)
-            end
-        end
-        pcall(function()
-            if clone:IsA("BasePart") then hideTall(clone) end
-            for _, d in ipairs(clone:GetDescendants()) do
-                pcall(hideTall, d)
-            end
-        end)
-    end
-
-    -- Whatever is left has to actually be visible. If every part ended up
-    -- hidden the preview would show nothing at all there, which is worse than
-    -- the coloured stand-in the caller falls back to.
     local anyVisible = false
     pcall(function()
         if clone:IsA("BasePart") and clone.Transparency < 1 then anyVisible = true end
