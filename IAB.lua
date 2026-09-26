@@ -376,9 +376,43 @@ noInterior = false
 -- The functions using this state need arrayToCFrame and effectiveType,
 -- so they are defined further down, just after those.
 
--- A build's blocks with the excluded shapes stripped out.
+-- Quarter turns to add to every stair, about Y, applied when a build is used
+-- rather than when it is converted.
+--
+-- Which way an Islands stair model faces relative to Minecraft's has been
+-- settled by trial three times - blockmap.py's FACING_OFFSET comment records
+-- two wrong answers before the one it ships, and rotate_stairs.py exists
+-- purely to bring older files into step after each change. That is the shape
+-- of a value that should never have been a constant.
+--
+-- Doing it here, at use time, also fixes files this script did not convert:
+-- anything already on disk from an older offline run is turned on the way
+-- past, without rewriting it.
+stairTurns = 2
+
+-- (x, y, z) turned a quarter anticlockwise about Y, matching quarter_left in
+-- rotate_stairs.py so the two agree on what a turn means.
+local function quarterLeft(x, y, z)
+    return z, y, -x
+end
+
+local function turnStairCFrame(cf, times)
+    times = times % 4
+    if times == 0 then return cf end
+    -- Position is untouched: the stair spins on the spot. Only the right and
+    -- up vectors turn, which is what the 9-number cframe stores after xyz.
+    local out = { cf[1], cf[2], cf[3], cf[4], cf[5], cf[6], cf[7], cf[8], cf[9] }
+    for _ = 1, times do
+        out[4], out[5], out[6] = quarterLeft(out[4], out[5], out[6])
+        out[7], out[8], out[9] = quarterLeft(out[7], out[8], out[9])
+    end
+    return out
+end
+
+-- A build's blocks with the excluded shapes stripped out and stairs turned.
 function filterShapes(blocks)
-    if includeStairs and includeSlabs then return blocks end
+    local turning = (stairTurns % 4) ~= 0
+    if includeStairs and includeSlabs and not turning then return blocks end
     local out = {}
     for _, b in ipairs(blocks) do
         local t = tostring(b.blockType)
@@ -386,6 +420,14 @@ function filterShapes(blocks)
         local isSlab = (not isStair) and t:find("[Ss]lab") ~= nil
         if (isStair and not includeStairs) or (isSlab and not includeSlabs) then
             -- skipped
+        elseif isStair and turning and type(b.cframe) == "table" and #b.cframe >= 9 then
+            -- A copy, not an edit in place: the caller's list is reused for
+            -- the preview and the build both, and turning it twice would
+            -- leave the build a half turn out from what was previewed.
+            local c = {}
+            for k, v in pairs(b) do c[k] = v end
+            c.cframe = turnStairCFrame(b.cframe, stairTurns)
+            out[#out + 1] = c
         else
             out[#out + 1] = b
         end
@@ -1223,7 +1265,16 @@ local function placeBlockList(blockList, delayTime)
         local function hoverAbove(pos)
             if moveToBuildPosition then
                 local _, _, hrp = getCharacterParts()
-                if hrp and (Vector3.new(pos.X, hrp.Position.Y, pos.Z) - hrp.Position).Magnitude > placeReach then
+                if not hrp then return end
+                -- True distance, including height. This used to substitute the
+                -- character's own Y into the target before measuring, which
+                -- made every vertical gap read as zero: a section straight
+                -- overhead was "already in reach", so the builder never flew
+                -- up to it. Every placement up there then failed for being out
+                -- of range, the missing count stopped falling, and the outer
+                -- pass loop gave up - a build that raced up from the ground
+                -- floor and then stopped dead partway.
+                if (pos - hrp.Position).Magnitude > placeReach then
                     pcall(function() flyTo(Vector3.new(pos.X, pos.Y + buildStandoff, pos.Z), 5, moveTimeout) end)
                 end
             end
@@ -4258,6 +4309,15 @@ BuilderAPI.toggles.preview = previewTab:CreateToggle({
           Callback = function(v) includeStairs = v end },
         { Type = "toggle", Name = "Include Slabs", Default = true,
           Callback = function(v) includeSlabs = v end },
+        -- Quarter turns, so all four orientations are reachable without
+        -- another code change. 180 is the default because that is the error
+        -- the shipped converter actually produces in game.
+        { Type = "slider", Name = "Turn Stairs", Min = 0, Max = 3, Increment = 1,
+          Default = 2, ValueName = " x90",
+          Callback = function(v)
+            stairTurns = v
+            notify("Turn Stairs", (v * 90) .. " degrees - turn the preview off and on to redraw", 4, "info")
+          end },
         { Type = "toggle", Name = "No Interior", Default = false,
           Callback = function(v)
             noInterior = v
