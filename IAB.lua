@@ -2191,40 +2191,71 @@ local function cloneSlabHalf(blockType, cellCF, upper, alpha)
 
     pcall(function() drop:Destroy() end)
 
-    -- Ghostify last, so the deleted half is never tagged and the kept half is
-    -- the only thing the repaint loops can find.
     ghostifyClone(clone, alpha)
 
-    -- Hide everything that is not the kept half.
+    -- Hide the full-height leftovers, but only if a half-height one survives.
     --
-    -- A slab is a 3x3x3 container BasePart with the two halves as children,
-    -- and that container carries geometry of its own. Deleting the unwanted
-    -- half leaves it behind, and ghostifyClone above has just made every part
-    -- it can see visible - so the half slab came out wrapped in a full-height
-    -- grey box. That box is the overlap.
+    -- Which part carries the texture is not fixed. In some templates it is a
+    -- half-height 'top'/'bottom' MeshPart and the 3x3x3 container is a plain
+    -- grey shell; in others the container is the textured block and the two
+    -- halves are bare markers. Assuming the first shape left the shell drawn
+    -- over the slab; assuming the second hid the texture and left the marker,
+    -- which is the grey slab.
     --
-    -- Untagged as well as hidden: the pulse loop and the transparency slider
-    -- repaint anything still carrying GhostPreview, and either would bring the
-    -- box straight back.
+    -- So nothing is hidden on faith. Anything close to a full cell tall is a
+    -- candidate, and it is only actually hidden when something shorter is
+    -- still visible to take its place. If the tall part is all there is, it
+    -- stays - a slab drawn a bit too tall still looks like the block, which a
+    -- grey box never does.
+    local FULL = previewBlockSize * 0.8
+
+    local shortVisible = false
     pcall(function()
-        if clone:IsA("BasePart") and clone ~= keep then
-            clone.Transparency = 1
-            clone:SetAttribute("GhostPreview", nil)
-        end
         for _, d in ipairs(clone:GetDescendants()) do
-            if d:IsA("BasePart") and d ~= keep then
-                d.Transparency = 1
-                d:SetAttribute("GhostPreview", nil)
-            elseif (d:IsA("Decal") or d:IsA("Texture")) and d.Parent ~= keep then
-                d.Transparency = 1
+            if d:IsA("BasePart") and d.Transparency < 1 and d.Size.Y < FULL then
+                shortVisible = true
+                break
             end
+        end
+        if not shortVisible and clone:IsA("BasePart")
+            and clone.Transparency < 1 and clone.Size.Y < FULL then
+            shortVisible = true
         end
     end)
 
+    if shortVisible then
+        -- Untagged as well as hidden: the pulse loop and the transparency
+        -- slider repaint anything still carrying GhostPreview, so a merely
+        -- transparent shell comes straight back the first time either runs.
+        local function hideTall(d)
+            if d:IsA("BasePart") and d.Size.Y >= FULL then
+                d.Transparency = 1
+                d:SetAttribute("GhostPreview", nil)
+            end
+        end
+        pcall(function()
+            if clone:IsA("BasePart") then hideTall(clone) end
+            for _, d in ipairs(clone:GetDescendants()) do
+                pcall(hideTall, d)
+            end
+        end)
+    end
+
+    -- Whatever is left has to actually be visible. If every part ended up
+    -- hidden the preview would show nothing at all there, which is worse than
+    -- the coloured stand-in the caller falls back to.
+    local anyVisible = false
     pcall(function()
-        keep.Transparency = alpha
-        keep:SetAttribute("GhostPreview", true)
+        if clone:IsA("BasePart") and clone.Transparency < 1 then anyVisible = true end
+        for _, d in ipairs(clone:GetDescendants()) do
+            if d:IsA("BasePart") and d.Transparency < 1 then anyVisible = true break end
+        end
     end)
+    if not anyVisible then
+        pcall(function() clone:Destroy() end)
+        return nil
+    end
+
     return clone
 end
 
