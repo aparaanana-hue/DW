@@ -2369,9 +2369,18 @@ local function previewBuild(blocks)
             if taken[slot] then skip = true else taken[slot] = true end
         end
 
-        -- a cell with both halves gets two half-height pieces rather than two
-        -- whole blocks sitting inside each other
-        local forceStandIn = isSlab and bothHalves[cellKey]
+        -- Slabs always draw as a stand-in, never as a cloned model.
+        --
+        -- The clone path worked by taking a whole 3x3x3 slab template and
+        -- hiding one of its two MeshPart halves. That depended on the template
+        -- being shaped exactly like a placed block, on both halves being found
+        -- by name, and on nothing repainting the hidden half afterwards - and
+        -- when any of those missed, what you got was a full-height untextured
+        -- mesh sitting inside the block below it, flickering against it as the
+        -- camera moved. A half-height box in the correct half of the cell is
+        -- what a slab actually looks like, and it is the same answer every
+        -- time.
+        local forceStandIn = isSlab
 
         if not skip then
             if not forceStandIn and previewRealModels and not previewMinimized
@@ -2429,12 +2438,16 @@ local function previewBuild(blocks)
                 -- and seated in the half it belongs to. Everything else, stairs
                 -- included, fills the whole cell and is left alone: a full-height
                 -- cube nudged up or down only ends up inside its neighbour.
-                -- A hair under a full cell. A stand-in that exactly matches the
-                -- block it sits over shares its surfaces, and two coplanar faces
-                -- flicker as the camera moves - which is the grey block that
-                -- appears to fight with the real one. Shrinking it by a fiftieth
-                -- of a stud is invisible at this scale and stops that outright.
-                local SHRINK = 0.02
+                -- Under a full cell, by enough to matter. A stand-in that
+                -- matches the block it sits over shares its surfaces, and two
+                -- coplanar faces flicker as the camera moves.
+                --
+                -- This was 0.02, which left a hundredth of a stud between the
+                -- ghost face and the real one - inside the depth buffer's
+                -- precision at any distance, so the flicker came back as soon
+                -- as you stepped away from the build. A tenth of a stud on a
+                -- three-stud block is still invisible and actually resolves.
+                local SHRINK = 0.1
                 if isSlab then
                     slabStandIn = slabStandIn + 1
                     local dy = (upper and 1 or -1) * (previewBlockSize / 4)
@@ -2478,14 +2491,12 @@ local function previewBuild(blocks)
     end
 
     if isPreviewing then
-        -- Say what happened to the slabs. If they still look wrong, this is
-        -- the line that says which of the three paths drew them.
-        local total = slabSwapped + slabFellBack + slabStandIn
+        -- Slabs all take one path now, so there is nothing to attribute -
+        -- just say how many there were. The old line reported "0 real, N
+        -- stand-ins", which read as a failure when it is the intended route.
         local msg = "Turn on Move Handles, then drag it into place."
-        if total > 0 then
-            msg = ("%d slabs: %d real, %d stand-ins%s"):format(
-                total, slabSwapped, slabStandIn + slabFellBack,
-                slabFellBack > 0 and (" (" .. slabFellBack .. " had no halves)") or "")
+        if slabStandIn > 0 then
+            msg = ("%d slabs drawn as half-height blocks."):format(slabStandIn)
         end
         if clashes > 0 then
             msg = msg .. ("\n%d blocks share a cell with another - that is the"
@@ -3472,249 +3483,6 @@ schemDropdown = auto:CreateDropdown({
     end
 })
 
-auto:CreateButton({
-    Name = "Test Slab Placement",
-    Tooltip = "Places two slabs in front of you - one asked for the bottom half, one for the top - then reads back which half each actually got. That is the one thing left to find out about slabs, and it takes a click.",
-    Callback = function()
-        task.spawn(function()
-            -- a slab from your inventory to test with
-            local slabName
-            for _, where in ipairs({ LocalPlayer:FindFirstChild("Backpack"), LocalPlayer.Character }) do
-                if where then
-                    for _, item in ipairs(where:GetChildren()) do
-                        if item:IsA("Tool") and string.lower(item.Name):find("slab") then
-                            slabName = item.Name
-                            break
-                        end
-                    end
-                end
-                if slabName then break end
-            end
-            if not slabName then
-                notifyWarn("Slab Test", "Put any slab in your inventory first", 6)
-                return
-            end
-
-            local _, _, hrp = getCharacterParts()
-            if not hrp then return end
-            updateGridPhase(true)
-
-            -- two empty cells in front of you, three studs apart
-            local base = hrp.Position + hrp.CFrame.LookVector * 9
-            local a = snapGridVec(Vector3.new(base.X, hrp.Position.Y, base.Z))
-            local b = a + Vector3.new(6, 0, 0)
-
-            notify("Slab Test", "Placing two " .. slabName .. "...", 5, "info")
-            placeRawBlock(slabName, CFrame.new(a), false)
-            task.wait(0.4)
-            placeRawBlock(slabName, CFrame.new(b), true)
-            task.wait(1.2)
-
-            local folder = getBlocksFolder()
-            if not folder then
-                notifyWarn("Slab Test", "Lost the island somehow", 4)
-                return
-            end
-            local function halfAt(pos)
-                local best, bestD
-                for _, part in ipairs(folder:GetChildren()) do
-                    if part:IsA("BasePart") and string.lower(part.Name):find("slab") then
-                        local d = (part.Position - pos).Magnitude
-                        if d < 3 and (not bestD or d < bestD) then best, bestD = part, d end
-                    end
-                end
-                if not best then return "nothing placed" end
-                return slabHalfOf(best) or "could not tell"
-            end
-
-            local askedBottom = halfAt(a)
-            local askedTop = halfAt(b)
-            local verdict
-            if askedTop == "top" and askedBottom == "bottom" then
-                verdict = "upperBlock WORKS - converted slabs should be correct"
-            elseif askedTop == "bottom" then
-                verdict = "upperBlock IS IGNORED - the server always makes a bottom slab"
-            else
-                verdict = "inconclusive"
-            end
-
-            local text = table.concat({
-                "=== SLAB PLACEMENT TEST ===",
-                "block: " .. slabName,
-                "asked for bottom -> got " .. tostring(askedBottom),
-                "asked for top    -> got " .. tostring(askedTop),
-                verdict,
-                "===========================",
-            }, "\n")
-            warn(text)
-            pcall(function() setclipboard(text) end)
-            notifyOK("Slab Test", verdict, 12)
-        end)
-    end
-})
-
-auto:CreateButton({
-    Name = "Inspect Slabs",
-    Tooltip = "Place one slab in the bottom half and one in the top half near you, then press this. It reports how the game itself stores them, which is what decides how a converted slab has to be written.",
-    Callback = function()
-        task.spawn(function()
-            local folder = getBlocksFolder()
-            if not folder then
-                notifyWarn("Inspect", "No island found near you", 4)
-                return
-            end
-            local _, _, hrp = getCharacterParts()
-            local origin = hrp and hrp.Position or Vector3.new()
-
-            local found = {}
-            for _, part in ipairs(folder:GetChildren()) do
-                if part:IsA("BasePart") and string.lower(part.Name):find("slab")
-                    and (part.Position - origin).Magnitude < 60 then
-                    found[#found + 1] = part
-                end
-            end
-            if #found == 0 then
-                notifyWarn("Inspect", "No slabs within 60 studs - place one and try again", 6)
-                return
-            end
-            table.sort(found, function(a, b)
-                return (a.Position - origin).Magnitude < (b.Position - origin).Magnitude
-            end)
-
-            -- Two slabs in different halves save as identical data, so the
-            -- thing that tells them apart is not the position, the rotation or
-            -- the size. Dump everything the part carries and find it.
-            -- A slab block is one 3x3x3 part holding a 'bottom' and a 'top'
-            -- MeshPart. Both are always present, so which half you see is a
-            -- property of those children. Rather than dump everything again,
-            -- compare the two nearest slabs and print only what differs -
-            -- that difference is the thing the converter has to reproduce.
-            local PROPS = {
-                "Transparency", "LocalTransparencyModifier", "CanCollide",
-                "CanQuery", "CanTouch", "CastShadow", "Massless", "Anchored",
-                "Reflectance", "Material", "Color", "Size", "Name",
-                "MeshId", "TextureID", "MeshSize", "Archivable",
-            }
-            local function snapshot(part)
-                local out = {}
-                for _, d in ipairs(part:GetChildren()) do
-                    for _, prop in ipairs(PROPS) do
-                        local ok, v = pcall(function() return d[prop] end)
-                        if ok and v ~= nil then
-                            out[d.Name .. "." .. prop] = tostring(v)
-                        end
-                    end
-                    pcall(function()
-                        for k, v in pairs(d:GetAttributes()) do
-                            out[d.Name .. ".@" .. k] = tostring(v)
-                        end
-                    end)
-                    if d:IsA("BasePart") then
-                        local rel = part.CFrame:PointToObjectSpace(d.Position)
-                        out[d.Name .. ".relY"] = string.format("%.3f", rel.Y)
-                    end
-                end
-                for _, prop in ipairs(PROPS) do
-                    local ok, v = pcall(function() return part[prop] end)
-                    if ok and v ~= nil then out["SELF." .. prop] = tostring(v) end
-                end
-                return out
-            end
-
-            local function compare()
-                if #found < 2 then return end
-                local a, b = snapshot(found[1]), snapshot(found[2])
-                local keys, seen = {}, {}
-                for k in pairs(a) do if not seen[k] then seen[k] = true keys[#keys+1] = k end end
-                for k in pairs(b) do if not seen[k] then seen[k] = true keys[#keys+1] = k end end
-                table.sort(keys)
-                local diffs = {}
-                for _, k in ipairs(keys) do
-                    if a[k] ~= b[k] then
-                        diffs[#diffs + 1] = ("   %-34s  slab1=%-22s slab2=%s")
-                            :format(k, tostring(a[k]), tostring(b[k]))
-                    end
-                end
-                local head = { "=== WHAT DIFFERS BETWEEN THE TWO NEAREST SLABS ===" }
-                if #diffs == 0 then
-                    head[#head + 1] = "   nothing - they are identical in every property checked"
-                else
-                    for _, d in ipairs(diffs) do head[#head + 1] = d end
-                end
-                head[#head + 1] = ""
-                return table.concat(head, "\n")
-            end
-
-            local lines = { "=== SLAB INSPECTION ===" }
-            for i = 1, math.min(4, #found) do
-                local p = found[i]
-                local y = p.Position.Y
-                local cell = math.floor(y / 3 + 0.5) * 3
-                lines[#lines + 1] = ("--- slab %d: %s ---"):format(i, p.Name)
-                lines[#lines + 1] = ("  class=%s  size=%.3f,%.3f,%.3f")
-                    :format(p.ClassName, p.Size.X, p.Size.Y, p.Size.Z)
-                lines[#lines + 1] = ("  pos=%.3f,%.3f,%.3f  cell=%.0f  yOffset=%+.3f")
-                    :format(p.Position.X, y, p.Position.Z, cell, y - cell)
-                lines[#lines + 1] = ("  orientation=%.1f,%.1f,%.1f")
-                    :format(p.Orientation.X, p.Orientation.Y, p.Orientation.Z)
-
-                local attrs = {}
-                pcall(function()
-                    for k, v in pairs(p:GetAttributes()) do
-                        attrs[#attrs + 1] = k .. "=" .. tostring(v)
-                    end
-                end)
-                table.sort(attrs)
-                lines[#lines + 1] = "  attributes: " .. (#attrs > 0 and table.concat(attrs, ", ") or "none")
-
-                if p:IsA("MeshPart") then
-                    lines[#lines + 1] = ("  meshId=%s  meshSize=%.3f,%.3f,%.3f")
-                        :format(tostring(p.MeshId), p.MeshSize.X, p.MeshSize.Y, p.MeshSize.Z)
-                end
-
-                -- The half that is showing is the whole question, so put it
-                -- on its own line per half rather than buried in a list.
-                for _, which in ipairs({ "bottom", "top" }) do
-                    local d = p:FindFirstChild(which)
-                    if d and d:IsA("BasePart") then
-                        local rel = p.CFrame:PointToObjectSpace(d.Position)
-                        lines[#lines + 1] = ("  %-6s transparency=%.2f  ltm=%.2f  size=%.2f,%.2f,%.2f  relY=%+.2f  collide=%s  -> %s")
-                            :format(which, d.Transparency, d.LocalTransparencyModifier,
-                                    d.Size.X, d.Size.Y, d.Size.Z, rel.Y,
-                                    tostring(d.CanCollide),
-                                    (d.Transparency < 0.5 and d.Size.Y > 0.01) and "SHOWING" or "hidden")
-                    else
-                        lines[#lines + 1] = ("  %-6s not present"):format(which)
-                    end
-                end
-                local others = {}
-                for _, d in ipairs(p:GetChildren()) do
-                    if d.Name ~= "top" and d.Name ~= "bottom" then
-                        local v = ""
-                        pcall(function() if d.Value ~= nil then v = "=" .. tostring(d.Value) end end)
-                        others[#others + 1] = d.ClassName .. " '" .. d.Name .. "'" .. v
-                    end
-                end
-                lines[#lines + 1] = "  other children: " .. (#others > 0 and table.concat(others, " | ") or "none")
-
-                -- and the parent, in case the marker lives above the part
-                if p.Parent then
-                    lines[#lines + 1] = ("  parent=%s '%s'"):format(p.Parent.ClassName, p.Parent.Name)
-                end
-            end
-            lines[#lines + 1] = "=== " .. #found .. " slabs near you ==="
-            local diff = compare()
-            if diff then
-                lines[#lines + 1] = ""
-                lines[#lines + 1] = diff
-            end
-            local text = table.concat(lines, "\n")
-            warn(text)
-            pcall(function() setclipboard(text) end)
-            notifyOK("Inspect", #found .. " slabs - written to the console and copied to your clipboard", 9)
-        end)
-    end
-})
 
 auto:CreateDropdown({
     Name = "Hollow",
