@@ -2126,6 +2126,79 @@ local function ghostifyClone(inst, transparency)
     end
 end
 
+-- A slab preview that is the real block, not a coloured box.
+--
+-- MUST stay below slabHalves and ghostifyClone. Both are locals; a function
+-- declared above them resolves those names as globals instead, which do not
+-- exist, and the resulting nil call killed the whole preview draw on the
+-- first slab it met. Ordering, not logic - but it takes the preview with it,
+-- so leave this where it is.
+--
+-- An Islands slab is one 3x3x3 part holding two MeshParts, 'bottom' at -0.75
+-- and 'top' at +0.75. The half you want is kept and the other is DELETED, not
+-- hidden: the pulse loop and the transparency slider both walk descendants
+-- and repaint, and a merely-transparent half comes back as a full-height
+-- block the moment either runs.
+--
+-- Returns nil whenever anything is not as expected, and the caller draws the
+-- coloured stand-in instead.
+local function cloneSlabHalf(blockType, cellCF, upper, alpha)
+    local template = getTemplate(blockType)
+    if not template then return nil end
+
+    local src = template
+    if not (template:IsA("BasePart") or template:IsA("Model")) then
+        src = template:FindFirstChild("Root")
+            or template:FindFirstChildWhichIsA("Model")
+            or template:FindFirstChildWhichIsA("BasePart")
+        if not src then return nil end
+    end
+
+    local ok, clone = pcall(function() return src:Clone() end)
+    if not ok or not clone then return nil end
+
+    -- Seat the whole block on its cell first. Both halves are placed relative
+    -- to the block, so moving the block puts them where they belong; moving a
+    -- half on its own would have to re-derive that offset.
+    local placed
+    if clone:IsA("BasePart") then
+        clone.CFrame = cellCF
+        placed = true
+    else
+        placed = pcall(function() clone:PivotTo(cellCF) end)
+    end
+    if not placed then
+        pcall(function() clone:Destroy() end)
+        return nil
+    end
+
+    local top, bottom = slabHalves(clone)
+    if not (top and bottom) then
+        pcall(function() clone:Destroy() end)
+        return nil
+    end
+
+    local keep, drop = bottom, top
+    if upper then keep, drop = top, bottom end
+
+    -- The kept half has to be real geometry. A template can ship the hidden
+    -- half collapsed, and showing a zero-height mesh is an invisible slab.
+    local okSize, fine = pcall(function() return keep.Size.Y > 0.01 end)
+    if not okSize or not fine then
+        pcall(function() clone:Destroy() end)
+        return nil
+    end
+
+    pcall(function() drop:Destroy() end)
+
+    -- Ghostify last, so the deleted half is never tagged and the kept half is
+    -- the only thing the repaint loops can find.
+    ghostifyClone(clone, alpha)
+    pcall(function() keep.Transparency = alpha end)
+    return clone
+end
+
+
 -- Stamp a rendered ghost with the file position it came from, so deleting it
 -- can take the matching entry out of the build. `queryable` decides whether the
 -- brush's raycast can see it at all - ghosts ignore rays the rest of the time.
@@ -2272,7 +2345,8 @@ local function previewBuild(blocks)
     notify("Preview", "Rendering " .. #blocks .. " blocks...", 4)
 
     local work = 0
-    local slabSwapped, slabFellBack, slabStandIn = 0, 0, 0
+    local slabReal, slabStandIn = 0, 0
+    local drawErrors, drawErrSample = 0, nil
     -- Two ghosts in one cell z-fight, which reads as a flickering block with
     -- something grey behind it. Count them rather than guess.
     local occupied, clashes, clashSample = {}, 0, nil
@@ -2388,47 +2462,40 @@ local function previewBuild(blocks)
         -- camera moved. A half-height box in the correct half of the cell is
         -- what a slab actually looks like, and it is the same answer every
         -- time.
-        local forceStandIn = isSlab
-
         if not skip then
-            if not forceStandIn and previewRealModels and not previewMinimized
-                and isModelType(blockType) then
-                local clone = cloneBlockModel(blockType, targetCF)
-                do
-                    if clone then
-                        ghostifyClone(clone, previewTransparency)
-                        clone.Name = blockType
-                        -- A slab block is one 3x3x3 part holding both halves as
-                        -- MeshParts, 'bottom' at -0.75 and 'top' at +0.75, and the
-                        -- half you see is whichever is not transparent. The
-                        -- template shows its bottom, so a clone is always a bottom
-                        -- slab however the block was flagged - which is why every
-                        -- previewed slab looked low. Swap the halves instead of
-                        -- moving the part: the geometry is already in the right
-                        -- place, it is just the wrong half showing.
-                        local slabOk = true
-                        if isSlab then
-                            local ok2, res = pcall(function()
-                                return showSlabHalf(clone, upper, previewTransparency)
-                            end)
-                            slabOk = ok2 and res == true
-                            if slabOk then
-                                slabSwapped = slabSwapped + 1
-                            else
-                                slabFellBack = slabFellBack + 1
-                            end
-                        end
-                        if not slabOk then
-                            -- the template is not shaped like a placed block, so
-                            -- it cannot show one half; the stand-in below can
-                            pcall(function() clone:Destroy() end)
-                        else
-                            tagGhost(clone, blockSrcKey(block), brushPreview)
-                            clone.Parent = model
-                            rendered = true
-                            work = work + 8
-                        end
+            if previewRealModels and not previewMinimized and isModelType(blockType) then
+                -- Every path in here is wrapped. Cloning reaches into game
+                -- templates whose shape this code does not control, and an
+                -- error escaping the loop stops the whole preview at that
+                -- block with nothing on screen explaining it. A nil clone just
+                -- falls through to the stand-in, which is what a template that
+                -- cannot be cloned already does.
+                local clone
+                local okDraw, errDraw = pcall(function()
+                    if isSlab then
+                        -- The real block, one half of it. A slab's two halves
+                        -- live in one 3x3x3 part, so the whole-block clone
+                        -- would put full-height geometry in a half-height
+                        -- cell; cloneSlabHalf deletes the half not wanted.
+                        clone = cloneSlabHalf(blockType, cellCF, upper, previewTransparency)
+                        if clone then slabReal = slabReal + 1 end
+                    else
+                        clone = cloneBlockModel(blockType, targetCF)
+                        if clone then ghostifyClone(clone, previewTransparency) end
                     end
+                end)
+                if not okDraw then
+                    clone = nil
+                    drawErrors = drawErrors + 1
+                    drawErrSample = drawErrSample or tostring(errDraw)
+                end
+
+                if clone then
+                    clone.Name = blockType
+                    tagGhost(clone, blockSrcKey(block), brushPreview)
+                    clone.Parent = model
+                    rendered = true
+                    work = work + 8
                 end
             end
 
@@ -2499,12 +2566,19 @@ local function previewBuild(blocks)
     end
 
     if isPreviewing then
-        -- Slabs all take one path now, so there is nothing to attribute -
-        -- just say how many there were. The old line reported "0 real, N
-        -- stand-ins", which read as a failure when it is the intended route.
         local msg = "Turn on Move Handles, then drag it into place."
-        if slabStandIn > 0 then
-            msg = ("%d slabs drawn as half-height blocks."):format(slabStandIn)
+        local slabTotal = slabReal + slabStandIn
+        if slabTotal > 0 then
+            msg = ("%d slabs%s."):format(slabTotal,
+                slabStandIn > 0
+                    and (" - " .. slabReal .. " real, " .. slabStandIn .. " plain boxes")
+                    or "")
+        end
+        -- Named out loud. A preview that quietly drew fewer blocks than asked
+        -- is how the last round of this went unnoticed.
+        if drawErrors > 0 then
+            msg = msg .. ("\n%d blocks fell back after an error: %s")
+                :format(drawErrors, tostring(drawErrSample):sub(1, 80))
         end
         if clashes > 0 then
             msg = msg .. ("\n%d blocks share a cell with another - that is the"
